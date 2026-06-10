@@ -1,3 +1,14 @@
+# LiveDeck Studio (macOS) — v2.8
+
+**New in 2.8:**
+- **Per-clip In/Out trim.** In the transport (Input tab) use **Set In** / **Set Out** to mark a region of a video or audio clip; **Clear** removes it. Playback (and looping) respects the trimmed region.
+- **Playlist (auto-advance).** Toggle **Playlist** in the input bus header. With it on, the Program automatically advances to the next video/audio input each time the current clip reaches its end (or out-point), wrapping around — ideal for pre-roll reels and break loops. (Individual clip looping is disabled while Playlist is on.)
+- **NDI:** the Outputs panel now **detects an installed NDI runtime** and shows its version. Sending frames over NDI is not yet active — that requires the NDI **SDK headers** to be wired into the build (see note below). The uploaded `.pkg` files install the runtime, not the SDK.
+
+> **NDI status:** LiveDeck safely loads the installed NDI runtime at launch (via `dlopen`) and reports its version. To actually transmit video over NDI, the build needs the NDI SDK's C headers (`include/Processing.NDI.*.h`) so the frame structures are exactly correct — those are not in the runtime installers. Provide the SDK `include` folder and NDI send can be implemented properly.
+
+---
+
 # LiveDeck Studio (macOS) — v2.7
 
 **New in 2.7 — video/audio playback controls.** Select a video or audio input (Input tab) to get a full transport: a **scrub bar** with current-time / duration, **play-pause**, **skip ±10s**, **restart**, and a **loop** toggle. Scrubbing seeks the clip; works for both video files and dropped audio files.

@@ -234,6 +234,9 @@ struct InputBus: View {
                 AddInputMenu()
                 Text("INPUTS").font(.system(size: 9, weight: .heavy)).kerning(2).foregroundColor(.secondary)
                 Spacer()
+                Toggle("Playlist", isOn: $engine.playlistEnabled)
+                    .toggleStyle(.button).font(.system(size: 10))
+                    .help("Auto-advance the Program through video/audio inputs as each clip ends")
                 Text("SIZE").font(.system(size: 9, weight: .heavy)).foregroundColor(.secondary)
                 Slider(value: $engine.inputTileScale, in: 0.6...2.0).frame(width: 120)
             }
@@ -512,6 +515,15 @@ struct PlaybackTransport<S: MediaPlayback>: View {
                 Button { source.skip(10) } label: { Image(systemName: "goforward.10") }.buttonStyle(.borderless)
                 Spacer()
                 Toggle("Loop", isOn: Binding(get: { source.loop }, set: { source.loop = $0 })).font(.system(size: 11))
+            }
+            Divider()
+            HStack(spacing: 8) {
+                Button("Set In") { source.setIn() }.font(.system(size: 10))
+                Button("Set Out") { source.setOut() }.font(.system(size: 10))
+                Button("Clear") { source.clearTrim() }.font(.system(size: 10))
+                Spacer()
+                Text("IN \(tc(source.inPoint))  •  OUT \(source.outPoint > 0 ? tc(source.outPoint) : "end")")
+                    .font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary)
             }
         }
         .padding(8).background(Color(white: 0.10)).cornerRadius(6)
@@ -898,12 +910,14 @@ struct OutputsView: View {
     @EnvironmentObject var engine: Engine
     @Environment(\.dismiss) private var dismiss
     @State private var screens: [(index: Int, name: String)] = []
+    @State private var ndiAvailable = false
+    @State private var ndiVersion = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("SIMULTANEOUS OUTPUTS").font(.system(size: 13, weight: .heavy)).kerning(1)
                 Spacer()
-                Button("Refresh") { screens = engine.availableScreens() }
+                Button("Refresh") { screens = engine.availableScreens(); NDIBridge.shared.detect(); ndiAvailable = NDIBridge.shared.isAvailable; ndiVersion = NDIBridge.shared.versionString }
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
             Text("Every output below runs at the same time — and alongside Record and Stream. Send the clean Program feed to a projector or LED wall by enabling its display.")
@@ -932,11 +946,33 @@ struct OutputsView: View {
                 Button("Open Program Window") { engine.openOutputWindow() }
                 Button("Open Multiview") { engine.openMultiviewWindow() }
             }
+
+            Divider()
+            Text("NDI OUTPUT (NETWORK)").font(.system(size: 10, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            HStack(spacing: 8) {
+                Image(systemName: ndiAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundColor(ndiAvailable ? cProgram : .orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    if ndiAvailable {
+                        Text("NDI runtime detected\(ndiVersion.isEmpty ? "" : " — \(ndiVersion)")").font(.system(size: 11))
+                        Text("Frame-sending will be enabled once the NDI SDK headers are wired into the build.")
+                            .font(.system(size: 10)).foregroundColor(.secondary)
+                    } else {
+                        Text("NDI runtime not found.").font(.system(size: 11))
+                        Text("Run the libNDI for Mac installer, then click Refresh.")
+                            .font(.system(size: 10)).foregroundColor(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+            Toggle("Enable NDI output", isOn: .constant(false)).disabled(true)
+                .font(.system(size: 11)).foregroundColor(.secondary)
             Spacer()
         }
         .padding(16).frame(width: 480, height: 460)
         .preferredColorScheme(.dark)
-        .onAppear { screens = engine.availableScreens() }
+        .onAppear { screens = engine.availableScreens(); ndiAvailable = NDIBridge.shared.isAvailable; ndiVersion = NDIBridge.shared.versionString }
     }
 }
 

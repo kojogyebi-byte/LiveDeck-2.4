@@ -184,6 +184,8 @@ final class Engine: ObservableObject {
         }
     }
 
+    @Published var playlistEnabled = false { didSet { applyPlaylistMode() } }
+
     /// Replace a slot (e.g. a blank placeholder) with a real source in place.
     func replaceSource(_ oldID: UUID, with new: Source) {
         guard let idx = sources.firstIndex(where: { $0.id == oldID }) else { return }
@@ -196,6 +198,7 @@ final class Engine: ObservableObject {
         if programID == nil { programID = new.id }
         else if previewID == nil { previewID = new.id }
         selectedSourceID = new.id
+        wireMedia(new)
     }
 
     func addBlankInput() { sources.append(EmptySource()) }
@@ -244,7 +247,50 @@ final class Engine: ObservableObject {
             sources.append(src)
             if programID == nil { programID = src.id } else if previewID == nil { previewID = src.id } else { previewID = src.id }
             selectedSourceID = src.id
+            wireMedia(src)
         }
+    }
+
+    // MARK: playlist (auto-advance through media clips)
+
+    private func wireMedia(_ src: Source) {
+        guard src is FileSource || src is AudioFileSource else { return }
+        let sid = src.id
+        src.onReachedEnd = { [weak self] in
+            guard let self else { return }
+            if self.playlistEnabled && self.programID == sid { self.advancePlaylistFrom(sid) }
+        }
+        (src as? FileSource)?.loop = !playlistEnabled
+        (src as? AudioFileSource)?.loop = !playlistEnabled
+    }
+
+    private func applyPlaylistMode() {
+        for s in sources {
+            (s as? FileSource)?.loop = !playlistEnabled
+            (s as? AudioFileSource)?.loop = !playlistEnabled
+        }
+        if playlistEnabled, let pid = programID, let s = sources.first(where: { $0.id == pid }) {
+            (s as? FileSource)?.playFromIn(); (s as? AudioFileSource)?.playFromIn()
+        }
+    }
+
+    private func mediaSourcesInOrder() -> [Source] {
+        sources.filter { $0 is FileSource || $0 is AudioFileSource }
+    }
+
+    private func advancePlaylistFrom(_ id: UUID) {
+        let list = mediaSourcesInOrder()
+        guard list.count > 1, let idx = list.firstIndex(where: { $0.id == id }) else {
+            if let s = sources.first(where: { $0.id == id }) {
+                (s as? FileSource)?.playFromIn(); (s as? AudioFileSource)?.playFromIn()
+            }
+            return
+        }
+        let next = list[(idx + 1) % list.count]
+        previewID = next.id
+        cut()
+        (next as? FileSource)?.playFromIn()
+        (next as? AudioFileSource)?.playFromIn()
     }
     func setResolution(width: Int, height: Int) { guard !isRecording else { return }; self.width = width; self.height = height; persistSettings() }
 

@@ -4,6 +4,7 @@ import ScreenCaptureKit
 import CoreImage
 import CoreMediaIO
 import AppKit
+import Darwin
 
 let sharedCIContext = CIContext()
 
@@ -13,10 +14,16 @@ protocol MediaPlayback: AnyObject, ObservableObject {
     var duration: Double { get }
     var paused: Bool { get }
     var loop: Bool { get set }
+    var inPoint: Double { get }
+    var outPoint: Double { get }
     func togglePlay()
     func seek(to seconds: Double)
     func skip(_ delta: Double)
     func restart()
+    func setIn()
+    func setOut()
+    func clearTrim()
+    func playFromIn()
 }
 
 // MARK: - Video device discovery (webcams, capture cards, DeckLink, AJA, virtual cams)
@@ -53,6 +60,9 @@ class Source: NSObject, ObservableObject, Identifiable {
     @Published var muted = false
     @Published var gain: Double = 1.0
     @Published var solo = false
+
+    // Called when a media clip reaches its end / out-point (used by playlist)
+    var onReachedEnd: (() -> Void)?
 
     // Per-input audio device + live level
     @Published var level: Float = 0
@@ -236,6 +246,8 @@ final class FileSource: Source, MediaPlayback {
     @Published var paused = false
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
+    @Published var inPoint: Double = 0
+    @Published var outPoint: Double = 0   // 0 = clip end
 
     init(url: URL) {
         let item = AVPlayerItem(url: url)
@@ -247,28 +259,38 @@ final class FileSource: Source, MediaPlayback {
         super.init(name: url.lastPathComponent, kindLabel: "FILE")
         loopObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            if self.loop && !self.paused { self.player.seek(to: .zero); self.player.play() }
-        }
-        timeObs = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] t in
+        ) { [weak self] _ in self?.endReached() }
+        timeObs = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.2, preferredTimescale: 600), queue: .main) { [weak self] t in
             guard let self else { return }
             self.currentTime = t.seconds.isFinite ? t.seconds : 0
             if let d = self.player.currentItem?.duration.seconds, d.isFinite, d > 0 { self.duration = d }
+            if self.outPoint > 0 && self.currentTime >= self.outPoint - 0.03 && !self.paused { self.endReached() }
         }
         player.play()
+    }
+
+    private func endReached() {
+        if loop && !paused {
+            player.seek(to: CMTime(seconds: inPoint, preferredTimescale: 600)); player.play()
+        } else {
+            player.pause(); paused = true; onReachedEnd?()
+        }
     }
 
     func togglePlay() {
         paused.toggle()
         if paused { player.pause() } else {
-            if let item = player.currentItem, item.currentTime() == item.duration { player.seek(to: .zero) }
+            if let item = player.currentItem, item.currentTime() == item.duration { player.seek(to: CMTime(seconds: inPoint, preferredTimescale: 600)) }
             player.play()
         }
     }
-    func restart() { player.seek(to: .zero); paused = false; player.play() }
+    func restart() { player.seek(to: CMTime(seconds: inPoint, preferredTimescale: 600)); paused = false; player.play() }
     func seek(to seconds: Double) { player.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600)) }
     func skip(_ delta: Double) { seek(to: min(max(0, currentTime + delta), duration > 0 ? duration : currentTime + delta)) }
+    func setIn() { inPoint = currentTime; if outPoint > 0 && outPoint <= inPoint { outPoint = 0 } }
+    func setOut() { outPoint = currentTime > inPoint ? currentTime : duration }
+    func clearTrim() { inPoint = 0; outPoint = 0 }
+    func playFromIn() { player.seek(to: CMTime(seconds: inPoint, preferredTimescale: 600)); paused = false; player.play() }
 
     override func currentImage() -> CGImage? {
         let time = player.currentTime()
@@ -328,20 +350,20 @@ final class AudioFileSource: Source, MediaPlayback {
     @Published var paused = false
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
+    @Published var inPoint: Double = 0
+    @Published var outPoint: Double = 0
 
     init(url: URL) {
         player = AVPlayer(url: url)
         super.init(name: url.lastPathComponent, kindLabel: "AUDIO")
         loopObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: player.currentItem, queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            if self.loop && !self.paused { self.player.seek(to: .zero); self.player.play() }
-        }
-        timeObs = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] t in
+        ) { [weak self] _ in self?.endReached() }
+        timeObs = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.2, preferredTimescale: 600), queue: .main) { [weak self] t in
             guard let self else { return }
             self.currentTime = t.seconds.isFinite ? t.seconds : 0
             if let d = self.player.currentItem?.duration.seconds, d.isFinite, d > 0 { self.duration = d }
+            if self.outPoint > 0 && self.currentTime >= self.outPoint - 0.03 && !self.paused { self.endReached() }
         }
         let vt = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -351,10 +373,22 @@ final class AudioFileSource: Source, MediaPlayback {
         player.play()
     }
 
+    private func endReached() {
+        if loop && !paused {
+            player.seek(to: CMTime(seconds: inPoint, preferredTimescale: 600)); player.play()
+        } else {
+            player.pause(); paused = true; onReachedEnd?()
+        }
+    }
+
     func togglePlay() { paused.toggle(); if paused { player.pause() } else { player.play() } }
-    func restart() { player.seek(to: .zero); paused = false; player.play() }
+    func restart() { player.seek(to: CMTime(seconds: inPoint, preferredTimescale: 600)); paused = false; player.play() }
     func seek(to seconds: Double) { player.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600)) }
     func skip(_ delta: Double) { seek(to: min(max(0, currentTime + delta), duration > 0 ? duration : currentTime + delta)) }
+    func setIn() { inPoint = currentTime; if outPoint > 0 && outPoint <= inPoint { outPoint = 0 } }
+    func setOut() { outPoint = currentTime > inPoint ? currentTime : duration }
+    func clearTrim() { inPoint = 0; outPoint = 0 }
+    func playFromIn() { player.seek(to: CMTime(seconds: inPoint, preferredTimescale: 600)); paused = false; player.play() }
     override func currentImage() -> CGImage? { nil }
     override func draw(in ctx: CGContext, rect: CGRect) {
         ctx.setFillColor(NSColor(red: 0.06, green: 0.12, blue: 0.14, alpha: 1).cgColor); ctx.fill(rect)
@@ -455,4 +489,53 @@ final class AudioCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate
             currentLevel = min(1, max(0, smoothed))
         }
     }
+}
+
+// MARK: - NDI runtime detection (safe; no guessed ABI)
+//
+// The two .pkg files install the NDI *runtime* (libndi) onto this Mac. We do NOT
+// link or bundle it (that needs the licensed NDI SDK and would violate redistribution
+// terms). Instead we dlopen the installed runtime at launch and read its version via
+// the one stable, argument-free symbol `NDIlib_version`. Actual frame-sending needs the
+// SDK's exact C struct definitions (Processing.NDI.*.h) to be safe, so `sendFrame` is a
+// deliberate stub until those headers are wired in.
+
+
+final class NDIBridge {
+    static let shared = NDIBridge()
+    private(set) var isAvailable = false
+    private(set) var versionString = ""
+    private var handle: UnsafeMutableRawPointer?
+
+    private typealias VersionFn = @convention(c) () -> UnsafePointer<CChar>?
+
+    init() { detect() }
+
+    func detect() {
+        let candidates = [
+            "/usr/local/lib/libndi.dylib",
+            "/usr/local/lib/libndi.4.dylib",
+            "/usr/local/lib/libndi.5.dylib",
+            "/Library/NDI SDK for Apple/lib/macOS/libndi.dylib",
+            ProcessInfo.processInfo.environment["NDI_RUNTIME_DIR_V6"].map { $0 + "/libndi.dylib" } ?? "",
+            ProcessInfo.processInfo.environment["NDI_RUNTIME_DIR_V5"].map { $0 + "/libndi.dylib" } ?? ""
+        ].filter { !$0.isEmpty }
+
+        for path in candidates {
+            if let h = dlopen(path, RTLD_NOW) {
+                handle = h
+                if let sym = dlsym(h, "NDIlib_version") {
+                    let fn = unsafeBitCast(sym, to: VersionFn.self)
+                    if let cstr = fn() { versionString = String(cString: cstr) }
+                }
+                isAvailable = true
+                return
+            }
+        }
+        isAvailable = false
+    }
+
+    /// Placeholder until the NDI SDK headers are wired in. Intentionally does nothing
+    /// so it can never crash the live app. Returns false to indicate "not yet active".
+    func sendFrame(_ buffer: CVPixelBuffer) -> Bool { false }
 }
