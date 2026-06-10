@@ -1,3 +1,11 @@
+# LiveDeck Studio (macOS) — v3.0
+
+**Fixed:** muting an input now **actually silences its audio**. Previously video files (and in some cases audio files) kept playing through the speakers when muted — both `FileSource` and `AudioFileSource` now drive their output volume from the input's mute + fader.
+
+**Redesigned audio mixer (vMix-style):** segmented **LED meters** mapped to a real −60…0 dB scale (green → amber → red), live **dB readout** per channel and on the Master/Recording buses, a **dB scale ruler**, gain faders showing their level in dB, and proper **SOLO / M / FX** buttons (M lights red and outlines the muted strip; SOLO lights amber).
+
+---
+
 # LiveDeck Studio (macOS) — v2.9
 
 **New in 2.9 — network stream inputs.** Add Input → **Network Stream (HLS / URL)…** (also on empty slots). Paste an **HLS (.m3u8)** live stream or a direct **HTTP(S)** video URL and it becomes a full input with transport, trim and audio — great for IP cameras, CDN feeds and re-streams.

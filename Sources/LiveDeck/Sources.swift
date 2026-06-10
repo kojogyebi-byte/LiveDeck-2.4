@@ -242,6 +242,7 @@ final class FileSource: Source, MediaPlayback {
     private let output: AVPlayerItemVideoOutput
     private var loopObserver: NSObjectProtocol?
     private var timeObs: Any?
+    private var volTimer: Timer?
     @Published var loop = true
     @Published var paused = false
     @Published var currentTime: Double = 0
@@ -267,6 +268,11 @@ final class FileSource: Source, MediaPlayback {
             if let d = self.player.currentItem?.duration.seconds, d.isFinite, d > 0 { self.duration = d }
             if self.outPoint > 0 && self.currentTime >= self.outPoint - 0.03 && !self.paused { self.endReached() }
         }
+        let vt = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.player.volume = self.muted ? 0 : Float(min(1, self.gain))
+        }
+        RunLoop.main.add(vt, forMode: .common); volTimer = vt
         player.play()
     }
 
@@ -304,6 +310,7 @@ final class FileSource: Source, MediaPlayback {
 
     override func stop() {
         player.pause()
+        volTimer?.invalidate()
         if let o = loopObserver { NotificationCenter.default.removeObserver(o) }
         if let t = timeObs { player.removeTimeObserver(t) }
     }
@@ -366,7 +373,7 @@ final class AudioFileSource: Source, MediaPlayback {
             if let d = self.player.currentItem?.duration.seconds, d.isFinite, d > 0 { self.duration = d }
             if self.outPoint > 0 && self.currentTime >= self.outPoint - 0.03 && !self.paused { self.endReached() }
         }
-        let vt = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+        let vt = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.player.volume = self.muted ? 0 : Float(min(1, self.gain))
         }

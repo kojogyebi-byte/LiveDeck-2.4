@@ -556,15 +556,17 @@ struct AudioMixerPanel: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("AUDIO MIXER").font(.system(size: 10, weight: .heavy)).kerning(2).foregroundColor(.secondary)
                 MasterStrip(label: "MASTER", level: engine.audioLevel)
                 MasterStrip(label: "RECORDING", level: engine.isRecording ? engine.audioLevel : 0)
+                DBScale().padding(.horizontal, 4)
                 Divider()
                 ForEach(engine.sources) { s in
                     ChannelStrip(source: s)
                 }
-                Text("Assign an audio device to each input (Input tab) for live metering. Faders, mutes and effect settings are stored per input. Recorded audio is the master input device; summing all inputs with their effects into the recording is the next milestone.")
-                    .font(.system(size: 9)).foregroundColor(.secondary)
+                Text("Each input has its own fader, mute (M) and solo (S). Mute silences that input's live output immediately. Assign an audio device in the Input tab for live metering.")
+                    .font(.system(size: 9)).foregroundColor(.secondary).padding(.top, 4)
             }.padding(10)
         }
     }
@@ -573,10 +575,16 @@ struct AudioMixerPanel: View {
 struct MasterStrip: View {
     var label: String; var level: Float
     var body: some View {
-        HStack(spacing: 10) {
-            Text(label).font(.system(size: 10, weight: .bold)).frame(width: 80, alignment: .leading)
-            AudioMeter(level: level).frame(height: 14)
+        VStack(spacing: 3) {
+            HStack {
+                Text(label).font(.system(size: 10, weight: .heavy)).kerning(1).foregroundColor(.white)
+                Spacer()
+                Text(dbReadout(level)).font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(meterDB(level) >= -2 ? vmRed : .secondary)
+            }
+            AudioMeter(level: level, segments: 28).frame(height: 16)
         }
+        .padding(8).background(vmStripBG).cornerRadius(5)
     }
 }
 
@@ -588,54 +596,109 @@ struct ChannelStrip: View {
             HStack {
                 Text(source.name).font(.system(size: 10)).foregroundColor(.secondary)
                 Spacer()
-                Text("no input").font(.system(size: 9)).foregroundColor(.secondary)
+                Text("no input").font(.system(size: 9)).foregroundColor(Color(white: 0.35))
             }
-            .padding(8).background(Color(white: 0.08)).cornerRadius(5)
+            .padding(8).background(Color(white: 0.07)).cornerRadius(5)
         } else {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(source.name).font(.system(size: 10)).lineLimit(1)
+            let lvl = source.muted ? 0 : source.level
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text(source.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                     Spacer()
+                    Text(dbReadout(lvl)).font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(meterDB(lvl) >= -2 ? vmRed : .secondary)
+                }
+                AudioMeter(level: lvl).frame(height: 13)
+                HStack(spacing: 8) {
+                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 9)).foregroundColor(.secondary)
+                    Slider(value: $source.gain, in: 0...1.5)
+                    Text(gainDBText(source.gain)).font(.system(size: 8, design: .monospaced))
+                        .foregroundColor(.secondary).frame(width: 42, alignment: .trailing)
+                }
+                HStack(spacing: 6) {
                     Button { source.solo.toggle() } label: {
-                        Text("S").font(.system(size: 9, weight: .heavy)).frame(width: 18, height: 16)
-                            .background(source.solo ? cProgram : Color(white: 0.2)).cornerRadius(3)
+                        Text("SOLO").font(.system(size: 9, weight: .heavy))
+                            .frame(maxWidth: .infinity).frame(height: 20)
+                            .background(source.solo ? vmAmber : Color(white: 0.17))
+                            .foregroundColor(source.solo ? .black : .white).cornerRadius(3)
                     }.buttonStyle(.plain)
                     Button { source.muted.toggle() } label: {
-                        Text("M").font(.system(size: 9, weight: .heavy)).frame(width: 18, height: 16)
-                            .background(source.muted ? Color.red : Color(white: 0.2)).cornerRadius(3)
+                        Text("M").font(.system(size: 10, weight: .heavy))
+                            .frame(width: 30, height: 20)
+                            .background(source.muted ? vmRed : Color(white: 0.17))
+                            .foregroundColor(.white).cornerRadius(3)
                     }.buttonStyle(.plain)
+                    Button { showFX.toggle() } label: {
+                        Text("FX").font(.system(size: 9, weight: .heavy))
+                            .frame(width: 30, height: 20)
+                            .background(source.fxEnabled ? cProgram : Color(white: 0.17))
+                            .foregroundColor(.white).cornerRadius(3)
+                    }.buttonStyle(.plain)
+                    .popover(isPresented: $showFX) { AudioEffects(source: source).frame(width: 240).padding(10) }
                 }
-                AudioMeter(level: source.muted ? 0 : source.level).frame(height: 10)
-                Slider(value: $source.gain, in: 0...1.5)
-                HStack {
-                    if source.audioDeviceID == nil {
-                        Text("no audio device").font(.system(size: 8)).foregroundColor(.secondary)
-                    } else if source.fxEnabled {
-                        Text("FX ON").font(.system(size: 8, weight: .bold)).foregroundColor(cProgram)
-                    }
-                    Spacer()
-                    Button("FX") { showFX.toggle() }.font(.system(size: 9))
-                        .popover(isPresented: $showFX) { AudioEffects(source: source).frame(width: 240).padding(10) }
+                if source.audioDeviceID == nil {
+                    Text("no audio device — assign one in the Input tab for metering")
+                        .font(.system(size: 8)).foregroundColor(Color(white: 0.4))
                 }
             }
-            .padding(6).background(Color(white: 0.11)).cornerRadius(5)
+            .padding(8).background(vmStripBG).cornerRadius(5)
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(source.muted ? vmRed.opacity(0.5) : Color.white.opacity(0.05), lineWidth: 1))
         }
     }
 }
 
+// vMix-style colours
+let vmGreen = Color(red: 0.26, green: 0.76, blue: 0.29)
+let vmAmber = Color(red: 0.92, green: 0.74, blue: 0.05)
+let vmRed = Color(red: 0.89, green: 0.23, blue: 0.18)
+let vmStripBG = Color(red: 0.10, green: 0.10, blue: 0.11)
+
+func meterDB(_ level: Float) -> Double { level > 0.0001 ? Double(20 * log10(level)) : -60 }
+func dbReadout(_ level: Float) -> String { level > 0.0009 ? String(format: "%.0f", meterDB(level)) : "-∞" }
+func gainDBText(_ gain: Double) -> String {
+    let d = gain > 0.0001 ? 20 * log10(gain) : -60
+    return d <= -60 ? "-∞ dB" : String(format: "%+.0f dB", d)
+}
+
+/// Segmented LED meter mapped to a -60…0 dB scale (vMix look).
 struct AudioMeter: View {
     var level: Float
+    var segments: Int = 20
+    private func segColor(_ frac: Double) -> Color {
+        let d = -60 + frac * 60
+        if d >= -2 { return vmRed }
+        if d >= -9 { return vmAmber }
+        return vmGreen
+    }
     var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let fill = CGFloat(min(1, max(0, level))) * w
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3).fill(Color.black.opacity(0.6))
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(LinearGradient(colors: [.green, .green, .yellow, .red], startPoint: .leading, endPoint: .trailing))
-                    .frame(width: fill)
+        let pos = (meterDB(level) + 60) / 60
+        HStack(spacing: 1.5) {
+            ForEach(0..<segments, id: \.self) { i in
+                let frac = segments <= 1 ? 0 : Double(i) / Double(segments - 1)
+                let lit = frac <= pos
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(lit ? segColor(frac) : segColor(frac).opacity(0.14))
             }
         }
+        .padding(2)
+        .background(Color.black.opacity(0.85))
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+}
+
+/// Tiny dB scale ruler under the master meters.
+struct DBScale: View {
+    let marks: [Int] = [-60, -40, -20, -12, -6, 0]
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                ForEach(marks, id: \.self) { m in
+                    let x = CGFloat((Double(m) + 60) / 60) * geo.size.width
+                    Text("\(m)").font(.system(size: 7, design: .monospaced)).foregroundColor(.secondary)
+                        .position(x: min(max(8, x), geo.size.width - 8), y: 6)
+                }
+            }
+        }.frame(height: 12)
     }
 }
 
