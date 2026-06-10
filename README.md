@@ -1,3 +1,12 @@
+# LiveDeck Studio (macOS) — v2.6
+
+**New in 2.6:**
+- **External display output (projectors / LED walls).** Status bar → **Outputs**. Any connected display can show a clean, borderless, fullscreen Program feed. Enable several at once for **simultaneous outputs** — and they run alongside Record, Stream, Program Window and Multiview.
+- **Input section is 2× taller** by default (and still draggable / size-adjustable).
+- **Double-click an input** to take it straight to Program; **right-click** for a context menu (Take to Program / Set as Preview / Remove).
+
+---
+
 # LiveDeck Studio (macOS) — v2.5
 
 **New in 2.5:**

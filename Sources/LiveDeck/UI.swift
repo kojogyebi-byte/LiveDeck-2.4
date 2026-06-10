@@ -16,6 +16,7 @@ private let pipNoneTag = UUID()
 struct MainView: View {
     @EnvironmentObject var engine: Engine
     @State private var showStream = false
+    @State private var showOutputs = false
     @State private var dropTargeted = false
     var body: some View {
         VStack(spacing: 0) {
@@ -28,17 +29,18 @@ struct MainView: View {
                         MonitorPane(title: programName, accent: engine.isRecording ? .red : cProgram, isProgram: true)
                     }
                     .padding(6).frame(maxHeight: .infinity)
-                    InputBus().frame(minHeight: 130, idealHeight: 156)
+                    InputBus().frame(minHeight: 200, idealHeight: 312)
                 }
                 RightPanel().frame(minWidth: 240, idealWidth: 300, maxWidth: 480)
             }
-            StatusBar()
+            StatusBar(showOutputs: $showOutputs)
         }
         .background(cBG).preferredColorScheme(.dark)
         .overlay { if dropTargeted { Rectangle().stroke(cProgram, lineWidth: 3).allowsHitTesting(false) } }
         .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
         .sheet(isPresented: $showStream) { StreamSettingsView() }
+        .sheet(isPresented: $showOutputs) { OutputsView() }
     }
     var previewName: String { engine.sources.first { $0.id == engine.previewID }?.name ?? "Preview" }
     var programName: String { engine.sources.first { $0.id == engine.programID }?.name ?? "Program" }
@@ -315,7 +317,14 @@ struct InputTile: View {
             } else {
                 SourceThumb(source: source)
                     .frame(width: tw, height: th).background(Color.black)
+                    .onTapGesture(count: 2) { engine.setPreview(source.id); engine.cut() }
                     .onTapGesture { engine.setPreview(source.id); engine.selectedSourceID = source.id }
+                    .contextMenu {
+                        Button("Take to Program") { engine.setPreview(source.id); engine.cut() }
+                        Button("Set as Preview") { engine.setPreview(source.id); engine.selectedSourceID = source.id }
+                        Divider()
+                        Button("Remove", role: .destructive) { engine.removeSource(source.id) }
+                    }
                 HStack(spacing: 4) {
                     Button("PGM") { engine.setPreview(source.id); engine.cut() }
                         .font(.system(size: 9, weight: .bold)).buttonStyle(.plain)
@@ -634,6 +643,7 @@ struct LayerRow: View {
 
 struct StatusBar: View {
     @EnvironmentObject var engine: Engine
+    @Binding var showOutputs: Bool
     var body: some View {
         HStack(spacing: 12) {
             Text("\(engine.height)p\(engine.fpsTarget)").font(.system(size: 10, design: .monospaced))
@@ -651,6 +661,7 @@ struct StatusBar: View {
             SBtn("Record", color: engine.isRecording ? .red : cBtn) { engine.toggleRecording() }
             SBtn("Stream", color: cBtn).opacity(0.5)
             SBtn("Snapshot") { engine.snapshot() }
+            SBtn("Outputs", color: engine.activeScreens.isEmpty ? cBtn : cProgram) { showOutputs = true }
             SBtn("Multiview") { engine.openMultiviewWindow() }
             Toggle("Guides", isOn: $engine.showSafeGuides).toggleStyle(.button).font(.system(size: 10))
         }
@@ -849,6 +860,54 @@ struct StreamRow: View {
         }
         .textFieldStyle(.roundedBorder)
         .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+    }
+}
+
+// MARK: - Outputs (simultaneous / external displays)
+
+struct OutputsView: View {
+    @EnvironmentObject var engine: Engine
+    @Environment(\.dismiss) private var dismiss
+    @State private var screens: [(index: Int, name: String)] = []
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("SIMULTANEOUS OUTPUTS").font(.system(size: 13, weight: .heavy)).kerning(1)
+                Spacer()
+                Button("Refresh") { screens = engine.availableScreens() }
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            Text("Every output below runs at the same time — and alongside Record and Stream. Send the clean Program feed to a projector or LED wall by enabling its display.")
+                .font(.system(size: 11)).foregroundColor(.secondary)
+
+            Text("EXTERNAL DISPLAYS").font(.system(size: 10, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            if screens.count <= 1 {
+                Text("No additional displays detected. Connect a projector, monitor or LED processor and click Refresh.")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            }
+            ForEach(screens, id: \.index) { s in
+                HStack {
+                    Image(systemName: "display").foregroundColor(.secondary)
+                    Text(s.name + (s.index == 0 ? "  (main)" : "")).font(.system(size: 12))
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { engine.activeScreens.contains(s.index) },
+                        set: { _ in engine.toggleScreenOutput(s.index) })).labelsHidden()
+                }
+                .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+            }
+
+            Divider()
+            Text("WINDOWS").font(.system(size: 10, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            HStack {
+                Button("Open Program Window") { engine.openOutputWindow() }
+                Button("Open Multiview") { engine.openMultiviewWindow() }
+            }
+            Spacer()
+        }
+        .padding(16).frame(width: 480, height: 460)
+        .preferredColorScheme(.dark)
+        .onAppear { screens = engine.availableScreens() }
     }
 }
 

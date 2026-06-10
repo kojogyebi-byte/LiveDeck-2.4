@@ -138,6 +138,8 @@ final class Engine: ObservableObject {
     private var previewConsumers = NSHashTable<FrameNSView>.weakObjects()
     private var multiviewConsumer: FrameNSView?
     private var multiviewWindow: NSWindow?
+    private var screenWindows: [Int: NSWindow] = [:]
+    @Published var activeScreens: Set<Int> = []
 
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -557,6 +559,35 @@ final class Engine: ObservableObject {
                            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         win.title = "LiveDeck — Multiview"; win.contentView = view
         win.isReleasedWhenClosed = false; win.makeKeyAndOrderFront(nil); multiviewWindow = win
+    }
+
+    // MARK: external display outputs (projectors / LED walls) — run simultaneously
+
+    func availableScreens() -> [(index: Int, name: String)] {
+        NSScreen.screens.enumerated().map { (idx, s) in
+            (idx, s.localizedName.isEmpty ? "Display \(idx + 1)" : s.localizedName)
+        }
+    }
+
+    func toggleScreenOutput(_ index: Int) {
+        if let w = screenWindows[index] {
+            w.close(); screenWindows[index] = nil; activeScreens.remove(index); return
+        }
+        let screens = NSScreen.screens
+        guard screens.indices.contains(index) else { return }
+        let screen = screens[index]
+        let view = FrameNSView(frame: screen.frame)
+        addConsumer(view)
+        let win = NSWindow(contentRect: screen.frame, styleMask: [.borderless],
+                           backing: .buffered, defer: false, screen: screen)
+        win.contentView = view
+        win.level = .normal
+        win.isReleasedWhenClosed = false
+        win.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
+        win.setFrame(screen.frame, display: true)
+        win.makeKeyAndOrderFront(nil)
+        screenWindows[index] = win
+        activeScreens.insert(index)
     }
 }
 
