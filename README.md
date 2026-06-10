@@ -1,3 +1,9 @@
+# LiveDeck Studio (macOS) — v2.7
+
+**New in 2.7 — video/audio playback controls.** Select a video or audio input (Input tab) to get a full transport: a **scrub bar** with current-time / duration, **play-pause**, **skip ±10s**, **restart**, and a **loop** toggle. Scrubbing seeks the clip; works for both video files and dropped audio files.
+
+---
+
 # LiveDeck Studio (macOS) — v2.6
 
 **New in 2.6:**

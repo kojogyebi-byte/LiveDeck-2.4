@@ -439,7 +439,8 @@ struct InputAdjust: View {
             }
             TextField("Name", text: $source.name)
 
-            if let f = source as? FileSource { FileControls(file: f) }
+            if let f = source as? FileSource { PlaybackTransport(source: f) }
+            if let a = source as? AudioFileSource { PlaybackTransport(source: a) }
 
             Text("GEOMETRY").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
             adjSlider("Zoom", $source.zoom, 0.2...4)
@@ -477,15 +478,43 @@ struct InputAdjust: View {
     }
 }
 
-struct FileControls: View {
-    @ObservedObject var file: FileSource
+struct PlaybackTransport<S: MediaPlayback>: View {
+    @ObservedObject var source: S
+    @State private var scrubbing = false
+    @State private var scrubValue = 0.0
+
+    private func tc(_ s: Double) -> String {
+        guard s.isFinite, s >= 0 else { return "0:00" }
+        let t = Int(s); return String(format: "%d:%02d", t / 60, t % 60)
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            Toggle("Loop", isOn: $file.loop).font(.system(size: 11))
-            Spacer()
-            Button(file.paused ? "Play" : "Pause") { file.togglePlay() }.font(.system(size: 10))
-            Button("Restart") { file.restart() }.font(.system(size: 10))
+        VStack(spacing: 6) {
+            Slider(value: Binding(
+                get: { scrubbing ? scrubValue : source.currentTime },
+                set: { scrubValue = $0 }),
+                in: 0...max(0.1, source.duration),
+                onEditingChanged: { editing in
+                    if editing { scrubValue = source.currentTime; scrubbing = true }
+                    else { source.seek(to: scrubValue); scrubbing = false }
+                })
+            HStack {
+                Text(tc(scrubbing ? scrubValue : source.currentTime)).font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary)
+                Spacer()
+                Text(tc(source.duration)).font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary)
+            }
+            HStack(spacing: 10) {
+                Button { source.skip(-10) } label: { Image(systemName: "gobackward.10") }.buttonStyle(.borderless)
+                Button { source.restart() } label: { Image(systemName: "backward.end.fill") }.buttonStyle(.borderless)
+                Button { source.togglePlay() } label: {
+                    Image(systemName: source.paused ? "play.fill" : "pause.fill").font(.system(size: 16))
+                }.buttonStyle(.borderless)
+                Button { source.skip(10) } label: { Image(systemName: "goforward.10") }.buttonStyle(.borderless)
+                Spacer()
+                Toggle("Loop", isOn: Binding(get: { source.loop }, set: { source.loop = $0 })).font(.system(size: 11))
+            }
         }
+        .padding(8).background(Color(white: 0.10)).cornerRadius(6)
     }
 }
 

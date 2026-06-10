@@ -7,6 +7,18 @@ import AppKit
 
 let sharedCIContext = CIContext()
 
+// Media inputs that expose transport controls (video & audio files)
+protocol MediaPlayback: AnyObject, ObservableObject {
+    var currentTime: Double { get }
+    var duration: Double { get }
+    var paused: Bool { get }
+    var loop: Bool { get set }
+    func togglePlay()
+    func seek(to seconds: Double)
+    func skip(_ delta: Double)
+    func restart()
+}
+
 // MARK: - Video device discovery (webcams, capture cards, DeckLink, AJA, virtual cams)
 
 enum VideoDevices {
@@ -215,12 +227,15 @@ final class ScreenSource: Source, SCStreamOutput {
 
 // MARK: - Video file (loops)
 
-final class FileSource: Source {
+final class FileSource: Source, MediaPlayback {
     private let player: AVPlayer
     private let output: AVPlayerItemVideoOutput
     private var loopObserver: NSObjectProtocol?
+    private var timeObs: Any?
     @Published var loop = true
     @Published var paused = false
+    @Published var currentTime: Double = 0
+    @Published var duration: Double = 0
 
     init(url: URL) {
         let item = AVPlayerItem(url: url)
@@ -236,17 +251,24 @@ final class FileSource: Source {
             guard let self else { return }
             if self.loop && !self.paused { self.player.seek(to: .zero); self.player.play() }
         }
+        timeObs = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] t in
+            guard let self else { return }
+            self.currentTime = t.seconds.isFinite ? t.seconds : 0
+            if let d = self.player.currentItem?.duration.seconds, d.isFinite, d > 0 { self.duration = d }
+        }
         player.play()
     }
 
     func togglePlay() {
         paused.toggle()
         if paused { player.pause() } else {
-            if player.currentItem?.currentTime() == player.currentItem?.duration { player.seek(to: .zero) }
+            if let item = player.currentItem, item.currentTime() == item.duration { player.seek(to: .zero) }
             player.play()
         }
     }
     func restart() { player.seek(to: .zero); paused = false; player.play() }
+    func seek(to seconds: Double) { player.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600)) }
+    func skip(_ delta: Double) { seek(to: min(max(0, currentTime + delta), duration > 0 ? duration : currentTime + delta)) }
 
     override func currentImage() -> CGImage? {
         let time = player.currentTime()
@@ -260,6 +282,7 @@ final class FileSource: Source {
     override func stop() {
         player.pause()
         if let o = loopObserver { NotificationCenter.default.removeObserver(o) }
+        if let t = timeObs { player.removeTimeObserver(t) }
     }
 }
 
@@ -296,12 +319,15 @@ final class ColorSource: Source {
 
 // MARK: - Audio-only file (plays + loops; no video)
 
-final class AudioFileSource: Source {
+final class AudioFileSource: Source, MediaPlayback {
     private let player: AVPlayer
     private var loopObserver: NSObjectProtocol?
     private var volTimer: Timer?
+    private var timeObs: Any?
     @Published var loop = true
     @Published var paused = false
+    @Published var currentTime: Double = 0
+    @Published var duration: Double = 0
 
     init(url: URL) {
         player = AVPlayer(url: url)
@@ -312,6 +338,11 @@ final class AudioFileSource: Source {
             guard let self else { return }
             if self.loop && !self.paused { self.player.seek(to: .zero); self.player.play() }
         }
+        timeObs = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] t in
+            guard let self else { return }
+            self.currentTime = t.seconds.isFinite ? t.seconds : 0
+            if let d = self.player.currentItem?.duration.seconds, d.isFinite, d > 0 { self.duration = d }
+        }
         let vt = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.player.volume = self.muted ? 0 : Float(min(1, self.gain))
@@ -321,6 +352,9 @@ final class AudioFileSource: Source {
     }
 
     func togglePlay() { paused.toggle(); if paused { player.pause() } else { player.play() } }
+    func restart() { player.seek(to: .zero); paused = false; player.play() }
+    func seek(to seconds: Double) { player.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600)) }
+    func skip(_ delta: Double) { seek(to: min(max(0, currentTime + delta), duration > 0 ? duration : currentTime + delta)) }
     override func currentImage() -> CGImage? { nil }
     override func draw(in ctx: CGContext, rect: CGRect) {
         ctx.setFillColor(NSColor(red: 0.06, green: 0.12, blue: 0.14, alpha: 1).cgColor); ctx.fill(rect)
@@ -328,6 +362,7 @@ final class AudioFileSource: Source {
     override func stop() {
         player.pause(); volTimer?.invalidate()
         if let o = loopObserver { NotificationCenter.default.removeObserver(o) }
+        if let t = timeObs { player.removeTimeObserver(t) }
     }
 }
 
