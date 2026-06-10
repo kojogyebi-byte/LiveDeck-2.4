@@ -77,12 +77,26 @@ final class Engine: ObservableObject {
     @Published var showSafeGuides = false
 
     // Recording settings
-    @Published var recCodec: RecCodec = .h264
-    @Published var recContainer = "MP4"   // MP4 / MOV
-    @Published var recBitrateMbps = 8
+    @Published var recCodec: RecCodec = .h264 { didSet { persistSettings() } }
+    @Published var recContainer = "MP4" { didSet { persistSettings() } }
+    @Published var recBitrateMbps = 8 { didSet { persistSettings() } }
 
     // Input bus tile size
-    @Published var inputTileScale: Double = 1.0
+    @Published var inputTileScale: Double = 1.0 { didSet { persistSettings() } }
+
+    // Output folder
+    @Published var outputFolderPath: String? { didSet { UserDefaults.standard.set(outputFolderPath, forKey: "outputFolder") } }
+    var outputFolder: URL {
+        if let p = outputFolderPath { return URL(fileURLWithPath: p) }
+        return FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+    func chooseOutputFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
+        panel.begin { [weak self] resp in if resp == .OK, let url = panel.url { self?.outputFolderPath = url.path } }
+    }
+    func revealLastRecording() { if let u = lastRecordingURL { NSWorkspace.shared.activateFileViewerSelecting([u]) } }
     @Published var clockText = "--:--:--"
     @Published var fileOutputActive = false
     @Published var programWindowActive = false
@@ -138,6 +152,7 @@ final class Engine: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
+        loadSettings()
         audioDevices = AudioCapture.availableDevices()
         lastFrameTime = CACurrentMediaTime(); fpsClock = lastFrameTime
         let t = Timer(timeInterval: 1.0 / Double(fpsTarget), repeats: true) { [weak self] _ in self?.renderFrame() }
@@ -186,11 +201,55 @@ final class Engine: ObservableObject {
     func setAudioDevice(_ id: String?) { selectedAudioDeviceID = id; audioCapture.start(deviceID: id) }
     func addConsumer(_ v: FrameNSView) { consumers.add(v) }
     func addPreviewConsumer(_ v: FrameNSView) { previewConsumers.add(v) }
-    func setResolution(width: Int, height: Int) { guard !isRecording else { return }; self.width = width; self.height = height }
+
+    private func persistSettings() {
+        let d = UserDefaults.standard
+        d.set(recCodec.rawValue, forKey: "recCodec")
+        d.set(recContainer, forKey: "recContainer")
+        d.set(recBitrateMbps, forKey: "recBitrate")
+        d.set(fpsTarget, forKey: "fpsTarget")
+        d.set(width, forKey: "rwidth"); d.set(height, forKey: "rheight")
+        d.set(inputTileScale, forKey: "tileScale")
+    }
+    private func loadSettings() {
+        let d = UserDefaults.standard
+        if let c = d.string(forKey: "recCodec"), let rc = RecCodec(rawValue: c) { recCodec = rc }
+        if let cont = d.string(forKey: "recContainer") { recContainer = cont }
+        let br = d.integer(forKey: "recBitrate"); if br > 0 { recBitrateMbps = br }
+        let f = d.integer(forKey: "fpsTarget"); if f > 0 { fpsTarget = f }
+        let w = d.integer(forKey: "rwidth"), h = d.integer(forKey: "rheight"); if w > 0 && h > 0 { width = w; height = h }
+        let ts = d.double(forKey: "tileScale"); if ts > 0 { inputTileScale = ts }
+        outputFolderPath = d.string(forKey: "outputFolder")
+    }
+
+    /// Create the right kind of source for a dropped file and place it.
+    func addDroppedFile(_ url: URL) {
+        let ext = url.pathExtension.lowercased()
+        let video = ["mov", "mp4", "m4v", "mpeg", "mpg", "ts", "avi", "wmv", "mkv", "mxf"]
+        let image = ["png", "jpg", "jpeg", "heic", "heif", "gif", "bmp", "tiff", "tif", "webp"]
+        let audio = ["mp3", "wav", "aac", "m4a", "aiff", "aif", "flac", "caf"]
+        let src: Source
+        if image.contains(ext) { src = ImageSource(url: url) }
+        else if audio.contains(ext) { src = AudioFileSource(url: url) }
+        else { src = FileSource(url: url) }  // video + fallback
+        placeSource(src)
+    }
+
+    private func placeSource(_ src: Source) {
+        if let slot = sources.first(where: { $0.isPlaceholder }) {
+            replaceSource(slot.id, with: src)
+        } else {
+            sources.append(src)
+            if programID == nil { programID = src.id } else if previewID == nil { previewID = src.id } else { previewID = src.id }
+            selectedSourceID = src.id
+        }
+    }
+    func setResolution(width: Int, height: Int) { guard !isRecording else { return }; self.width = width; self.height = height; persistSettings() }
 
     func setFrameRate(_ f: Int) {
         guard !isRecording, f != fpsTarget else { return }
         fpsTarget = f
+        persistSettings()
         timer?.invalidate()
         let t = Timer(timeInterval: 1.0 / Double(f), repeats: true) { [weak self] _ in self?.renderFrame() }
         t.tolerance = 0.005
@@ -406,13 +465,12 @@ final class Engine: ObservableObject {
     func toggleRecording() { isRecording ? stopRecording() : startRecording() }
 
     private func startRecording() {
-        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser
+        let folder = outputFolder
         let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let useMOV = recCodec.isProRes || recContainer == "MOV"
         let ext = useMOV ? "mov" : "mp4"
         let fileType: AVFileType = useMOV ? .mov : .mp4
-        let url = movies.appendingPathComponent("LiveDeck_\(fmt.string(from: Date())).\(ext)")
+        let url = folder.appendingPathComponent("LiveDeck_\(fmt.string(from: Date())).\(ext)")
         do {
             let w = try AVAssetWriter(outputURL: url, fileType: fileType)
             var vSettings: [String: Any] = [
@@ -454,9 +512,7 @@ final class Engine: ObservableObject {
         let rep = NSBitmapImageRep(cgImage: img)
         guard let data = rep.representation(using: .png, properties: [:]) else { return }
         let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser
-        let url = desktop.appendingPathComponent("LiveDeck_\(fmt.string(from: Date())).png")
+        let url = outputFolder.appendingPathComponent("LiveDeck_\(fmt.string(from: Date())).png")
         try? data.write(to: url); NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 

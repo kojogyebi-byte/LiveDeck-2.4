@@ -16,6 +16,7 @@ private let pipNoneTag = UUID()
 struct MainView: View {
     @EnvironmentObject var engine: Engine
     @State private var showStream = false
+    @State private var dropTargeted = false
     var body: some View {
         VStack(spacing: 0) {
             TopBar(showStream: $showStream)
@@ -34,10 +35,47 @@ struct MainView: View {
             StatusBar()
         }
         .background(cBG).preferredColorScheme(.dark)
+        .overlay { if dropTargeted { Rectangle().stroke(cProgram, lineWidth: 3).allowsHitTesting(false) } }
+        .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
         .sheet(isPresented: $showStream) { StreamSettingsView() }
     }
     var previewName: String { engine.sources.first { $0.id == engine.previewID }?.name ?? "Preview" }
     var programName: String { engine.sources.first { $0.id == engine.programID }?.name ?? "Program" }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+        for p in providers where p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            accepted = true
+            p.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                var url: URL?
+                if let d = item as? Data { url = URL(dataRepresentation: d, relativeTo: nil) }
+                else if let u = item as? URL { url = u }
+                if let url { DispatchQueue.main.async { engine.addDroppedFile(url) } }
+            }
+        }
+        return accepted
+    }
+}
+
+struct HotKeys: View {
+    @EnvironmentObject var engine: Engine
+    var body: some View {
+        ZStack {
+            ForEach(1...9, id: \.self) { n in
+                Button("") { stage(n - 1) }.keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: [])
+            }
+            Button("") { engine.runTransition() }.keyboardShortcut(.return, modifiers: [])
+            Button("") { engine.cut() }.keyboardShortcut(.return, modifiers: [.command])
+            Button("") { engine.toggleFTB() }.keyboardShortcut("b", modifiers: [])
+        }
+        .opacity(0).accessibilityHidden(true)
+    }
+    func stage(_ i: Int) {
+        guard engine.sources.indices.contains(i) else { return }
+        let s = engine.sources[i]
+        if !s.isPlaceholder { engine.setPreview(s.id); engine.selectedSourceID = s.id }
+    }
 }
 
 // MARK: - Top bar
@@ -80,6 +118,9 @@ struct TopBar: View {
                         checkButton("\(b) Mbps", engine.recBitrateMbps == b) { engine.recBitrateMbps = b }
                     }
                 }
+                Divider()
+                Button("Choose recording folder…") { engine.chooseOutputFolder() }
+                Button("Reveal last recording") { engine.revealLastRecording() }
             } label: { Image(systemName: "gearshape") }.frame(width: 34)
         }
         .padding(.horizontal, 12).frame(height: 44).background(cBar)
@@ -151,6 +192,7 @@ struct TransitionColumn: View {
     var body: some View {
         VStack(spacing: 6) {
             XBtn("Cut", color: cProgram) { engine.cut() }
+            XBtn("Take", color: cPreview) { engine.runTransition() }
             XBtn("Fade", color: engine.transition == .fade ? cPreview : cBtn) { engine.quickTransition(.fade) }
             XBtn("Wipe", color: engine.transition == .wipe ? cPreview : cBtn) { engine.quickTransition(.wipe) }
             XBtn("Slide", color: engine.transition == .slide ? cPreview : cBtn) { engine.quickTransition(.slide) }

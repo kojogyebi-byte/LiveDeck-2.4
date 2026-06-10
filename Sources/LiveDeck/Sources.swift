@@ -294,6 +294,43 @@ final class ColorSource: Source {
     }
 }
 
+// MARK: - Audio-only file (plays + loops; no video)
+
+final class AudioFileSource: Source {
+    private let player: AVPlayer
+    private var loopObserver: NSObjectProtocol?
+    private var volTimer: Timer?
+    @Published var loop = true
+    @Published var paused = false
+
+    init(url: URL) {
+        player = AVPlayer(url: url)
+        super.init(name: url.lastPathComponent, kindLabel: "AUDIO")
+        loopObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: player.currentItem, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            if self.loop && !self.paused { self.player.seek(to: .zero); self.player.play() }
+        }
+        let vt = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.player.volume = self.muted ? 0 : Float(min(1, self.gain))
+        }
+        RunLoop.main.add(vt, forMode: .common); volTimer = vt
+        player.play()
+    }
+
+    func togglePlay() { paused.toggle(); if paused { player.pause() } else { player.play() } }
+    override func currentImage() -> CGImage? { nil }
+    override func draw(in ctx: CGContext, rect: CGRect) {
+        ctx.setFillColor(NSColor(red: 0.06, green: 0.12, blue: 0.14, alpha: 1).cgColor); ctx.fill(rect)
+    }
+    override func stop() {
+        player.pause(); volTimer?.invalidate()
+        if let o = loopObserver { NotificationCenter.default.removeObserver(o) }
+    }
+}
+
 // MARK: - Empty placeholder slot
 
 final class EmptySource: Source {

@@ -1,3 +1,14 @@
+# LiveDeck Studio (macOS) — v2.5
+
+**New in 2.5:**
+- **Drag & drop** video, image and audio files straight from the desktop onto the window — they fill the first empty input slot (or append). Audio files become a looping audio-only input.
+- **Keyboard hotkeys:** number keys **1–9** stage that input to Preview, **Return** = Take (run the selected transition), **⌘Return** = Cut, **B** = fade to black.
+- **Take (Auto)** button in the transition column.
+- **Recording folder** is selectable (gear menu → Choose recording folder…), with **Reveal last recording**. Snapshots and recordings both go there.
+- **Settings persist** between launches: resolution, frame rate, codec, container, bitrate and input tile size are remembered.
+
+---
+
 # LiveDeck Studio (macOS) — v2.4
 
 **New in 2.4:** new app icon; the input bus has a **SIZE** slider to scale the input tiles (and the section is draggable via the divider); the **Audio mixer now lists every input** as a channel strip (empty slots show as "no input", real inputs get meter/fader/mute/solo/FX); and **recording settings** are in the gear menu — pick **resolution** (720p/1080p/4K), **frame rate** (30/60), **codec** (H.264, HEVC, ProRes 422, ProRes 4444), **container** (MP4/MOV) and **bitrate** (4–40 Mbps). ProRes auto-selects a MOV container.
