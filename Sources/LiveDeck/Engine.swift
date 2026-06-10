@@ -185,6 +185,17 @@ final class Engine: ObservableObject {
     }
 
     @Published var playlistEnabled = false { didSet { applyPlaylistMode() } }
+    @Published var showStreamInput = false
+
+    /// Add an HLS/HTTP network stream as an input (AVFoundation-supported URLs).
+    func addNetworkStream(_ urlString: String) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), let scheme = url.scheme,
+              ["http", "https"].contains(scheme.lowercased()) else { return }
+        let name = url.host ?? "Stream"
+        let src = FileSource(url: url, displayName: name, label: "STREAM", startLooping: false)
+        placeSource(src)
+    }
 
     /// Replace a slot (e.g. a blank placeholder) with a real source in place.
     func replaceSource(_ oldID: UUID, with new: Source) {

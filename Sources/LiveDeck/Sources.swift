@@ -249,14 +249,15 @@ final class FileSource: Source, MediaPlayback {
     @Published var inPoint: Double = 0
     @Published var outPoint: Double = 0   // 0 = clip end
 
-    init(url: URL) {
+    init(url: URL, displayName: String? = nil, label: String = "FILE", startLooping: Bool = true) {
         let item = AVPlayerItem(url: url)
         output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ])
         item.add(output)
         player = AVPlayer(playerItem: item)
-        super.init(name: url.lastPathComponent, kindLabel: "FILE")
+        super.init(name: displayName ?? url.lastPathComponent, kindLabel: label)
+        loop = startLooping
         loopObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
         ) { [weak self] _ in self?.endReached() }

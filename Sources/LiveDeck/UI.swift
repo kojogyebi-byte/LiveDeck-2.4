@@ -250,6 +250,7 @@ struct InputBus: View {
             }
         }
         .background(cPanel)
+        .sheet(isPresented: Binding(get: { engine.showStreamInput }, set: { engine.showStreamInput = $0 })) { AddStreamView() }
     }
 }
 
@@ -276,6 +277,7 @@ struct InputAssignMenu<Label: View>: View {
             Button("Screen Capture") { engine.replaceSource(slotID, with: ScreenSource()) }
             Button("Video File…") { pickFile(types: videoFileTypes) { engine.replaceSource(slotID, with: FileSource(url: $0)) } }
             Button("Image…") { pickFile(types: ["public.image"]) { engine.replaceSource(slotID, with: ImageSource(url: $0)) } }
+            Button("Network Stream (HLS / URL)…") { engine.showStreamInput = true }
             Button("Colour") { engine.replaceSource(slotID, with: ColorSource()) }
         } label: { label() }
         .onAppear { if devices.isEmpty { devices = VideoDevices.all() } }
@@ -365,6 +367,7 @@ struct AddInputMenu: View {
             Button("Screen Capture") { engine.addScreen() }
             Button("Video File…") { pickFile(types: videoFileTypes) { engine.addFile(url: $0) } }
             Button("Image…") { pickFile(types: ["public.image"]) { engine.addImage(url: $0) } }
+            Button("Network Stream (HLS / URL)…") { engine.showStreamInput = true }
             Button("Colour") { engine.addColor() }
             Divider()
             Button("Blank Input") { engine.addBlankInput() }
@@ -901,6 +904,37 @@ struct StreamRow: View {
         }
         .textFieldStyle(.roundedBorder)
         .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+    }
+}
+
+// MARK: - Add network stream
+
+struct AddStreamView: View {
+    @EnvironmentObject var engine: Engine
+    @Environment(\.dismiss) private var dismiss
+    @State private var urlString = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ADD NETWORK STREAM").font(.system(size: 13, weight: .heavy)).kerning(1)
+            Text("Enter a stream URL. Supported natively: HLS (.m3u8) live streams and direct HTTP(S) video URLs (MP4, MOV, etc.). These run through the same engine as file inputs — with transport, trim, and audio.")
+                .font(.system(size: 11)).foregroundColor(.secondary)
+            TextField("https://example.com/live/stream.m3u8", text: $urlString)
+                .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Not directly supported:").font(.system(size: 11, weight: .bold))
+                Text("• RTMP / RTSP pull — needs an external demuxer (FFmpeg). Restream it to HLS and paste that URL.\n• YouTube / Twitch / Facebook page links — these don't expose a playable URL; pull the source feed or restream to HLS instead.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+            }
+            .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Add Stream") { engine.addNetworkStream(urlString); dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(urlString.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(16).frame(width: 540, height: 320).preferredColorScheme(.dark)
     }
 }
 

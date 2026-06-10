@@ -1,3 +1,11 @@
+# LiveDeck Studio (macOS) — v2.9
+
+**New in 2.9 — network stream inputs.** Add Input → **Network Stream (HLS / URL)…** (also on empty slots). Paste an **HLS (.m3u8)** live stream or a direct **HTTP(S)** video URL and it becomes a full input with transport, trim and audio — great for IP cameras, CDN feeds and re-streams.
+
+**Honest limits (and the workaround):** RTMP/RTSP pull and YouTube/Twitch/Facebook page links are **not** natively playable on macOS — RTMP/RTSP need an external demuxer (FFmpeg) and the social platforms don't expose a playable URL. The production-proven path: restream those to **HLS** (OBS, FFmpeg, or a media server) and paste the HLS URL here. The Add Stream dialog spells this out.
+
+---
+
 # LiveDeck Studio (macOS) — v2.8
 
 **New in 2.8:**
