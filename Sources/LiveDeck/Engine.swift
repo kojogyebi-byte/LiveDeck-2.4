@@ -378,6 +378,7 @@ final class Engine: ObservableObject {
     // MARK: layers
 
     func addLayer(_ kind: Layer.Kind) { let l = Layer(kind: kind); layers.insert(l, at: 0); selectedLayerID = l.id; rightTab = 2 }
+    func addLayerTemplate(_ t: OverlayTemplate) { let l = t.make(); layers.insert(l, at: 0); selectedLayerID = l.id; rightTab = 2 }
     func removeLayer(_ id: UUID) { layers.removeAll { $0.id == id }; if selectedLayerID == id { selectedLayerID = nil } }
     func moveLayer(_ id: UUID, by delta: Int) {
         guard let i = layers.firstIndex(where: { $0.id == id }) else { return }

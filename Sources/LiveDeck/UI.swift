@@ -710,6 +710,12 @@ struct OverlaysPanel: View {
                 Text("OVERLAY CHANNELS / LAYERS").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(.secondary)
                 Spacer()
                 Menu {
+                    Menu("Templates") {
+                        ForEach(OverlayTemplate.all) { t in
+                            Button { engine.addLayerTemplate(t) } label: { Label(t.name, systemImage: t.icon) }
+                        }
+                    }
+                    Divider()
                     ForEach(Layer.Kind.allCases) { k in Button { engine.addLayer(k) } label: { Label(k.rawValue, systemImage: k.icon) } }
                 } label: { Image(systemName: "plus.circle.fill").foregroundColor(cPreview) }
                 .menuStyle(.borderlessButton).frame(width: 28)
@@ -784,6 +790,21 @@ struct StatusBar: View {
 
 // MARK: - Inspector + variants
 
+struct OverlayStyleControls: View {
+    @ObservedObject var layer: Layer
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+            Text("STYLING").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            ColorPicker("Accent", selection: $layer.accent)
+            ColorPicker("Text colour", selection: $layer.textColor)
+            ColorPicker("Background", selection: $layer.bgColor)
+            HStack { Text("BG opacity").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.bgOpacity, in: 0...1) }
+            HStack { Text("Font size").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.fontScale, in: 0.6...2.0) }
+        }
+    }
+}
+
 struct LayerInspector: View {
     @EnvironmentObject var engine: Engine
     @ObservedObject var layer: Layer
@@ -801,8 +822,12 @@ struct LayerInspector: View {
             switch layer.kind {
             case .lowerThird:
                 TextField("Name line", text: $layer.text1); TextField("Title line", text: $layer.text2)
-                Picker("Style", selection: $layer.style) { Text("Accent strip").tag(0); Text("Boxed").tag(1); Text("Minimal").tag(2) }
-                ColorPicker("Accent", selection: $layer.accent)
+                Picker("Style", selection: $layer.style) {
+                    Text("Accent strip").tag(0); Text("Boxed").tag(1); Text("Minimal").tag(2)
+                    Text("Two-tone").tag(3); Text("Tab header").tag(4); Text("Outline").tag(5); Text("Pill").tag(6)
+                }
+                Picker("Align", selection: $layer.align) { Text("Left").tag(0); Text("Centre").tag(1); Text("Right").tag(2) }
+                OverlayStyleControls(layer: layer)
             case .ticker:
                 TextField("Ticker text", text: $layer.text1)
                 HStack { Text("Speed").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 20...300) }
@@ -826,6 +851,7 @@ struct LayerInspector: View {
                 }
             case .title:
                 TextField("Text", text: $layer.text1)
+                Picker("Align", selection: $layer.align) { Text("Left").tag(0); Text("Centre").tag(1); Text("Right").tag(2) }
                 HStack { Text("Size").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 3...20) }
                 ColorPicker("Color", selection: $layer.accent)
             case .logo:

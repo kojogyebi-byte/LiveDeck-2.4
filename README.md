@@ -1,3 +1,13 @@
+# LiveDeck Studio (macOS) — v3.1
+
+**New in 3.1 — far more flexible overlays.**
+- **One-click templates** (Overlays → ＋ → Templates): News, Speaker, Social handle, Breaking, Caption, Sermon, Scripture, and a centred Title card — each pre-styled and ready to edit.
+- **Seven lower-third styles:** Accent strip, Boxed, Minimal, Two-tone, Tab header, Outline, and Pill.
+- **Full styling controls** on lower thirds: accent colour, **text colour**, **background colour**, **background opacity**, **font size**, and **left / centre / right alignment**. Titles gain alignment too.
+- All new styling is saved/restored with the show file.
+
+---
+
 # LiveDeck Studio (macOS) — v3.0
 
 **Fixed:** muting an input now **actually silences its audio**. Previously video files (and in some cases audio files) kept playing through the speakers when muted — both `FileSource` and `AudioFileSource` now drive their output volume from the input's mute + fader.

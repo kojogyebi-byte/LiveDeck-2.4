@@ -49,6 +49,13 @@ final class Layer: ObservableObject, Identifiable {
     @Published var style: Int = 0          // lower-third preset
     @Published var sourceRef: UUID?        // PiP source
 
+    // Editable styling (flexibility)
+    @Published var textColor: Color = .white
+    @Published var bgColor: Color = Color(red: 0.04, green: 0.05, blue: 0.06)
+    @Published var bgOpacity: Double = 0.88
+    @Published var fontScale: Double = 1.0
+    @Published var align: Int = 0          // 0 left, 1 centre, 2 right
+
     // Overlay transform adjustments
     @Published var opacity: Double = 1.0
     @Published var offsetX: Double = 0     // fraction of width
@@ -171,36 +178,68 @@ enum LayerRenderer {
         switch layer.kind {
 
         case .lowerThird:
-            let barW: CGFloat = 640, barH: CGFloat = 96
-            let x = -barW + (barW + 60) * k
+            let scale = CGFloat(max(0.5, layer.fontScale))
+            let barW: CGFloat = 640, barH: CGFloat = 96 * scale
+            let margin: CGFloat = 60
+            let targetX: CGFloat
+            switch layer.align {
+            case 1: targetX = (W - barW) / 2
+            case 2: targetX = W - barW - margin
+            default: targetX = margin
+            }
+            let x = targetX - (1 - k) * 60
             let y: CGFloat = 110
             ctx.setAlpha(min(1, k * 1.4))
             let acc = NSColor(layer.accent)
+            let bg = NSColor(layer.bgColor).withAlphaComponent(layer.bgOpacity)
+            let tcol = NSColor(layer.textColor)
+            let f1 = NSFont.boldSystemFont(ofSize: H * 0.045 * scale)
+            let f2 = NSFont.boldSystemFont(ofSize: H * 0.026 * scale)
+            func rounded(_ r: CGRect, _ rad: CGFloat) -> CGPath {
+                CGPath(roundedRect: r, cornerWidth: rad, cornerHeight: rad, transform: nil)
+            }
             switch layer.style {
             case 1: // boxed, no strip
-                ctx.setFillColor(NSColor(red: 0.04, green: 0.05, blue: 0.06, alpha: 0.9).cgColor)
+                ctx.setFillColor(bg.cgColor)
                 ctx.fill(CGRect(x: x, y: y, width: barW, height: barH))
-                draw(layer.text1, at: CGPoint(x: x + 26, y: y + 44),
-                     font: NSFont.boldSystemFont(ofSize: H * 0.045), color: .white, in: ctx)
-                draw(layer.text2.uppercased(), at: CGPoint(x: x + 26, y: y + 12),
-                     font: NSFont.boldSystemFont(ofSize: H * 0.026), color: acc, in: ctx)
+                draw(layer.text1, at: CGPoint(x: x + 26, y: y + barH * 0.46), font: f1, color: tcol, in: ctx)
+                draw(layer.text2.uppercased(), at: CGPoint(x: x + 26, y: y + barH * 0.13), font: f2, color: acc, in: ctx)
             case 2: // minimal underline
-                draw(layer.text1, at: CGPoint(x: x + 10, y: y + 40),
-                     font: NSFont.boldSystemFont(ofSize: H * 0.05), color: .white, in: ctx)
-                let w = textWidth(layer.text1, font: NSFont.boldSystemFont(ofSize: H * 0.05))
+                draw(layer.text1, at: CGPoint(x: x + 10, y: y + 40 * scale), font: f1, color: tcol, in: ctx)
+                let w = textWidth(layer.text1, font: f1)
                 ctx.setFillColor(acc.cgColor)
-                ctx.fill(CGRect(x: x + 12, y: y + 30, width: w, height: 4))
-                draw(layer.text2.uppercased(), at: CGPoint(x: x + 12, y: y - 2),
-                     font: NSFont.boldSystemFont(ofSize: H * 0.026), color: acc, in: ctx)
+                ctx.fill(CGRect(x: x + 12, y: y + 30 * scale, width: w, height: 4))
+                draw(layer.text2.uppercased(), at: CGPoint(x: x + 12, y: y - 2), font: f2, color: acc, in: ctx)
+            case 3: // two-tone: accent block + dark body
+                let accW: CGFloat = 150
+                ctx.setFillColor(acc.cgColor); ctx.fill(CGRect(x: x, y: y, width: accW, height: barH))
+                ctx.setFillColor(bg.cgColor); ctx.fill(CGRect(x: x + accW, y: y, width: barW - accW, height: barH))
+                draw(layer.text2.uppercased(), at: CGPoint(x: x + accW / 2, y: y + barH * 0.34), font: f2, color: .white, in: ctx, centered: true)
+                draw(layer.text1, at: CGPoint(x: x + accW + 24, y: y + barH * 0.32), font: f1, color: tcol, in: ctx)
+            case 4: // tab header
+                let tabH = barH * 0.42
+                ctx.setFillColor(acc.cgColor); ctx.fill(CGRect(x: x, y: y + barH, width: 300, height: tabH))
+                draw(layer.text2.uppercased(), at: CGPoint(x: x + 18, y: y + barH + tabH * 0.22), font: f2, color: .white, in: ctx)
+                ctx.setFillColor(bg.cgColor); ctx.fill(CGRect(x: x, y: y, width: barW, height: barH))
+                draw(layer.text1, at: CGPoint(x: x + 22, y: y + barH * 0.28), font: f1, color: tcol, in: ctx)
+            case 5: // outline (accent rules top & bottom, no fill)
+                ctx.setFillColor(acc.cgColor)
+                ctx.fill(CGRect(x: x + 10, y: y + barH - 4, width: barW * 0.7, height: 4))
+                ctx.fill(CGRect(x: x + 10, y: y, width: barW * 0.4, height: 4))
+                draw(layer.text1, at: CGPoint(x: x + 12, y: y + barH * 0.40), font: f1, color: tcol, in: ctx)
+                draw(layer.text2.uppercased(), at: CGPoint(x: x + 12, y: y + barH * 0.10), font: f2, color: acc, in: ctx)
+            case 6: // rounded pill
+                ctx.addPath(rounded(CGRect(x: x, y: y, width: barW, height: barH), barH / 2)); ctx.setFillColor(bg.cgColor); ctx.fillPath()
+                ctx.addPath(rounded(CGRect(x: x + 16, y: y + barH * 0.22, width: 12, height: barH * 0.56), 6)); ctx.setFillColor(acc.cgColor); ctx.fillPath()
+                draw(layer.text1, at: CGPoint(x: x + 44, y: y + barH * 0.46), font: f1, color: tcol, in: ctx)
+                draw(layer.text2.uppercased(), at: CGPoint(x: x + 44, y: y + barH * 0.13), font: f2, color: acc, in: ctx)
             default: // accent strip (classic)
                 ctx.setFillColor(acc.cgColor)
                 ctx.fill(CGRect(x: x, y: y, width: 10, height: barH))
-                ctx.setFillColor(NSColor(red: 0.04, green: 0.05, blue: 0.06, alpha: 0.88).cgColor)
+                ctx.setFillColor(bg.cgColor)
                 ctx.fill(CGRect(x: x + 10, y: y, width: barW, height: barH))
-                draw(layer.text1, at: CGPoint(x: x + 34, y: y + 44),
-                     font: NSFont.boldSystemFont(ofSize: H * 0.045), color: .white, in: ctx)
-                draw(layer.text2.uppercased(), at: CGPoint(x: x + 34, y: y + 12),
-                     font: NSFont.boldSystemFont(ofSize: H * 0.026), color: acc, in: ctx)
+                draw(layer.text1, at: CGPoint(x: x + 34, y: y + barH * 0.46), font: f1, color: tcol, in: ctx)
+                draw(layer.text2.uppercased(), at: CGPoint(x: x + 34, y: y + barH * 0.13), font: f2, color: acc, in: ctx)
             }
 
         case .ticker:
@@ -274,9 +313,18 @@ enum LayerRenderer {
             ctx.setAlpha(k)
             ctx.setShadow(offset: .zero, blur: 18, color: NSColor.black.withAlphaComponent(0.7).cgColor)
             let size = H * CGFloat(max(2, layer.number1)) / 100
-            draw(layer.text1, at: CGPoint(x: W / 2, y: H * 0.5 - size / 2 - (1 - k) * 30),
-                 font: NSFont.boldSystemFont(ofSize: size),
-                 color: NSColor(layer.accent), in: ctx, centered: true)
+            let tf = NSFont.boldSystemFont(ofSize: size)
+            let ty = H * 0.5 - size / 2 - (1 - k) * 30
+            let col = NSColor(layer.accent)
+            switch layer.align {
+            case 0:
+                draw(layer.text1, at: CGPoint(x: 90, y: ty), font: tf, color: col, in: ctx)
+            case 2:
+                let tw = textWidth(layer.text1, font: tf)
+                draw(layer.text1, at: CGPoint(x: W - 90 - tw, y: ty), font: tf, color: col, in: ctx)
+            default:
+                draw(layer.text1, at: CGPoint(x: W / 2, y: ty), font: tf, color: col, in: ctx, centered: true)
+            }
 
         case .logo:
             if let img = layer.logoImage {
@@ -355,6 +403,9 @@ struct ShowLayer: Codable {
     var opacity: Double = 1
     var offsetX: Double = 0, offsetY: Double = 0
     var scaleAdj: Double = 1, rotationAdj: Double = 0
+    var textR: Double = 1, textG: Double = 1, textB: Double = 1
+    var bgR: Double = 0.04, bgG: Double = 0.05, bgB: Double = 0.06, bgOpacity: Double = 0.88
+    var fontScale: Double = 1, align: Int = 0
 }
 
 struct ShowFile: Codable {
@@ -373,6 +424,8 @@ extension Color {
 extension Layer {
     func toShowLayer() -> ShowLayer {
         let c = accent.rgbaComponents()
+        let tc = textColor.rgbaComponents()
+        let bc = bgColor.rgbaComponents()
         return ShowLayer(kind: kind.rawValue, name: name, isLive: isLive,
                          text1: text1, text2: text2,
                          aR: c.0, aG: c.1, aB: c.2, aA: c.3,
@@ -380,7 +433,10 @@ extension Layer {
                          position: position, use24h: use24h, style: style,
                          variants: variants,
                          opacity: opacity, offsetX: offsetX, offsetY: offsetY,
-                         scaleAdj: scaleAdj, rotationAdj: rotationAdj)
+                         scaleAdj: scaleAdj, rotationAdj: rotationAdj,
+                         textR: tc.0, textG: tc.1, textB: tc.2,
+                         bgR: bc.0, bgG: bc.1, bgB: bc.2, bgOpacity: bgOpacity,
+                         fontScale: fontScale, align: align)
     }
 
     static func from(_ s: ShowLayer) -> Layer? {
@@ -393,7 +449,61 @@ extension Layer {
         l.variants = s.variants
         l.opacity = s.opacity; l.offsetX = s.offsetX; l.offsetY = s.offsetY
         l.scaleAdj = s.scaleAdj; l.rotationAdj = s.rotationAdj
+        l.textColor = Color(.sRGB, red: s.textR, green: s.textG, blue: s.textB, opacity: 1)
+        l.bgColor = Color(.sRGB, red: s.bgR, green: s.bgG, blue: s.bgB, opacity: 1)
+        l.bgOpacity = s.bgOpacity; l.fontScale = s.fontScale; l.align = s.align
         if kind == .countdown { l.remaining = s.number1 * 60 }
         return l
     }
+}
+
+// MARK: - Overlay templates (one-click presets)
+
+struct OverlayTemplate: Identifiable {
+    let id = UUID()
+    let name: String
+    let icon: String
+    let make: () -> Layer
+
+    static let all: [OverlayTemplate] = [
+        OverlayTemplate(name: "News — accent strip", icon: "rectangle.bottomthird.inset.filled") {
+            let l = Layer(kind: .lowerThird); l.name = "News"; l.style = 0; l.align = 0
+            l.accent = Color(red: 0.85, green: 0.12, blue: 0.12)
+            l.text1 = "John Smith"; l.text2 = "Reporting Live"; return l
+        },
+        OverlayTemplate(name: "Speaker — two-tone", icon: "person.crop.rectangle") {
+            let l = Layer(kind: .lowerThird); l.name = "Speaker"; l.style = 3; l.align = 0
+            l.accent = Color(red: 0.12, green: 0.45, blue: 0.95)
+            l.text1 = "Jane Doe"; l.text2 = "Keynote"; return l
+        },
+        OverlayTemplate(name: "Social handle — pill", icon: "at") {
+            let l = Layer(kind: .lowerThird); l.name = "Social"; l.style = 6; l.align = 2
+            l.accent = Color(red: 0.55, green: 0.27, blue: 0.95)
+            l.text1 = "@yourhandle"; l.text2 = "Follow us"; return l
+        },
+        OverlayTemplate(name: "Breaking — tab header", icon: "exclamationmark.bubble") {
+            let l = Layer(kind: .lowerThird); l.name = "Breaking"; l.style = 4; l.align = 0
+            l.accent = Color(red: 0.85, green: 0.10, blue: 0.10)
+            l.text1 = "Breaking News"; l.text2 = "Live"; return l
+        },
+        OverlayTemplate(name: "Caption — outline", icon: "captions.bubble") {
+            let l = Layer(kind: .lowerThird); l.name = "Caption"; l.style = 5; l.align = 1
+            l.accent = Color(red: 1.0, green: 0.78, blue: 0.0)
+            l.text1 = "Caption text goes here"; l.text2 = ""; return l
+        },
+        OverlayTemplate(name: "Sermon — boxed", icon: "book.closed") {
+            let l = Layer(kind: .lowerThird); l.name = "Sermon"; l.style = 1; l.align = 0
+            l.accent = Color(red: 0.95, green: 0.72, blue: 0.18)
+            l.text1 = "The Power of Faith"; l.text2 = "Today's Message"; return l
+        },
+        OverlayTemplate(name: "Title card — centred", icon: "textformat") {
+            let l = Layer(kind: .title); l.name = "Title"; l.align = 1; l.number1 = 9
+            l.accent = .white; l.text1 = "Welcome"; return l
+        },
+        OverlayTemplate(name: "Scripture — minimal", icon: "text.alignleft") {
+            let l = Layer(kind: .lowerThird); l.name = "Scripture"; l.style = 2; l.align = 0
+            l.accent = Color(red: 0.2, green: 0.7, blue: 0.5)
+            l.text1 = "John 3:16"; l.text2 = "Holy Bible"; return l
+        }
+    ]
 }
