@@ -48,7 +48,7 @@ struct StreamDestination: Identifiable, Codable {
 }
 
 enum ProgramLayout: Int, CaseIterable, Identifiable {
-    case single, sideBySide, topBottom, pip, quad
+    case single, sideBySide, topBottom, pip, quad, grid
     var id: Int { rawValue }
     var label: String {
         switch self {
@@ -57,13 +57,15 @@ enum ProgramLayout: Int, CaseIterable, Identifiable {
         case .topBottom: return "Top / bottom"
         case .pip: return "Picture-in-picture"
         case .quad: return "Quad (4-up)"
+        case .grid: return "Grid (up to 10)"
         }
     }
-    var slotCount: Int {
+    var fixedSlots: Int {
         switch self {
         case .single: return 1
         case .sideBySide, .topBottom, .pip: return 2
         case .quad: return 4
+        case .grid: return 0
         }
     }
 }
@@ -73,6 +75,7 @@ struct ProgramScene: Identifiable {
     var name: String
     var layout: ProgramLayout
     var slots: [UUID?]
+    var gridCount: Int = 4
 }
 
 final class Telemetry: ObservableObject {
@@ -95,7 +98,8 @@ final class Engine: ObservableObject {
     @Published var previewID: UUID?
     @Published var programID: UUID?
     @Published var programLayout: ProgramLayout = .single
-    @Published var layoutSlots: [UUID?] = [nil, nil, nil, nil]
+    @Published var layoutSlots: [UUID?] = Array(repeating: nil, count: 10)
+    @Published var gridCount = 4
     @Published var scenes: [ProgramScene] = []
 
     @Published var transition: TransitionType = .fade
@@ -447,6 +451,7 @@ final class Engine: ObservableObject {
         if l != .single && layoutSlots.allSatisfy({ $0 == nil }) { layoutSlots[0] = programID }
     }
     func setSlot(_ i: Int, _ id: UUID?) { if i < layoutSlots.count { layoutSlots[i] = id } }
+    func slotCount(_ l: ProgramLayout) -> Int { l == .grid ? max(2, min(10, gridCount)) : l.fixedSlots }
 
     func layoutRects(_ l: ProgramLayout, _ f: CGRect) -> [CGRect] {
         let W = f.width, H = f.height
@@ -457,6 +462,17 @@ final class Engine: ObservableObject {
         case .pip: return [f, CGRect(x: W * 0.655, y: H * 0.06, width: W * 0.30, height: H * 0.30)]
         case .quad: return [CGRect(x: 0, y: H / 2, width: W / 2, height: H / 2), CGRect(x: W / 2, y: H / 2, width: W / 2, height: H / 2),
                             CGRect(x: 0, y: 0, width: W / 2, height: H / 2), CGRect(x: W / 2, y: 0, width: W / 2, height: H / 2)]
+        case .grid:
+            let count = max(2, min(10, gridCount))
+            let cols = Int(ceil(Double(count).squareRoot()))
+            let rows = Int(ceil(Double(count) / Double(cols)))
+            let cw = W / CGFloat(cols), ch = H / CGFloat(rows)
+            var rects: [CGRect] = []
+            for i in 0..<count {
+                let r = i / cols, c = i % cols
+                rects.append(CGRect(x: CGFloat(c) * cw, y: H - CGFloat(r + 1) * ch, width: cw, height: ch))
+            }
+            return rects
         }
     }
 
@@ -476,9 +492,9 @@ final class Engine: ObservableObject {
 
     func saveScene(_ name: String) {
         let nm = name.trimmingCharacters(in: .whitespaces)
-        scenes.append(ProgramScene(name: nm.isEmpty ? "Scene \(scenes.count + 1)" : nm, layout: programLayout, slots: layoutSlots))
+        scenes.append(ProgramScene(name: nm.isEmpty ? "Scene \(scenes.count + 1)" : nm, layout: programLayout, slots: layoutSlots, gridCount: gridCount))
     }
-    func recallScene(_ s: ProgramScene) { programLayout = s.layout; layoutSlots = s.slots }
+    func recallScene(_ s: ProgramScene) { programLayout = s.layout; layoutSlots = s.slots; gridCount = s.gridCount }
     func deleteScene(_ id: UUID) { scenes.removeAll { $0.id == id } }
 
     func runTransition() {
@@ -734,8 +750,8 @@ final class Engine: ObservableObject {
             slots.map { id in id.flatMap { uid in sources.firstIndex(where: { $0.id == uid }) } ?? -1 }
         }
         let show = ShowFile(width: width, height: height, layers: layers.map { $0.toShowLayer() },
-                            layout: programLayout.rawValue, slots: idxOf(layoutSlots),
-                            scenes: scenes.map { ShowScene(name: $0.name, layout: $0.layout.rawValue, slots: idxOf($0.slots)) })
+                            layout: programLayout.rawValue, slots: idxOf(layoutSlots), gridCount: gridCount,
+                            scenes: scenes.map { ShowScene(name: $0.name, layout: $0.layout.rawValue, slots: idxOf($0.slots), gridCount: $0.gridCount) })
         guard let data = try? JSONEncoder().encode(show) else { return }
         let panel = NSSavePanel(); panel.nameFieldStringValue = "Untitled.livedeck"
         if let t = UTType(filenameExtension: "livedeck") { panel.allowedContentTypes = [t] }
@@ -753,12 +769,13 @@ final class Engine: ObservableObject {
             self.selectedLayerID = self.layers.first?.id
             func slotsFrom(_ idx: [Int]) -> [UUID?] {
                 var s = idx.map { $0 >= 0 && $0 < self.sources.count ? self.sources[$0].id : nil }
-                while s.count < 4 { s.append(nil) }
-                return Array(s.prefix(4))
+                while s.count < 10 { s.append(nil) }
+                return Array(s.prefix(10))
             }
             self.programLayout = ProgramLayout(rawValue: show.layout) ?? .single
+            self.gridCount = max(2, min(10, show.gridCount))
             self.layoutSlots = slotsFrom(show.slots)
-            self.scenes = show.scenes.map { ProgramScene(name: $0.name, layout: ProgramLayout(rawValue: $0.layout) ?? .single, slots: slotsFrom($0.slots)) }
+            self.scenes = show.scenes.map { ProgramScene(name: $0.name, layout: ProgramLayout(rawValue: $0.layout) ?? .single, slots: slotsFrom($0.slots), gridCount: max(2, min(10, $0.gridCount))) }
         }
     }
 

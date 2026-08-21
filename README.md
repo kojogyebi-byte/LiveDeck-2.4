@@ -1,3 +1,12 @@
+# LiveDeck Studio (macOS) — v3.9
+
+**New in 3.9:**
+- **Up to 10 slots per scene.** New **Grid** layout in the Scenes tab with a **Cells** stepper (2–10); the compositor arranges that many sources in an even grid. (Single / Side-by-side / Top-bottom / PiP / Quad still available.) Saved with the show file.
+- **Responsive input grid.** The input tiles now reflow into a grid that **rearranges automatically when the window is resized or moved**, and sizes itself to fill the region so there's no wide blank space below.
+- **Empty input tiles are now black** (not grey) to match the monitors.
+
+---
+
 # LiveDeck Studio (macOS) — v3.8.1
 
 **Build fix.** Renamed the internal scene type (it was called `Scene`, which clashed with SwiftUI's own `Scene` protocol and broke the app entry point). No feature change from v3.8.

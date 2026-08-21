@@ -231,6 +231,27 @@ struct TransitionColumn: View {
 
 // MARK: - Input bus
 
+// Choose column count + tile width so the input tiles fill the region and reflow on resize.
+func bestInputGrid(count: Int, area: CGSize, sizeMul: CGFloat) -> (cols: Int, tileW: CGFloat) {
+    guard count > 0, area.width > 60, area.height > 60 else { return (1, 176) }
+    let gap: CGFloat = 8
+    let headerH: CGFloat = 42
+    let minW: CGFloat = 150 * max(0.6, sizeMul)
+    var best: (cols: Int, tileW: CGFloat, score: CGFloat) = (1, 150, -1e9)
+    for cols in 1...count {
+        let tileW = (area.width - gap * CGFloat(cols + 1)) / CGFloat(cols)
+        if tileW < minW && cols > 1 { continue }
+        let rows = Int(ceil(Double(count) / Double(cols)))
+        let tileH = tileW * 9.0 / 16.0 + headerH
+        let totalH = CGFloat(rows) * (tileH + gap) + gap
+        let fits = totalH <= area.height
+        let waste = fits ? (area.height - totalH) : (totalH - area.height) * 3
+        let score = -waste
+        if score > best.score { best = (cols, tileW, score) }
+    }
+    return (best.cols, max(120, best.tileW))
+}
+
 struct InputBus: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
@@ -247,15 +268,15 @@ struct InputBus: View {
             }
             .padding(.horizontal, 8).frame(height: 22).background(cBar)
             GeometryReader { geo in
-                // Fill the region height: base fit scale × the SIZE slider.
-                let fit = max(0.8, min(3.2, (geo.size.height - 78) / 99))
-                let s = CGFloat(fit) * CGFloat(engine.inputTileScale)
-                ScrollView(.horizontal, showsIndicators: true) {
-                    HStack(spacing: 6) {
+                let n = max(1, engine.sources.count)
+                let g = bestInputGrid(count: n, area: geo.size, sizeMul: CGFloat(engine.inputTileScale))
+                let columns = Array(repeating: GridItem(.fixed(g.tileW), spacing: 8), count: g.cols)
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVGrid(columns: columns, alignment: .center, spacing: 8) {
                         ForEach(Array(engine.sources.enumerated()), id: \.element.id) { idx, src in
-                            InputTile(index: idx + 1, source: src, scaleOverride: s)
+                            InputTile(index: idx + 1, source: src, tileW: g.tileW)
                         }
-                    }.padding(8)
+                    }.padding(8).frame(maxWidth: .infinity)
                 }
             }
         }
@@ -299,13 +320,11 @@ struct InputTile: View {
     @EnvironmentObject var engine: Engine
     var index: Int
     @ObservedObject var source: Source
-    var scaleOverride: CGFloat? = nil
+    var tileW: CGFloat = 176
     var isProgram: Bool { engine.programID == source.id }
     var isPreview: Bool { engine.previewID == source.id }
     var border: Color { source.isPlaceholder ? Color(white: 0.22) : (isProgram ? .red : isPreview ? cProgram : Color(white: 0.25)) }
-    var scale: CGFloat { scaleOverride ?? CGFloat(engine.inputTileScale) }
-    var tw: CGFloat { 176 * scale }
-    var th: CGFloat { 99 * scale }
+    var th: CGFloat { tileW * 9.0 / 16.0 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -318,23 +337,23 @@ struct InputTile: View {
                 Button { engine.removeSource(source.id) } label: { Image(systemName: "xmark").font(.system(size: 8)) }
                     .buttonStyle(.plain).foregroundColor(.secondary)
             }
-            .frame(width: tw).padding(.horizontal, 5).frame(height: 20).background(cBar)
+            .frame(width: tileW).padding(.horizontal, 5).frame(height: 20).background(cBar)
 
             if source.isPlaceholder {
                 InputAssignMenu(slotID: source.id) {
                     VStack(spacing: 6) {
-                        Image(systemName: "plus.circle").font(.system(size: 22)).foregroundColor(Color(white: 0.4))
+                        Image(systemName: "plus.circle").font(.system(size: 22)).foregroundColor(Color(white: 0.35))
                         Text("Select input").font(.system(size: 10)).foregroundColor(.secondary)
                     }
-                    .frame(width: tw, height: th).background(Color(white: 0.10))
+                    .frame(width: tileW, height: th).background(Color.black)
                     .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4])).foregroundColor(Color(white: 0.3)))
+                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4])).foregroundColor(Color(white: 0.25)))
                 }
                 .menuStyle(.borderlessButton)
-                Color.clear.frame(width: tw, height: 22)
+                Color.clear.frame(width: tileW, height: 22)
             } else {
                 SourceThumb(source: source)
-                    .frame(width: tw, height: th).background(Color.black)
+                    .frame(width: tileW, height: th).background(Color.black)
                     .onTapGesture(count: 2) { engine.setPreview(source.id); engine.cut() }
                     .onTapGesture { engine.setPreview(source.id); engine.selectedSourceID = source.id }
                     .contextMenu {
@@ -353,7 +372,7 @@ struct InputTile: View {
                             .foregroundColor(source.muted ? .red : cProgram)
                     }.buttonStyle(.plain)
                 }
-                .frame(width: tw).padding(.horizontal, 5).frame(height: 22).background(cBar)
+                .frame(width: tileW).padding(.horizontal, 5).frame(height: 22).background(cBar)
             }
         }
         .overlay(Rectangle().stroke(border, lineWidth: 2))
@@ -409,6 +428,12 @@ struct LayoutThumb: View {
                 case .pip: return [CGRect(x: 0, y: 0, width: W, height: H), CGRect(x: W * 0.62, y: H * 0.60, width: W * 0.33, height: H * 0.33)]
                 case .quad: return [CGRect(x: 0, y: 0, width: W / 2, height: H / 2), CGRect(x: W / 2, y: 0, width: W / 2, height: H / 2),
                                     CGRect(x: 0, y: H / 2, width: W / 2, height: H / 2), CGRect(x: W / 2, y: H / 2, width: W / 2, height: H / 2)]
+                case .grid:
+                    var rs: [CGRect] = []
+                    let cols = 3, rows = 2
+                    for i in 0..<6 { let r = i / cols, c = i % cols
+                        rs.append(CGRect(x: CGFloat(c) * W / 3, y: CGFloat(r) * H / 2, width: W / 3, height: H / 2)) }
+                    return rs
                 }
             }()
             ZStack {
@@ -439,9 +464,16 @@ struct ScenesPanel: View {
                 }
                 Text(engine.programLayout.label).font(.system(size: 11, weight: .semibold))
 
+                if engine.programLayout == .grid {
+                    Stepper("Cells: \(engine.gridCount)", value: Binding(
+                        get: { engine.gridCount },
+                        set: { engine.gridCount = max(2, min(10, $0)) }), in: 2...10)
+                        .font(.system(size: 11))
+                }
+
                 if engine.programLayout != .single {
                     Text("SLOTS").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
-                    ForEach(Array(0..<engine.programLayout.slotCount), id: \.self) { i in
+                    ForEach(Array(0..<engine.slotCount(engine.programLayout)), id: \.self) { i in
                         HStack {
                             Text("Slot \(i + 1)").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 48, alignment: .leading)
                             Picker("", selection: Binding(

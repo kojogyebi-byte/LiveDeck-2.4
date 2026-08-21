@@ -427,6 +427,7 @@ struct ShowScene: Codable {
     var name: String
     var layout: Int
     var slots: [Int]
+    var gridCount: Int = 4
 }
 
 struct ShowFile: Codable {
@@ -434,6 +435,7 @@ struct ShowFile: Codable {
     var layers: [ShowLayer]
     var layout: Int = 0
     var slots: [Int] = []
+    var gridCount: Int = 4
     var scenes: [ShowScene] = []
 }
 
