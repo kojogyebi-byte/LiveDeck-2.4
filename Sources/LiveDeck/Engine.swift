@@ -68,7 +68,7 @@ enum ProgramLayout: Int, CaseIterable, Identifiable {
     }
 }
 
-struct Scene: Identifiable {
+struct ProgramScene: Identifiable {
     let id = UUID()
     var name: String
     var layout: ProgramLayout
@@ -96,7 +96,7 @@ final class Engine: ObservableObject {
     @Published var programID: UUID?
     @Published var programLayout: ProgramLayout = .single
     @Published var layoutSlots: [UUID?] = [nil, nil, nil, nil]
-    @Published var scenes: [Scene] = []
+    @Published var scenes: [ProgramScene] = []
 
     @Published var transition: TransitionType = .fade
     @Published var transitionDuration: Double = 0.6
@@ -118,7 +118,7 @@ final class Engine: ObservableObject {
     @Published var recBitrateMbps = 8 { didSet { persistSettings() } }
 
     // Input bus tile size
-    @Published var inputTileScale: Double = 1.5 { didSet { persistSettings() } }
+    @Published var inputTileScale: Double = 1.0 { didSet { persistSettings() } }
     @Published var mixInputsIntoRecording = false { didSet { persistSettings() } }
     private var usingMixRecorder = false
     let mixRecorder = AudioMixRecorder()
@@ -476,9 +476,9 @@ final class Engine: ObservableObject {
 
     func saveScene(_ name: String) {
         let nm = name.trimmingCharacters(in: .whitespaces)
-        scenes.append(Scene(name: nm.isEmpty ? "Scene \(scenes.count + 1)" : nm, layout: programLayout, slots: layoutSlots))
+        scenes.append(ProgramScene(name: nm.isEmpty ? "Scene \(scenes.count + 1)" : nm, layout: programLayout, slots: layoutSlots))
     }
-    func recallScene(_ s: Scene) { programLayout = s.layout; layoutSlots = s.slots }
+    func recallScene(_ s: ProgramScene) { programLayout = s.layout; layoutSlots = s.slots }
     func deleteScene(_ id: UUID) { scenes.removeAll { $0.id == id } }
 
     func runTransition() {
@@ -758,7 +758,7 @@ final class Engine: ObservableObject {
             }
             self.programLayout = ProgramLayout(rawValue: show.layout) ?? .single
             self.layoutSlots = slotsFrom(show.slots)
-            self.scenes = show.scenes.map { Scene(name: $0.name, layout: ProgramLayout(rawValue: $0.layout) ?? .single, slots: slotsFrom($0.slots)) }
+            self.scenes = show.scenes.map { ProgramScene(name: $0.name, layout: ProgramLayout(rawValue: $0.layout) ?? .single, slots: slotsFrom($0.slots)) }
         }
     }
 

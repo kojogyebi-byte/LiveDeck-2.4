@@ -22,14 +22,18 @@ struct MainView: View {
         VStack(spacing: 0) {
             TopBar(showStream: $showStream)
             HSplitView {
-                VSplitView {
-                    HStack(spacing: 6) {
-                        MonitorPane(title: previewName, accent: cPreview, isProgram: false)
-                        TransitionColumn()
-                        MonitorPane(title: programName, accent: engine.isRecording ? .red : cProgram, isProgram: true)
+                GeometryReader { geo in
+                    // Monitors sized to a natural 16:9 fit (capped); the input region fills the rest.
+                    let monH = min(geo.size.height * 0.6, geo.size.width * 0.30)
+                    VStack(spacing: 0) {
+                        HStack(spacing: 6) {
+                            MonitorPane(title: previewName, accent: cPreview, isProgram: false)
+                            TransitionColumn()
+                            MonitorPane(title: programName, accent: engine.isRecording ? .red : cProgram, isProgram: true)
+                        }
+                        .padding(6).frame(height: monH)
+                        InputBus().frame(maxHeight: .infinity)
                     }
-                    .padding(6).frame(maxHeight: .infinity, alignment: .top)
-                    InputBus().frame(minHeight: 200, idealHeight: 340)
                 }
                 RightPanel().frame(minWidth: 240, idealWidth: 300, maxWidth: 480)
             }
@@ -239,15 +243,20 @@ struct InputBus: View {
                     .toggleStyle(.button).font(.system(size: 10))
                     .help("Auto-advance the Program through video/audio inputs as each clip ends")
                 Text("SIZE").font(.system(size: 9, weight: .heavy)).foregroundColor(.secondary)
-                Slider(value: $engine.inputTileScale, in: 0.6...2.0).frame(width: 120)
+                Slider(value: $engine.inputTileScale, in: 0.6...1.6).frame(width: 120)
             }
             .padding(.horizontal, 8).frame(height: 22).background(cBar)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(Array(engine.sources.enumerated()), id: \.element.id) { idx, src in
-                        InputTile(index: idx + 1, source: src)
-                    }
-                }.padding(8)
+            GeometryReader { geo in
+                // Fill the region height: base fit scale × the SIZE slider.
+                let fit = max(0.8, min(3.2, (geo.size.height - 78) / 99))
+                let s = CGFloat(fit) * CGFloat(engine.inputTileScale)
+                ScrollView(.horizontal, showsIndicators: true) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(engine.sources.enumerated()), id: \.element.id) { idx, src in
+                            InputTile(index: idx + 1, source: src, scaleOverride: s)
+                        }
+                    }.padding(8)
+                }
             }
         }
         .background(cPanel)

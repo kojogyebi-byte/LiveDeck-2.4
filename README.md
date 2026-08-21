@@ -1,3 +1,11 @@
+# LiveDeck Studio (macOS) — v3.8.1
+
+**Build fix.** Renamed the internal scene type (it was called `Scene`, which clashed with SwiftUI's own `Scene` protocol and broke the app entry point). No feature change from v3.8.
+
+**Layout.** The input region now automatically fills the space beneath the Preview/Program monitors, and the input tiles scale up to fill that region so they're large instead of a thin strip over a black void. Monitors keep their 16:9 size; the SIZE slider still fine-tunes tile size.
+
+---
+
 # LiveDeck Studio (macOS) — v3.8
 
 **New in 3.8 — scene layouts (multi-source composition).** New **Scenes** tab in the right panel. Compose the Program from more than one input:
