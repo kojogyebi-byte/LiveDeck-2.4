@@ -536,22 +536,139 @@ struct PlaybackTransport<S: MediaPlayback>: View {
     }
 }
 
+// Total EQ magnitude (dB) at frequency f, for the response curve.
+func eqTotalDB(_ f: Double, _ s: Source) -> Double {
+    let sr = 48000.0
+    var db = 0.0
+    if s.eqHPF >= 20 { db += Biquad.highpass(s.eqHPF, sr: sr).magnitudeDB(f, sr: sr) }
+    if s.eqLPF >= 1000 && s.eqLPF < 20000 { db += Biquad.lowpass(s.eqLPF, sr: sr).magnitudeDB(f, sr: sr) }
+    if abs(s.eqLowGain) > 0.1 { db += Biquad.lowShelf(120, gainDB: s.eqLowGain, sr: sr).magnitudeDB(f, sr: sr) }
+    if abs(s.eqP1Gain) > 0.1 { db += Biquad.peaking(s.eqP1Freq, q: s.eqP1Q, gainDB: s.eqP1Gain, sr: sr).magnitudeDB(f, sr: sr) }
+    if abs(s.eqP2Gain) > 0.1 { db += Biquad.peaking(s.eqP2Freq, q: s.eqP2Q, gainDB: s.eqP2Gain, sr: sr).magnitudeDB(f, sr: sr) }
+    if abs(s.eqHighGain) > 0.1 { db += Biquad.highShelf(8000, gainDB: s.eqHighGain, sr: sr).magnitudeDB(f, sr: sr) }
+    return db
+}
+
+struct EQCurve: View {
+    @ObservedObject var source: Source
+    var body: some View {
+        GeometryReader { geo in
+            let W = geo.size.width, H = geo.size.height
+            ZStack {
+                Path { p in p.move(to: CGPoint(x: 0, y: H / 2)); p.addLine(to: CGPoint(x: W, y: H / 2)) }
+                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                Path { p in
+                    let n = 110
+                    for i in 0...n {
+                        let frac = Double(i) / Double(n)
+                        let f = 20 * pow(1000, frac)
+                        let db = eqTotalDB(f, source)
+                        let x = CGFloat(frac) * W
+                        let y = min(max(0, H / 2 - CGFloat(db / 18) * (H / 2)), H)
+                        if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
+                    }
+                }.stroke(cPreview, lineWidth: 2)
+            }
+            .background(LinearGradient(colors: [Color(white: 0.12), Color(white: 0.06)], startPoint: .top, endPoint: .bottom))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .frame(height: 84)
+    }
+}
+
+struct GateCurve: View {
+    @ObservedObject var source: Source
+    var body: some View {
+        GeometryReader { geo in
+            let W = geo.size.width, H = geo.size.height
+            Path { p in
+                for i in 0...60 {
+                    let inDb = -60.0 + Double(i)
+                    let outDb = inDb < source.gateThreshold ? max(-60, inDb + source.gateRange) : inDb
+                    let x = CGFloat((inDb + 60) / 60) * W
+                    let y = H - CGFloat((min(0, max(-60, outDb)) + 60) / 60) * H
+                    if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
+                }
+            }.stroke(vmGreen, lineWidth: 2)
+                .background(Color(white: 0.06)).clipShape(RoundedRectangle(cornerRadius: 4))
+        }.frame(height: 70)
+    }
+}
+
+struct CompCurve: View {
+    @ObservedObject var source: Source
+    var body: some View {
+        GeometryReader { geo in
+            let W = geo.size.width, H = geo.size.height
+            ZStack {
+                Path { p in p.move(to: CGPoint(x: 0, y: H)); p.addLine(to: CGPoint(x: W, y: 0)) }
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                Path { p in
+                    for i in 0...60 {
+                        let inDb = -60.0 + Double(i)
+                        var outDb = inDb
+                        if inDb > source.compThreshold { outDb = source.compThreshold + (inDb - source.compThreshold) / max(1, source.compRatio) }
+                        outDb += source.compMakeup
+                        let x = CGFloat((inDb + 60) / 60) * W
+                        let y = H - CGFloat((min(0, max(-60, outDb)) + 60) / 60) * H
+                        if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
+                    }
+                }.stroke(cProgram, lineWidth: 2)
+            }
+            .background(Color(white: 0.06)).clipShape(RoundedRectangle(cornerRadius: 4))
+        }.frame(height: 70)
+    }
+}
+
 struct AudioEffects: View {
     @ObservedObject var source: Source
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle("Enable effects", isOn: $source.fxEnabled).font(.system(size: 11))
-            Text("EQUALISER (dB)").font(.system(size: 9, weight: .heavy)).foregroundColor(.secondary)
-            adjSlider("Low", $source.eqLow, -24...24)
-            adjSlider("Mid", $source.eqMid, -24...24)
-            adjSlider("High", $source.eqHigh, -24...24)
-            Text("COMPRESSOR").font(.system(size: 9, weight: .heavy)).foregroundColor(.secondary)
-            adjSlider("Threshold", $source.compThreshold, -40...0)
-            adjSlider("Ratio", $source.compRatio, 1...20)
-            Text("GATE").font(.system(size: 9, weight: .heavy)).foregroundColor(.secondary)
-            adjSlider("Threshold", $source.gateThreshold, -80...0)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Toggle("Effects", isOn: $source.fxEnabled).font(.system(size: 11, weight: .semibold))
+                    Spacer()
+                    Menu("Preset") { ForEach(FXPreset.all) { p in Button(p.name) { source.applyFXPreset(p) } } }
+                        .frame(width: 110)
+                }
+                Text("Effects process the recorded mix when “Mix input faders into recording” is on.")
+                    .font(.system(size: 9)).foregroundColor(.secondary)
+                Divider()
+                Text("PARAMETRIC EQ").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(.secondary)
+                EQCurve(source: source)
+                adjSlider("High-pass Hz", $source.eqHPF, 0...400)
+                adjSlider("Low shelf dB", $source.eqLowGain, -18...18)
+                Text("Peak 1").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                adjSlider("Freq Hz", $source.eqP1Freq, 40...1200)
+                adjSlider("Gain dB", $source.eqP1Gain, -18...18)
+                adjSlider("Q", $source.eqP1Q, 0.3...10)
+                Text("Peak 2").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                adjSlider("Freq Hz", $source.eqP2Freq, 500...12000)
+                adjSlider("Gain dB", $source.eqP2Gain, -18...18)
+                adjSlider("Q", $source.eqP2Q, 0.3...10)
+                adjSlider("High shelf dB", $source.eqHighGain, -18...18)
+                adjSlider("Low-pass Hz", $source.eqLPF, 0...20000)
+                Divider()
+                Text("NOISE GATE").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(.secondary)
+                GateCurve(source: source)
+                adjSlider("Threshold dB", $source.gateThreshold, -80...0)
+                adjSlider("Range dB", $source.gateRange, -80...0)
+                adjSlider("Attack ms", $source.gateAttack, 0...50)
+                adjSlider("Hold ms", $source.gateHold, 0...500)
+                adjSlider("Release ms", $source.gateRelease, 5...1000)
+                Divider()
+                Text("COMPRESSOR / LIMITER").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(.secondary)
+                CompCurve(source: source)
+                adjSlider("Threshold dB", $source.compThreshold, -40...0)
+                adjSlider("Ratio :1", $source.compRatio, 1...20)
+                adjSlider("Attack ms", $source.compAttack, 0...100)
+                adjSlider("Release ms", $source.compRelease, 10...500)
+                adjSlider("Makeup dB", $source.compMakeup, 0...18)
+            }
+            .padding(12)
         }
-        .padding(8).background(Color(white: 0.10)).cornerRadius(6)
+        .frame(width: 340, height: 540)
+        .background(Color(white: 0.09))
     }
 }
 
@@ -678,7 +795,7 @@ struct ChannelStrip: View {
                             .background(source.fxEnabled ? cProgram : Color(white: 0.17))
                             .foregroundColor(.white).cornerRadius(3)
                     }.buttonStyle(.plain)
-                    .popover(isPresented: $showFX) { AudioEffects(source: source).frame(width: 240).padding(10) }
+                    .popover(isPresented: $showFX) { AudioEffects(source: source) }
                 }
                 if source.audioDeviceID == nil {
                     Text("no audio device — assign one in the Input tab for metering")

@@ -1,3 +1,17 @@
+# LiveDeck Studio (macOS) — v3.6
+
+**New in 3.6 — professional per-input audio effects (EQ · Gate · Compressor) that actually process the recording.** Open an input's **FX** panel (Audio mixer, or Input tab). It now has:
+- **Parametric EQ** with a live response curve: high-pass, low shelf, two sweepable peaking bands (freq/gain/Q), high shelf, low-pass.
+- **Noise gate** with threshold, range, attack, hold, release and a transfer graph.
+- **Compressor / limiter** with threshold, ratio, attack, release, make-up and a transfer curve.
+- **Presets:** Flat/Reset, De-hum (50/60 Hz), De-rumble, Cut hiss, De-ess, Voice clarity, Warmth, Brightness, Compressor, Limiter, Noise gate.
+
+The DSP (biquad EQ + envelope gate + compressor) runs on each input inside the recording mixer, so with **“Mix input faders into recording”** enabled and **Effects** on for an input, the processing is applied to the recorded audio. Off by default per input.
+
+**Honest scope:** effects are applied to the recorded mix, not a separate live monitor bus; and processing is per-input mono. EQ/dynamics math uses standard biquad + envelope designs — verify a take off-air before relying on it live.
+
+---
+
 # LiveDeck Studio (macOS) — v3.5.1
 
 **Build fix.** Corrected an audio-settings constant name (`AVLinearPCMIsBigEndianKey`) that broke the v3.5 compile, and removed an unused variable warning. Same features as v3.5 (input audio summed into the recording).

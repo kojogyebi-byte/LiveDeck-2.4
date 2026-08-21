@@ -182,6 +182,15 @@ final class Engine: ObservableObject {
             return Float(min(1.5, max(0, s.gain)))
         }
         mixRecorder.masterGain = { 1.0 }
+        mixRecorder.snapshotFor = { [weak self] id in
+            guard let self, let s = self.sources.first(where: { $0.id == id }) else { return nil }
+            return EffectSnapshot(
+                enabled: s.fxEnabled,
+                hpf: s.eqHPF, lowGain: s.eqLowGain, p1f: s.eqP1Freq, p1g: s.eqP1Gain, p1q: s.eqP1Q,
+                p2f: s.eqP2Freq, p2g: s.eqP2Gain, p2q: s.eqP2Q, highGain: s.eqHighGain, lpf: s.eqLPF,
+                gThresh: s.gateThreshold, gRange: s.gateRange, gAtt: s.gateAttack, gHold: s.gateHold, gRel: s.gateRelease,
+                cThresh: s.compThreshold, cRatio: s.compRatio, cAtt: s.compAttack, cRel: s.compRelease, cMakeup: s.compMakeup)
+        }
         mixRecorder.onMixed = { [weak self] sb in
             guard let self, self.isRecording, let input = self.audioInput, input.isReadyForMoreMediaData else { return }
             input.append(sb)

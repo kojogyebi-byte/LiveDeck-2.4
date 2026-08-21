@@ -69,13 +69,33 @@ class Source: NSObject, ObservableObject, Identifiable {
     let meter = InputAudioMeter()
 
     // Per-input audio effects (parameters; metering is live)
+    // Per-input audio effects (applied to the recorded mix when fxEnabled)
     @Published var fxEnabled = false
-    @Published var eqLow: Double = 0      // dB  -24...24
-    @Published var eqMid: Double = 0
-    @Published var eqHigh: Double = 0
-    @Published var compThreshold: Double = -20  // dB
-    @Published var compRatio: Double = 2         // :1
+    // Parametric EQ
+    @Published var eqHPF: Double = 0          // high-pass Hz, 0 = off
+    @Published var eqLowGain: Double = 0      // low shelf dB (~120 Hz)
+    @Published var eqP1Freq: Double = 300
+    @Published var eqP1Gain: Double = 0
+    @Published var eqP1Q: Double = 1.0
+    @Published var eqP2Freq: Double = 3000
+    @Published var eqP2Gain: Double = 0
+    @Published var eqP2Q: Double = 1.0
+    @Published var eqHighGain: Double = 0     // high shelf dB (~8 kHz)
+    @Published var eqLPF: Double = 0          // low-pass Hz, 0 = off
+    // Noise gate
     @Published var gateThreshold: Double = -60   // dB
+    @Published var gateRange: Double = -60       // dB attenuation when closed
+    @Published var gateAttack: Double = 1        // ms
+    @Published var gateHold: Double = 100        // ms
+    @Published var gateRelease: Double = 200     // ms
+    // Compressor / limiter
+    @Published var compThreshold: Double = -18   // dB
+    @Published var compRatio: Double = 2         // :1
+    @Published var compAttack: Double = 10       // ms
+    @Published var compRelease: Double = 120     // ms
+    @Published var compMakeup: Double = 0        // dB
+
+    func applyFXPreset(_ p: FXPreset) { p.apply(self) }
 
     // Live input adjustments (vMix-style)
     @Published var zoom: Double = 1.0        // 1 = fit
@@ -610,6 +630,7 @@ final class AudioMixRecorder {
         let id: UUID
         var isReference = false
         weak var owner: AudioMixRecorder?
+        let dsp = AudioDSP()
         private var session: AVCaptureSession?
         private let q: DispatchQueue
         private var ring = [Float]()
@@ -667,6 +688,7 @@ final class AudioMixRecorder {
 
     private(set) var taps: [Tap] = []
     var gainFor: ((UUID) -> Float)?
+    var snapshotFor: ((UUID) -> EffectSnapshot?)?
     var masterGain: () -> Float = { 1 }
     var onMixed: ((CMSampleBuffer) -> Void)?
 
@@ -687,14 +709,18 @@ final class AudioMixRecorder {
               let dp else { return }
         let n = total / MemoryLayout<Float>.size
         guard n > 0 else { return }
-        let refGain = gainFor?(ref.id) ?? 1
         let mg = masterGain()
         dp.withMemoryRebound(to: Float.self, capacity: n) { fp in
-            for i in 0..<n { fp[i] *= refGain }
+            var refBuf = [Float](repeating: 0, count: n)
+            for i in 0..<n { refBuf[i] = fp[i] }
+            if let snap = snapshotFor?(ref.id), snap.enabled { ref.dsp.update(snap); ref.dsp.process(&refBuf) }
+            let refGain = gainFor?(ref.id) ?? 1
+            for i in 0..<n { fp[i] = refBuf[i] * refGain }
             for t in taps.dropFirst() {
                 let g = gainFor?(t.id) ?? 0
                 if g <= 0 { continue }
-                let s = t.pull(n)
+                var s = t.pull(n)
+                if let snap = snapshotFor?(t.id), snap.enabled { t.dsp.update(snap); t.dsp.process(&s) }
                 let c = min(n, s.count)
                 for i in 0..<c { fp[i] += s[i] * g }
             }
@@ -702,4 +728,192 @@ final class AudioMixRecorder {
         }
         onMixed?(sb)
     }
+}
+
+// MARK: - Audio DSP (biquad EQ + gate + compressor) for the recorded mix
+
+struct Biquad {
+    var b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0
+    var z1: Float = 0, z2: Float = 0
+
+    mutating func process(_ x: Float) -> Float {
+        let out = Float(b0) * x + z1
+        z1 = Float(b1) * x - Float(a1) * out + z2
+        z2 = Float(b2) * x - Float(a2) * out
+        if out.isNaN || out.isInfinite { z1 = 0; z2 = 0; return x }
+        return out
+    }
+    mutating func reset() { z1 = 0; z2 = 0 }
+
+    static func peaking(_ f: Double, q: Double, gainDB: Double, sr: Double) -> Biquad {
+        let A = pow(10, gainDB / 40), w = 2 * .pi * f / sr, cw = cos(w), sw = sin(w)
+        let alpha = sw / (2 * max(0.1, q))
+        let a0 = 1 + alpha / A
+        var bq = Biquad()
+        bq.b0 = (1 + alpha * A) / a0; bq.b1 = (-2 * cw) / a0; bq.b2 = (1 - alpha * A) / a0
+        bq.a1 = (-2 * cw) / a0; bq.a2 = (1 - alpha / A) / a0
+        return bq
+    }
+    static func lowShelf(_ f: Double, gainDB: Double, sr: Double) -> Biquad {
+        let A = pow(10, gainDB / 40), w = 2 * .pi * f / sr, cw = cos(w), sw = sin(w)
+        let alpha = sw / 2 * sqrt((A + 1 / A) * (1 / 0.9 - 1) + 2), tsa = 2 * sqrt(A) * alpha
+        let a0 = (A + 1) + (A - 1) * cw + tsa
+        var bq = Biquad()
+        bq.b0 = A * ((A + 1) - (A - 1) * cw + tsa) / a0
+        bq.b1 = 2 * A * ((A - 1) - (A + 1) * cw) / a0
+        bq.b2 = A * ((A + 1) - (A - 1) * cw - tsa) / a0
+        bq.a1 = -2 * ((A - 1) + (A + 1) * cw) / a0
+        bq.a2 = ((A + 1) + (A - 1) * cw - tsa) / a0
+        return bq
+    }
+    static func highShelf(_ f: Double, gainDB: Double, sr: Double) -> Biquad {
+        let A = pow(10, gainDB / 40), w = 2 * .pi * f / sr, cw = cos(w), sw = sin(w)
+        let alpha = sw / 2 * sqrt((A + 1 / A) * (1 / 0.9 - 1) + 2), tsa = 2 * sqrt(A) * alpha
+        let a0 = (A + 1) - (A - 1) * cw + tsa
+        var bq = Biquad()
+        bq.b0 = A * ((A + 1) + (A - 1) * cw + tsa) / a0
+        bq.b1 = -2 * A * ((A - 1) + (A + 1) * cw) / a0
+        bq.b2 = A * ((A + 1) + (A - 1) * cw - tsa) / a0
+        bq.a1 = 2 * ((A - 1) - (A + 1) * cw) / a0
+        bq.a2 = ((A + 1) - (A - 1) * cw - tsa) / a0
+        return bq
+    }
+    static func highpass(_ f: Double, sr: Double) -> Biquad {
+        let w = 2 * .pi * f / sr, cw = cos(w), sw = sin(w), alpha = sw / (2 * 0.707)
+        let a0 = 1 + alpha
+        var bq = Biquad()
+        bq.b0 = (1 + cw) / 2 / a0; bq.b1 = -(1 + cw) / a0; bq.b2 = (1 + cw) / 2 / a0
+        bq.a1 = (-2 * cw) / a0; bq.a2 = (1 - alpha) / a0
+        return bq
+    }
+    static func lowpass(_ f: Double, sr: Double) -> Biquad {
+        let w = 2 * .pi * f / sr, cw = cos(w), sw = sin(w), alpha = sw / (2 * 0.707)
+        let a0 = 1 + alpha
+        var bq = Biquad()
+        bq.b0 = (1 - cw) / 2 / a0; bq.b1 = (1 - cw) / a0; bq.b2 = (1 - cw) / 2 / a0
+        bq.a1 = (-2 * cw) / a0; bq.a2 = (1 - alpha) / a0
+        return bq
+    }
+
+    /// Magnitude response in dB at frequency f (for drawing the EQ curve).
+    func magnitudeDB(_ f: Double, sr: Double) -> Double {
+        let w = 2 * .pi * f / sr, cw = cos(w), c2 = cos(2 * w), sw = sin(w), s2 = sin(2 * w)
+        let nRe = b0 + b1 * cw + b2 * c2, nIm = -(b1 * sw + b2 * s2)
+        let dRe = 1 + a1 * cw + a2 * c2, dIm = -(a1 * sw + a2 * s2)
+        let num = nRe * nRe + nIm * nIm, den = dRe * dRe + dIm * dIm
+        guard den > 0 else { return 0 }
+        return 10 * log10(max(1e-9, num / den))
+    }
+}
+
+struct EffectSnapshot {
+    var enabled = false
+    var hpf = 0.0, lowGain = 0.0, p1f = 300.0, p1g = 0.0, p1q = 1.0
+    var p2f = 3000.0, p2g = 0.0, p2q = 1.0, highGain = 0.0, lpf = 0.0
+    var gThresh = -60.0, gRange = -60.0, gAtt = 1.0, gHold = 100.0, gRel = 200.0
+    var cThresh = -18.0, cRatio = 2.0, cAtt = 10.0, cRel = 120.0, cMakeup = 0.0
+}
+
+final class AudioDSP {
+    private let sr = 48000.0
+    private var hpf = Biquad(), low = Biquad(), p1 = Biquad(), p2 = Biquad(), high = Biquad(), lpf = Biquad()
+    private var hpfOn = false, lpfOn = false, lowOn = false, p1On = false, p2On = false, highOn = false
+    private var last = EffectSnapshot()
+    private var loaded = false
+    // dynamics state
+    private var gEnv: Float = 0, gGain: Float = 1, holdSamples = 0
+    private var cGain: Float = 1
+
+    func update(_ s: EffectSnapshot) {
+        if !loaded || s.hpf != last.hpf { hpfOn = s.hpf >= 20; if hpfOn { hpf = .highpass(s.hpf, sr: sr) } }
+        if !loaded || s.lpf != last.lpf { lpfOn = s.lpf >= 1000 && s.lpf < 20000; if lpfOn { lpf = .lowpass(s.lpf, sr: sr) } }
+        if !loaded || s.lowGain != last.lowGain { lowOn = abs(s.lowGain) > 0.1; if lowOn { low = .lowShelf(120, gainDB: s.lowGain, sr: sr) } }
+        if !loaded || s.p1g != last.p1g || s.p1f != last.p1f || s.p1q != last.p1q { p1On = abs(s.p1g) > 0.1; if p1On { p1 = .peaking(s.p1f, q: s.p1q, gainDB: s.p1g, sr: sr) } }
+        if !loaded || s.p2g != last.p2g || s.p2f != last.p2f || s.p2q != last.p2q { p2On = abs(s.p2g) > 0.1; if p2On { p2 = .peaking(s.p2f, q: s.p2q, gainDB: s.p2g, sr: sr) } }
+        if !loaded || s.highGain != last.highGain { highOn = abs(s.highGain) > 0.1; if highOn { high = .highShelf(8000, gainDB: s.highGain, sr: sr) } }
+        last = s; loaded = true
+    }
+
+    func process(_ buf: inout [Float]) {
+        let s = last
+        let attCoef = Float(exp(-1.0 / (max(0.1, s.gAtt) * 0.001 * sr)))
+        let relCoef = Float(exp(-1.0 / (max(1.0, s.gRel) * 0.001 * sr)))
+        let cAttCoef = Float(exp(-1.0 / (max(0.1, s.cAtt) * 0.001 * sr)))
+        let cRelCoef = Float(exp(-1.0 / (max(1.0, s.cRel) * 0.001 * sr)))
+        let holdMax = Int(max(0, s.gHold) * 0.001 * sr)
+        let gThresh = Float(pow(10, s.gThresh / 20))
+        let gFloor = Float(pow(10, s.gRange / 20))    // attenuation (linear) when closed
+        let cThreshLin = s.cThresh, ratio = max(1, s.cRatio), makeup = Float(pow(10, s.cMakeup / 20))
+
+        for i in 0..<buf.count {
+            var x = buf[i]
+            if hpfOn { x = hpf.process(x) }
+            if lowOn { x = low.process(x) }
+            if p1On { x = p1.process(x) }
+            if p2On { x = p2.process(x) }
+            if highOn { x = high.process(x) }
+            if lpfOn { x = lpf.process(x) }
+
+            // Noise gate (envelope + hold)
+            let ax = abs(x)
+            if ax > gEnv { gEnv = ax } else { gEnv = ax + (gEnv - ax) * relCoef }
+            let targetOpen: Bool = gEnv >= gThresh
+            if targetOpen { holdSamples = holdMax; gGain += (1 - gGain) * (1 - attCoef) }
+            else if holdSamples > 0 { holdSamples -= 1 }
+            else { gGain += (gFloor - gGain) * (1 - relCoef) }
+            x *= gGain
+
+            // Compressor / limiter
+            let db = x == 0 ? -120.0 : 20 * log10(Double(abs(x)))
+            var targetGainDB = 0.0
+            if db > cThreshLin { targetGainDB = (cThreshLin - db) * (1 - 1 / ratio) }
+            let targetLin = Float(pow(10, targetGainDB / 20))
+            if targetLin < cGain { cGain += (targetLin - cGain) * (1 - cAttCoef) }
+            else { cGain += (targetLin - cGain) * (1 - cRelCoef) }
+            x *= cGain * makeup
+
+            if x > 1 { x = 1 } else if x < -1 { x = -1 }
+            buf[i] = x
+        }
+    }
+}
+
+// MARK: - Effect presets
+
+struct FXPreset: Identifiable {
+    let id = UUID()
+    let name: String
+    let apply: (Source) -> Void
+
+    static let all: [FXPreset] = [
+        FXPreset(name: "Flat / Reset") { s in
+            s.eqHPF = 0; s.eqLowGain = 0; s.eqP1Freq = 300; s.eqP1Gain = 0; s.eqP1Q = 1
+            s.eqP2Freq = 3000; s.eqP2Gain = 0; s.eqP2Q = 1; s.eqHighGain = 0; s.eqLPF = 0
+            s.gateThreshold = -80; s.gateRange = -60; s.gateAttack = 1; s.gateHold = 100; s.gateRelease = 200
+            s.compThreshold = 0; s.compRatio = 1; s.compAttack = 10; s.compRelease = 120; s.compMakeup = 0
+        },
+        FXPreset(name: "De-hum (50/60 Hz)") { s in
+            s.eqP1Freq = 60; s.eqP1Gain = -18; s.eqP1Q = 8
+            s.eqP2Freq = 120; s.eqP2Gain = -12; s.eqP2Q = 8; s.eqHPF = 40
+        },
+        FXPreset(name: "De-rumble (HPF)") { s in s.eqHPF = 90 },
+        FXPreset(name: "Cut hiss (De-hiss)") { s in s.eqLPF = 8000; s.eqHighGain = -8 },
+        FXPreset(name: "De-ess") { s in s.eqP2Freq = 6500; s.eqP2Gain = -7; s.eqP2Q = 3.5 },
+        FXPreset(name: "Voice clarity") { s in
+            s.eqHPF = 90; s.eqP1Freq = 300; s.eqP1Gain = -3; s.eqP1Q = 1.2
+            s.eqP2Freq = 3000; s.eqP2Gain = 4; s.eqP2Q = 1.0; s.eqHighGain = 2
+            s.compThreshold = -18; s.compRatio = 3; s.compAttack = 8; s.compRelease = 140; s.compMakeup = 3
+        },
+        FXPreset(name: "Warmth") { s in s.eqLowGain = 4; s.eqHighGain = -2 },
+        FXPreset(name: "Brightness") { s in s.eqP2Freq = 5000; s.eqP2Gain = 3; s.eqP2Q = 1; s.eqHighGain = 5 },
+        FXPreset(name: "Compressor (gentle)") { s in
+            s.compThreshold = -20; s.compRatio = 2.5; s.compAttack = 15; s.compRelease = 150; s.compMakeup = 3
+        },
+        FXPreset(name: "Limiter (hard)") { s in
+            s.compThreshold = -6; s.compRatio = 20; s.compAttack = 1; s.compRelease = 60; s.compMakeup = 0
+        },
+        FXPreset(name: "Noise gate") { s in
+            s.gateThreshold = -45; s.gateRange = -60; s.gateAttack = 1; s.gateHold = 120; s.gateRelease = 220
+        }
+    ]
 }
