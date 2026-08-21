@@ -47,6 +47,34 @@ struct StreamDestination: Identifiable, Codable {
     var composedURL: String { key.isEmpty ? url : (url.hasSuffix("/") ? url + key : url + "/" + key) }
 }
 
+enum ProgramLayout: Int, CaseIterable, Identifiable {
+    case single, sideBySide, topBottom, pip, quad
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .single: return "Single"
+        case .sideBySide: return "Side by side"
+        case .topBottom: return "Top / bottom"
+        case .pip: return "Picture-in-picture"
+        case .quad: return "Quad (4-up)"
+        }
+    }
+    var slotCount: Int {
+        switch self {
+        case .single: return 1
+        case .sideBySide, .topBottom, .pip: return 2
+        case .quad: return 4
+        }
+    }
+}
+
+struct Scene: Identifiable {
+    let id = UUID()
+    var name: String
+    var layout: ProgramLayout
+    var slots: [UUID?]
+}
+
 final class Telemetry: ObservableObject {
     @Published var fps: Int = 0
     @Published var clock: String = "--:--:--"
@@ -66,6 +94,9 @@ final class Engine: ObservableObject {
     // vMix-style Preview / Program buses
     @Published var previewID: UUID?
     @Published var programID: UUID?
+    @Published var programLayout: ProgramLayout = .single
+    @Published var layoutSlots: [UUID?] = [nil, nil, nil, nil]
+    @Published var scenes: [Scene] = []
 
     @Published var transition: TransitionType = .fade
     @Published var transitionDuration: Double = 0.6
@@ -409,6 +440,47 @@ final class Engine: ObservableObject {
         transitioning = false; manualActive = false; transT = 1; transFrom = nil
     }
 
+    // MARK: scene layouts
+
+    func setLayout(_ l: ProgramLayout) {
+        programLayout = l
+        if l != .single && layoutSlots.allSatisfy({ $0 == nil }) { layoutSlots[0] = programID }
+    }
+    func setSlot(_ i: Int, _ id: UUID?) { if i < layoutSlots.count { layoutSlots[i] = id } }
+
+    func layoutRects(_ l: ProgramLayout, _ f: CGRect) -> [CGRect] {
+        let W = f.width, H = f.height
+        switch l {
+        case .single: return [f]
+        case .sideBySide: return [CGRect(x: 0, y: 0, width: W / 2, height: H), CGRect(x: W / 2, y: 0, width: W / 2, height: H)]
+        case .topBottom: return [CGRect(x: 0, y: H / 2, width: W, height: H / 2), CGRect(x: 0, y: 0, width: W, height: H / 2)]
+        case .pip: return [f, CGRect(x: W * 0.655, y: H * 0.06, width: W * 0.30, height: H * 0.30)]
+        case .quad: return [CGRect(x: 0, y: H / 2, width: W / 2, height: H / 2), CGRect(x: W / 2, y: H / 2, width: W / 2, height: H / 2),
+                            CGRect(x: 0, y: 0, width: W / 2, height: H / 2), CGRect(x: W / 2, y: 0, width: W / 2, height: H / 2)]
+        }
+    }
+
+    private func drawProgramBase(_ ctx: CGContext, rect full: CGRect) {
+        let rects = layoutRects(programLayout, full)
+        for (i, r) in rects.enumerated() {
+            let sid = i < layoutSlots.count ? layoutSlots[i] : nil
+            if let sid, let s = sources.first(where: { $0.id == sid }) {
+                ctx.saveGState(); ctx.clip(to: r); s.draw(in: ctx, rect: r); ctx.restoreGState()
+            } else {
+                ctx.setFillColor(NSColor(white: 0.07, alpha: 1).cgColor); ctx.fill(r)
+            }
+        }
+        ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.6).cgColor); ctx.setLineWidth(2)
+        for r in rects { ctx.stroke(r) }
+    }
+
+    func saveScene(_ name: String) {
+        let nm = name.trimmingCharacters(in: .whitespaces)
+        scenes.append(Scene(name: nm.isEmpty ? "Scene \(scenes.count + 1)" : nm, layout: programLayout, slots: layoutSlots))
+    }
+    func recallScene(_ s: Scene) { programLayout = s.layout; layoutSlots = s.slots }
+    func deleteScene(_ id: UUID) { scenes.removeAll { $0.id == id } }
+
     func runTransition() {
         if transition == .cut { cut(); return }
         guard previewID != nil, !transitioning else { return }
@@ -479,7 +551,9 @@ final class Engine: ObservableObject {
         let full = CGRect(x: 0, y: 0, width: width, height: height)
         ctx.setFillColor(NSColor.black.cgColor); ctx.fill(full)
 
-        if transitioning, let from = transFrom {
+        if programLayout != .single {
+            drawProgramBase(ctx, rect: full)
+        } else if transitioning, let from = transFrom {
             drawTransition(ctx, from: from, to: previewID, t: transT, rect: full)
         } else if let p = programID, let s = sources.first(where: { $0.id == p }) {
             s.draw(in: ctx, rect: full)
@@ -656,7 +730,12 @@ final class Engine: ObservableObject {
     // MARK: save / load
 
     func saveShow() {
-        let show = ShowFile(width: width, height: height, layers: layers.map { $0.toShowLayer() })
+        func idxOf(_ slots: [UUID?]) -> [Int] {
+            slots.map { id in id.flatMap { uid in sources.firstIndex(where: { $0.id == uid }) } ?? -1 }
+        }
+        let show = ShowFile(width: width, height: height, layers: layers.map { $0.toShowLayer() },
+                            layout: programLayout.rawValue, slots: idxOf(layoutSlots),
+                            scenes: scenes.map { ShowScene(name: $0.name, layout: $0.layout.rawValue, slots: idxOf($0.slots)) })
         guard let data = try? JSONEncoder().encode(show) else { return }
         let panel = NSSavePanel(); panel.nameFieldStringValue = "Untitled.livedeck"
         if let t = UTType(filenameExtension: "livedeck") { panel.allowedContentTypes = [t] }
@@ -672,6 +751,14 @@ final class Engine: ObservableObject {
             self.setResolution(width: show.width, height: show.height)
             self.layers = show.layers.compactMap { Layer.from($0) }
             self.selectedLayerID = self.layers.first?.id
+            func slotsFrom(_ idx: [Int]) -> [UUID?] {
+                var s = idx.map { $0 >= 0 && $0 < self.sources.count ? self.sources[$0].id : nil }
+                while s.count < 4 { s.append(nil) }
+                return Array(s.prefix(4))
+            }
+            self.programLayout = ProgramLayout(rawValue: show.layout) ?? .single
+            self.layoutSlots = slotsFrom(show.slots)
+            self.scenes = show.scenes.map { Scene(name: $0.name, layout: ProgramLayout(rawValue: $0.layout) ?? .single, slots: slotsFrom($0.slots)) }
         }
     }
 

@@ -387,17 +387,103 @@ struct AddInputMenu: View {
 
 // MARK: - Right panel (Audio Mixer / Overlays)
 
+struct LayoutThumb: View {
+    var layout: ProgramLayout
+    var body: some View {
+        GeometryReader { geo in
+            let W = geo.size.width, H = geo.size.height
+            let rects: [CGRect] = {
+                switch layout {
+                case .single: return [CGRect(x: 0, y: 0, width: W, height: H)]
+                case .sideBySide: return [CGRect(x: 0, y: 0, width: W / 2, height: H), CGRect(x: W / 2, y: 0, width: W / 2, height: H)]
+                case .topBottom: return [CGRect(x: 0, y: 0, width: W, height: H / 2), CGRect(x: 0, y: H / 2, width: W, height: H / 2)]
+                case .pip: return [CGRect(x: 0, y: 0, width: W, height: H), CGRect(x: W * 0.62, y: H * 0.60, width: W * 0.33, height: H * 0.33)]
+                case .quad: return [CGRect(x: 0, y: 0, width: W / 2, height: H / 2), CGRect(x: W / 2, y: 0, width: W / 2, height: H / 2),
+                                    CGRect(x: 0, y: H / 2, width: W / 2, height: H / 2), CGRect(x: W / 2, y: H / 2, width: W / 2, height: H / 2)]
+                }
+            }()
+            ZStack {
+                ForEach(Array(rects.enumerated()), id: \.offset) { _, r in
+                    Rectangle().fill(Color(white: 0.28)).overlay(Rectangle().stroke(Color.black, lineWidth: 1))
+                        .frame(width: r.width, height: r.height).position(x: r.midX, y: r.midY)
+                }
+            }
+        }
+        .frame(width: 54, height: 30).background(Color.black).cornerRadius(3)
+    }
+}
+
+struct ScenesPanel: View {
+    @EnvironmentObject var engine: Engine
+    @State private var sceneName = ""
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("PROGRAM LAYOUT").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(ProgramLayout.allCases) { l in
+                        Button { engine.setLayout(l) } label: {
+                            LayoutThumb(layout: l)
+                                .overlay(RoundedRectangle(cornerRadius: 3).stroke(engine.programLayout == l ? cPreview : .clear, lineWidth: 2))
+                        }.buttonStyle(.plain)
+                    }
+                }
+                Text(engine.programLayout.label).font(.system(size: 11, weight: .semibold))
+
+                if engine.programLayout != .single {
+                    Text("SLOTS").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                    ForEach(Array(0..<engine.programLayout.slotCount), id: \.self) { i in
+                        HStack {
+                            Text("Slot \(i + 1)").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 48, alignment: .leading)
+                            Picker("", selection: Binding(
+                                get: { (engine.layoutSlots.indices.contains(i) ? engine.layoutSlots[i] : nil) ?? pipNoneTag },
+                                set: { engine.setSlot(i, $0 == pipNoneTag ? nil : $0) })) {
+                                Text("— none —").tag(pipNoneTag)
+                                ForEach(engine.sources.filter { !$0.isPlaceholder }) { s in Text(s.name).tag(s.id) }
+                            }.labelsHidden()
+                        }
+                    }
+                }
+
+                Divider()
+                Text("SCENES").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                HStack {
+                    TextField("Scene name", text: $sceneName).textFieldStyle(.roundedBorder)
+                    Button("Save") { engine.saveScene(sceneName); sceneName = "" }
+                }
+                if engine.scenes.isEmpty {
+                    Text("Arrange a layout and its slots above, then Save it as a scene to recall later.")
+                        .font(.system(size: 9)).foregroundColor(.secondary)
+                }
+                ForEach(engine.scenes) { sc in
+                    HStack(spacing: 8) {
+                        LayoutThumb(layout: sc.layout)
+                        Button(sc.name) { engine.recallScene(sc) }
+                            .buttonStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
+                        Button { engine.deleteScene(sc.id) } label: { Image(systemName: "trash").font(.system(size: 10)) }
+                            .buttonStyle(.plain).foregroundColor(.secondary)
+                    }
+                    .padding(6).background(Color(white: 0.1)).cornerRadius(5)
+                }
+                Text("Recalling a scene cuts the Program to that layout. Choose “Single” to return to the normal switcher.")
+                    .font(.system(size: 9)).foregroundColor(.secondary).padding(.top, 4)
+            }.padding(10)
+        }
+    }
+}
+
 struct RightPanel: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $engine.rightTab) {
-                Text("Audio").tag(0); Text("Input").tag(1); Text("Overlays").tag(2)
+                Text("Audio").tag(0); Text("Input").tag(1); Text("Overlays").tag(2); Text("Scenes").tag(3)
             }.pickerStyle(.segmented).padding(8)
             Divider()
             if engine.rightTab == 0 { AudioMixerPanel() }
             else if engine.rightTab == 1 { InputSettingsPanel() }
-            else { OverlaysPanel() }
+            else if engine.rightTab == 2 { OverlaysPanel() }
+            else { ScenesPanel() }
         }
         .background(cPanel).overlay(Rectangle().frame(width: 1).foregroundColor(Color(white: 0.2)), alignment: .leading)
     }

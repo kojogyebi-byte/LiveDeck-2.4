@@ -1,3 +1,13 @@
+# LiveDeck Studio (macOS) — v3.8
+
+**New in 3.8 — scene layouts (multi-source composition).** New **Scenes** tab in the right panel. Compose the Program from more than one input:
+- **Layouts:** Single, Side-by-side (two-camera split), Top / bottom, Picture-in-picture, and Quad (4-up). Pick one from the layout thumbnails.
+- **Slots:** assign a source to each region of the chosen layout.
+- **Scenes:** save the current layout + slot assignments as a named scene and recall it with one click (recall cuts the Program to that composition). Choose **Single** to return to the normal Preview/Program switcher.
+- Layouts and scenes are saved with the show file (`.livedeck`) — best-effort by input position when reopened.
+
+---
+
 # LiveDeck Studio (macOS) — v3.7.1
 
 **Layout fix.** Restored the proper **16:9 aspect ratio** for the Preview and Program monitors (v3.7 let them fill into a tall box, which looked wrong). The monitors are now top-aligned, and the **input region is larger by default and drag-adjustable** (drag the divider between the monitors and the input bus) so it fills the leftover space instead of leaving a black void. Input tiles are also bigger by default; the SIZE slider still fine-tunes them.

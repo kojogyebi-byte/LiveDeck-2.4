@@ -423,9 +423,18 @@ struct ShowLayer: Codable {
     var keySimilarity: Double = 0.12, keySmoothness: Double = 0.08
 }
 
+struct ShowScene: Codable {
+    var name: String
+    var layout: Int
+    var slots: [Int]
+}
+
 struct ShowFile: Codable {
     var width: Int, height: Int
     var layers: [ShowLayer]
+    var layout: Int = 0
+    var slots: [Int] = []
+    var scenes: [ShowScene] = []
 }
 
 extension Color {
