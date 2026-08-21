@@ -266,7 +266,6 @@ final class Engine: ObservableObject {
     /// Create the right kind of source for a dropped file and place it.
     func addDroppedFile(_ url: URL) {
         let ext = url.pathExtension.lowercased()
-        let video = ["mov", "mp4", "m4v", "mpeg", "mpg", "ts", "avi", "wmv", "mkv", "mxf"]
         let image = ["png", "jpg", "jpeg", "heic", "heif", "gif", "bmp", "tiff", "tif", "webp"]
         let audio = ["mp3", "wav", "aac", "m4a", "aiff", "aif", "flac", "caf"]
         let src: Source

@@ -630,7 +630,7 @@ final class AudioMixRecorder {
                 AVLinearPCMBitDepthKey: 32,
                 AVLinearPCMIsFloatKey: true,
                 AVLinearPCMIsNonInterleaved: false,
-                AVLinearPCMIsBigEndian: false
+                AVLinearPCMIsBigEndianKey: false
             ]
             out.setSampleBufferDelegate(self, queue: q)
             if s.canAddOutput(out) { s.addOutput(out) }

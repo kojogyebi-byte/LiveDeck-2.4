@@ -1,3 +1,9 @@
+# LiveDeck Studio (macOS) — v3.5.1
+
+**Build fix.** Corrected an audio-settings constant name (`AVLinearPCMIsBigEndianKey`) that broke the v3.5 compile, and removed an unused variable warning. Same features as v3.5 (input audio summed into the recording).
+
+---
+
 # LiveDeck Studio (macOS) — v3.5
 
 **New in 3.5 — input audio summed into the recording.** Enable **gear menu → “Mix input faders into recording.”** With it on, every input that has an audio device assigned (Input tab) is summed into the recorded audio track with its **fader, mute and solo** applied, instead of recording only the single master device. Off by default, so the proven single-device path stays the default and you can switch back instantly mid-show.
