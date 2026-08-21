@@ -28,8 +28,8 @@ struct MainView: View {
                         TransitionColumn()
                         MonitorPane(title: programName, accent: engine.isRecording ? .red : cProgram, isProgram: true)
                     }
-                    .padding(6).frame(maxHeight: .infinity)
-                    InputBus().frame(minHeight: 200, idealHeight: 312)
+                    .padding(6).frame(maxHeight: .infinity, alignment: .top)
+                    InputBus().frame(minHeight: 200, idealHeight: 340)
                 }
                 RightPanel().frame(minWidth: 240, idealWidth: 300, maxWidth: 480)
             }
@@ -170,7 +170,7 @@ struct MonitorPane: View {
                     }.allowsHitTesting(false)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
             .background(Color.black)
         }
         .background(cPanel).overlay(Rectangle().stroke(accent, lineWidth: 2))
@@ -290,11 +290,13 @@ struct InputTile: View {
     @EnvironmentObject var engine: Engine
     var index: Int
     @ObservedObject var source: Source
+    var scaleOverride: CGFloat? = nil
     var isProgram: Bool { engine.programID == source.id }
     var isPreview: Bool { engine.previewID == source.id }
     var border: Color { source.isPlaceholder ? Color(white: 0.22) : (isProgram ? .red : isPreview ? cProgram : Color(white: 0.25)) }
-    var tw: CGFloat { 176 * CGFloat(engine.inputTileScale) }
-    var th: CGFloat { 99 * CGFloat(engine.inputTileScale) }
+    var scale: CGFloat { scaleOverride ?? CGFloat(engine.inputTileScale) }
+    var tw: CGFloat { 176 * scale }
+    var th: CGFloat { 99 * scale }
 
     var body: some View {
         VStack(spacing: 0) {

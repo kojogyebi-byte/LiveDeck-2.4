@@ -87,7 +87,7 @@ final class Engine: ObservableObject {
     @Published var recBitrateMbps = 8 { didSet { persistSettings() } }
 
     // Input bus tile size
-    @Published var inputTileScale: Double = 1.0 { didSet { persistSettings() } }
+    @Published var inputTileScale: Double = 1.5 { didSet { persistSettings() } }
     @Published var mixInputsIntoRecording = false { didSet { persistSettings() } }
     private var usingMixRecorder = false
     let mixRecorder = AudioMixRecorder()

@@ -1,3 +1,9 @@
+# LiveDeck Studio (macOS) — v3.7.1
+
+**Layout fix.** Restored the proper **16:9 aspect ratio** for the Preview and Program monitors (v3.7 let them fill into a tall box, which looked wrong). The monitors are now top-aligned, and the **input region is larger by default and drag-adjustable** (drag the divider between the monitors and the input bus) so it fills the leftover space instead of leaving a black void. Input tiles are also bigger by default; the SIZE slider still fine-tunes them.
+
+---
+
 # LiveDeck Studio (macOS) — v3.7
 
 **New in 3.7:**
