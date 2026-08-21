@@ -91,6 +91,17 @@ final class Engine: ObservableObject {
     @Published var mixInputsIntoRecording = false { didSet { persistSettings() } }
     private var usingMixRecorder = false
     let mixRecorder = AudioMixRecorder()
+    let masterBus = Source(name: "Master Bus", kindLabel: "MASTER")
+    let masterInputID = UUID()
+
+    func effectSnapshot(_ s: Source) -> EffectSnapshot {
+        EffectSnapshot(
+            enabled: s.fxEnabled,
+            hpf: s.eqHPF, lowGain: s.eqLowGain, p1f: s.eqP1Freq, p1g: s.eqP1Gain, p1q: s.eqP1Q,
+            p2f: s.eqP2Freq, p2g: s.eqP2Gain, p2q: s.eqP2Q, highGain: s.eqHighGain, lpf: s.eqLPF,
+            gThresh: s.gateThreshold, gRange: s.gateRange, gAtt: s.gateAttack, gHold: s.gateHold, gRel: s.gateRelease,
+            cThresh: s.compThreshold, cRatio: s.compRatio, cAtt: s.compAttack, cRel: s.compRelease, cMakeup: s.compMakeup)
+    }
 
     // Output folder
     @Published var outputFolderPath: String? { didSet { UserDefaults.standard.set(outputFolderPath, forKey: "outputFolder") } }
@@ -176,6 +187,7 @@ final class Engine: ObservableObject {
         }
         audioCapture.start(deviceID: selectedAudioDeviceID)
         mixRecorder.gainFor = { [weak self] id in
+            if id == self?.masterInputID { return 1 }
             guard let self, let s = self.sources.first(where: { $0.id == id }) else { return 0 }
             if s.muted { return 0 }
             if self.sources.contains(where: { $0.solo }) && !s.solo { return 0 }
@@ -183,13 +195,13 @@ final class Engine: ObservableObject {
         }
         mixRecorder.masterGain = { 1.0 }
         mixRecorder.snapshotFor = { [weak self] id in
-            guard let self, let s = self.sources.first(where: { $0.id == id }) else { return nil }
-            return EffectSnapshot(
-                enabled: s.fxEnabled,
-                hpf: s.eqHPF, lowGain: s.eqLowGain, p1f: s.eqP1Freq, p1g: s.eqP1Gain, p1q: s.eqP1Q,
-                p2f: s.eqP2Freq, p2g: s.eqP2Gain, p2q: s.eqP2Q, highGain: s.eqHighGain, lpf: s.eqLPF,
-                gThresh: s.gateThreshold, gRange: s.gateRange, gAtt: s.gateAttack, gHold: s.gateHold, gRel: s.gateRelease,
-                cThresh: s.compThreshold, cRatio: s.compRatio, cAtt: s.compAttack, cRel: s.compRelease, cMakeup: s.compMakeup)
+            guard let self, id != self.masterInputID,
+                  let s = self.sources.first(where: { $0.id == id }) else { return nil }
+            return self.effectSnapshot(s)
+        }
+        mixRecorder.masterSnapshot = { [weak self] in
+            guard let self else { return nil }
+            return self.effectSnapshot(self.masterBus)
         }
         mixRecorder.onMixed = { [weak self] sb in
             guard let self, self.isRecording, let input = self.audioInput, input.isReadyForMoreMediaData else { return }
@@ -605,9 +617,13 @@ final class Engine: ObservableObject {
             let inputDevices: [(id: UUID, deviceID: String)] = sources.compactMap {
                 guard let d = $0.audioDeviceID else { return nil }; return (id: $0.id, deviceID: d)
             }
+            let masterDevID = selectedAudioDeviceID ?? AVCaptureDevice.default(for: .audio)?.uniqueID
             if mixInputsIntoRecording && !inputDevices.isEmpty {
                 usingMixRecorder = true
                 mixRecorder.start(inputDevices)
+            } else if masterBus.fxEnabled, let md = masterDevID {
+                usingMixRecorder = true
+                mixRecorder.start([(id: masterInputID, deviceID: md)])
             } else {
                 usingMixRecorder = false
             }

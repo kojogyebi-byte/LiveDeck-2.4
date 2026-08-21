@@ -170,7 +170,7 @@ struct MonitorPane: View {
                     }.allowsHitTesting(false)
                 }
             }
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.black)
         }
         .background(cPanel).overlay(Rectangle().stroke(accent, lineWidth: 2))
@@ -678,7 +678,7 @@ struct AudioMixerPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 Text("AUDIO MIXER").font(.system(size: 10, weight: .heavy)).kerning(2).foregroundColor(.secondary)
-                MasterStrip(label: "MASTER", active: true)
+                MasterStrip(label: "MASTER", active: true, showFXButton: true)
                 MasterStrip(label: "RECORDING", active: engine.isRecording)
                 DBScale().padding(.horizontal, 4)
                 Divider()
@@ -737,12 +737,24 @@ struct BusDBLabel: View {
 }
 
 struct MasterStrip: View {
+    @EnvironmentObject var engine: Engine
     var label: String; var active: Bool
+    var showFXButton: Bool = false
+    @State private var showFX = false
     var body: some View {
         VStack(spacing: 3) {
             HStack {
                 Text(label).font(.system(size: 10, weight: .heavy)).kerning(1).foregroundColor(.white)
                 Spacer()
+                if showFXButton {
+                    Button { showFX.toggle() } label: {
+                        Text("FX").font(.system(size: 9, weight: .heavy))
+                            .frame(width: 30, height: 18)
+                            .background(engine.masterBus.fxEnabled ? cProgram : Color(white: 0.17))
+                            .foregroundColor(.white).cornerRadius(3)
+                    }.buttonStyle(.plain)
+                    .popover(isPresented: $showFX) { AudioEffects(source: engine.masterBus) }
+                }
                 BusDBLabel(active: active)
             }
             BusMeterBar(active: active, segments: 28).frame(height: 16)

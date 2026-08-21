@@ -1,3 +1,11 @@
+# LiveDeck Studio (macOS) — v3.7
+
+**New in 3.7:**
+- **Master-bus FX.** The **MASTER** strip in the audio mixer now has an **FX** button opening the same professional EQ / gate / compressor-limiter panel, applied to the whole summed mix. Great for a master limiter, a global de-hum, or overall tone. It processes the recorded audio when its Effects toggle is on — and works even without per-input mixing (enabling master FX routes the master device through the processing bus automatically).
+- **Tighter monitor layout.** The Preview and Program monitors now fill the available space instead of floating inside a large empty letterbox area. Video stays aspect-correct inside each monitor; the boxes just no longer leave big unused margins around them.
+
+---
+
 # LiveDeck Studio (macOS) — v3.6
 
 **New in 3.6 — professional per-input audio effects (EQ · Gate · Compressor) that actually process the recording.** Open an input's **FX** panel (Audio mixer, or Input tab). It now has:

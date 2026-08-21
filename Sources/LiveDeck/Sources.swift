@@ -689,8 +689,10 @@ final class AudioMixRecorder {
     private(set) var taps: [Tap] = []
     var gainFor: ((UUID) -> Float)?
     var snapshotFor: ((UUID) -> EffectSnapshot?)?
+    var masterSnapshot: (() -> EffectSnapshot?)?
     var masterGain: () -> Float = { 1 }
     var onMixed: ((CMSampleBuffer) -> Void)?
+    private let masterDSP = AudioDSP()
 
     func start(_ inputs: [(id: UUID, deviceID: String)]) {
         stop()
@@ -724,7 +726,15 @@ final class AudioMixRecorder {
                 let c = min(n, s.count)
                 for i in 0..<c { fp[i] += s[i] * g }
             }
-            for i in 0..<n { let v = fp[i] * mg; fp[i] = v > 1 ? 1 : (v < -1 ? -1 : v) }
+            for i in 0..<n { fp[i] *= mg }
+            if let ms = masterSnapshot?(), ms.enabled {
+                var mbuf = [Float](repeating: 0, count: n)
+                for i in 0..<n { mbuf[i] = fp[i] }
+                masterDSP.update(ms); masterDSP.process(&mbuf)   // process() clamps
+                for i in 0..<n { fp[i] = mbuf[i] }
+            } else {
+                for i in 0..<n { let v = fp[i]; fp[i] = v > 1 ? 1 : (v < -1 ? -1 : v) }
+            }
         }
         onMixed?(sb)
     }
