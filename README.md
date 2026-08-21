@@ -1,3 +1,14 @@
+# LiveDeck Studio (macOS) — v3.10
+
+**New in 3.10 — CPU / RAM / GPU meters in the top bar.** Live system load, sampled ~every 1.5s:
+- **CPU** — system busy % (mach `host_statistics`, HOST_CPU_LOAD_INFO, sample-to-sample delta).
+- **RAM** — system memory used % (mach `host_statistics64`, HOST_VM_INFO64: active + wired + compressed).
+- **GPU** — utilisation % via the IORegistry accelerator stats (best-effort). It only appears when the running Mac exposes it; on Macs where it isn't published, the GPU readout is simply omitted.
+
+Each shows a value that turns orange >65% and red >85%, with a mini bar. The readouts live in an isolated leaf view so they don't re-render the top bar (keeping the gear menu open).
+
+---
+
 # LiveDeck Studio (macOS) — v3.9
 
 **New in 3.9:**

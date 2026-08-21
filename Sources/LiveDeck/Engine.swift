@@ -152,6 +152,7 @@ final class Engine: ObservableObject {
     }
     func revealLastRecording() { if let u = lastRecordingURL { NSWorkspace.shared.activateFileViewerSelecting([u]) } }
     let telemetry = Telemetry()
+    let sysMon = SystemMonitor()
     @Published var fileOutputActive = false
     @Published var programWindowActive = false
     @Published var rightTab = 0   // 0 = Audio Mixer, 1 = Overlays
@@ -209,6 +210,7 @@ final class Engine: ObservableObject {
     func start() {
         guard timer == nil else { return }
         loadSettings()
+        sysMon.start()
         audioDevices = AudioCapture.availableDevices()
         lastFrameTime = CACurrentMediaTime(); fpsClock = lastFrameTime
         let t = Timer(timeInterval: 1.0 / Double(fpsTarget), repeats: true) { [weak self] _ in self?.renderFrame() }

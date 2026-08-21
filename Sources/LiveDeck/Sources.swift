@@ -5,6 +5,7 @@ import CoreImage
 import CoreMediaIO
 import AppKit
 import Darwin
+import IOKit
 
 let sharedCIContext = CIContext()
 
@@ -926,4 +927,83 @@ struct FXPreset: Identifiable {
             s.gateThreshold = -45; s.gateRange = -60; s.gateAttack = 1; s.gateHold = 120; s.gateRelease = 220
         }
     ]
+}
+
+// MARK: - System monitor (CPU / RAM via mach, GPU via IORegistry best-effort)
+
+final class SystemMonitor: ObservableObject {
+    @Published var cpu: Double = 0
+    @Published var ram: Double = 0
+    @Published var gpu: Double = -1     // < 0 means unavailable on this Mac
+    private var timer: Timer?
+    private var prevUsed: Double = 0, prevTotal: Double = 0
+
+    func start() {
+        guard timer == nil else { return }
+        _ = sampleCPU()   // prime the delta baseline
+        let t = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in self?.sample() }
+        t.tolerance = 0.3
+        RunLoop.main.add(t, forMode: .common); timer = t
+    }
+
+    private func sample() {
+        let c = sampleCPU(); let m = sampleRAM(); let g = sampleGPU()
+        DispatchQueue.main.async { self.cpu = c; self.ram = m; if let g { self.gpu = g } }
+    }
+
+    private func sampleCPU() -> Double {
+        var size = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.stride / MemoryLayout<integer_t>.stride)
+        var info = host_cpu_load_info_data_t()
+        let kr = withUnsafeMutablePointer(to: &info) { p in
+            p.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
+                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &size)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return cpu }
+        let user = Double(info.cpu_ticks.0), sys = Double(info.cpu_ticks.1)
+        let idle = Double(info.cpu_ticks.2), nice = Double(info.cpu_ticks.3)
+        let used = user + sys + nice, total = used + idle
+        let du = used - prevUsed, dt = total - prevTotal
+        prevUsed = used; prevTotal = total
+        return dt > 0 ? min(100, max(0, du / dt * 100)) : cpu
+    }
+
+    private func sampleRAM() -> Double {
+        var stats = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride)
+        let kr = withUnsafeMutablePointer(to: &stats) { p in
+            p.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return ram }
+        let ps = Double(vm_page_size)
+        let used = (Double(stats.active_count) + Double(stats.wire_count) + Double(stats.compressor_page_count)) * ps
+        let total = Double(ProcessInfo.processInfo.physicalMemory)
+        return total > 0 ? min(100, used / total * 100) : ram
+    }
+
+    private func sampleGPU() -> Double? {
+        let matching = IOServiceMatching("IOAccelerator")
+        var iter: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iter) == KERN_SUCCESS else { return nil }
+        defer { IOObjectRelease(iter) }
+        var best: Double? = nil
+        var obj = IOIteratorNext(iter)
+        while obj != 0 {
+            var props: Unmanaged<CFMutableDictionary>?
+            if IORegistryEntryCreateCFProperties(obj, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+               let dict = props?.takeRetainedValue() as? [String: Any],
+               let perf = dict["PerformanceStatistics"] as? [String: Any] {
+                for key in ["Device Utilization %", "GPU Activity(%)", "Device Utilization",
+                            "GPU Core Utilization", "Renderer Utilization %"] {
+                    if let v = perf[key] as? Int { best = Double(v); break }
+                    if let v = perf[key] as? NSNumber { best = v.doubleValue; break }
+                }
+            }
+            IOObjectRelease(obj)
+            obj = IOIteratorNext(iter)
+        }
+        return best
+    }
 }

@@ -86,6 +86,29 @@ struct HotKeys: View {
 
 // MARK: - Top bar
 
+struct SystemStatsView: View {
+    @EnvironmentObject var mon: SystemMonitor
+    var body: some View {
+        HStack(spacing: 12) {
+            stat("CPU", mon.cpu)
+            stat("RAM", mon.ram)
+            if mon.gpu >= 0 { stat("GPU", mon.gpu) }
+        }
+    }
+    @ViewBuilder func stat(_ label: String, _ v: Double) -> some View {
+        HStack(spacing: 4) {
+            Text(label).font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+            Text("\(Int(v.rounded()))%").font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(v > 85 ? .red : (v > 65 ? .orange : .primary))
+                .frame(width: 34, alignment: .trailing)
+            Capsule().fill(v > 85 ? Color.red : (v > 65 ? Color.orange : cProgram))
+                .frame(width: max(2, 26 * CGFloat(min(100, v) / 100)), height: 4)
+                .frame(width: 26, alignment: .leading)
+                .background(Capsule().fill(Color(white: 0.18)))
+        }
+    }
+}
+
 struct TopBar: View {
     @EnvironmentObject var engine: Engine
     @Binding var showStream: Bool
@@ -100,6 +123,7 @@ struct TopBar: View {
             TBtn("STREAM", tint: .red) { showStream = true }
             TBtn(engine.isRecording ? "● REC" : "REC", tint: .red, filled: engine.isRecording) { engine.toggleRecording() }
             Spacer()
+            SystemStatsView()
             Text("\(engine.width)×\(engine.height)").font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
             Menu {
                 Menu("Resolution") {

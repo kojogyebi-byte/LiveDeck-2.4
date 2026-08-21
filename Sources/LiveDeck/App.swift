@@ -9,6 +9,7 @@ struct LiveDeckApp: App {
             MainView()
                 .environmentObject(engine)
                 .environmentObject(engine.telemetry)
+                .environmentObject(engine.sysMon)
                 .frame(minWidth: 1280, minHeight: 760)
                 .onAppear { engine.start() }
         }
