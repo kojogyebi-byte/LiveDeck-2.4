@@ -347,6 +347,54 @@ final class ColorSource: Source {
     }
 }
 
+// MARK: - Test pattern (SMPTE-style colour bars)
+
+final class BarsSource: Source {
+    init() { super.init(name: "Test Pattern", kindLabel: "BARS") }
+
+    override func draw(in ctx: CGContext, rect: CGRect) {
+        let top: [NSColor] = [
+            NSColor(white: 0.75, alpha: 1),
+            NSColor(red: 0.75, green: 0.75, blue: 0.0, alpha: 1),
+            NSColor(red: 0.0, green: 0.75, blue: 0.75, alpha: 1),
+            NSColor(red: 0.0, green: 0.75, blue: 0.0, alpha: 1),
+            NSColor(red: 0.75, green: 0.0, blue: 0.75, alpha: 1),
+            NSColor(red: 0.75, green: 0.0, blue: 0.0, alpha: 1),
+            NSColor(red: 0.0, green: 0.0, blue: 0.75, alpha: 1)
+        ]
+        let bw = rect.width / CGFloat(top.count)
+        let topH = rect.height * 0.67
+        for (i, c) in top.enumerated() {
+            ctx.setFillColor(c.cgColor)
+            ctx.fill(CGRect(x: rect.minX + CGFloat(i) * bw, y: rect.minY + rect.height - topH, width: bw + 1, height: topH))
+        }
+        let castle: [NSColor] = [
+            NSColor(red: 0.0, green: 0.0, blue: 0.75, alpha: 1), .black,
+            NSColor(red: 0.75, green: 0.0, blue: 0.75, alpha: 1), .black,
+            NSColor(red: 0.0, green: 0.75, blue: 0.75, alpha: 1), .black,
+            NSColor(white: 0.75, alpha: 1)
+        ]
+        let cbw = rect.width / CGFloat(castle.count)
+        let midH = rect.height * 0.10
+        for (i, c) in castle.enumerated() {
+            ctx.setFillColor(c.cgColor)
+            ctx.fill(CGRect(x: rect.minX + CGFloat(i) * cbw, y: rect.minY + rect.height - topH - midH, width: cbw + 1, height: midH))
+        }
+        let bottom: [NSColor] = [
+            NSColor(red: 0.0, green: 0.13, blue: 0.30, alpha: 1),
+            NSColor(white: 1.0, alpha: 1),
+            NSColor(red: 0.20, green: 0.0, blue: 0.40, alpha: 1),
+            .black, NSColor(white: 0.07, alpha: 1), .black, NSColor(white: 0.12, alpha: 1), .black
+        ]
+        let bbw = rect.width / CGFloat(bottom.count)
+        let botH = rect.height - topH - midH
+        for (i, c) in bottom.enumerated() {
+            ctx.setFillColor(c.cgColor)
+            ctx.fill(CGRect(x: rect.minX + CGFloat(i) * bbw, y: rect.minY, width: bbw + 1, height: botH))
+        }
+    }
+}
+
 // MARK: - Audio-only file (plays + loops; no video)
 
 final class AudioFileSource: Source, MediaPlayback {

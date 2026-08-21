@@ -323,6 +323,22 @@ final class Engine: ObservableObject {
     func addFile(url: URL) { let s = FileSource(url: url); sources.append(s); stageFirst(s.id) }
     func addImage(url: URL) { let s = ImageSource(url: url); sources.append(s); stageFirst(s.id) }
     func addColor() { let s = ColorSource(); sources.append(s); stageFirst(s.id) }
+    func addBars() { let s = BarsSource(); placeOrAppend(s) }
+
+    private func placeOrAppend(_ s: Source) {
+        if let slot = sources.first(where: { $0.isPlaceholder }) { replaceSource(slot.id, with: s) }
+        else { sources.append(s); stageFirst(s.id) }
+    }
+
+    /// Free space (GB) on the recording volume; nil if unknown.
+    func freeDiskGB() -> Double? {
+        let url = outputFolder
+        if let vals = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+           let bytes = vals.volumeAvailableCapacityForImportantUsage {
+            return Double(bytes) / 1_000_000_000
+        }
+        return nil
+    }
 
     private func stageFirst(_ id: UUID) {
         if programID == nil { programID = id }

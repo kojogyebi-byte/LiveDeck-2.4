@@ -56,6 +56,12 @@ final class Layer: ObservableObject, Identifiable {
     @Published var fontScale: Double = 1.0
     @Published var align: Int = 0          // 0 left, 1 centre, 2 right
 
+    // Chroma key (used by PiP)
+    @Published var keyEnabled: Bool = false
+    @Published var keyColor: Color = Color(red: 0.0, green: 0.78, blue: 0.0)
+    @Published var keySimilarity: Double = 0.12
+    @Published var keySmoothness: Double = 0.08
+
     // Overlay transform adjustments
     @Published var opacity: Double = 1.0
     @Published var offsetX: Double = 0     // fraction of width
@@ -355,7 +361,11 @@ enum LayerRenderer {
             }
 
         case .pip:
-            guard let ref = layer.sourceRef, let img = sourceImage(ref) else { break }
+            guard let ref = layer.sourceRef, let base = sourceImage(ref) else { break }
+            let img = layer.keyEnabled
+                ? (ChromaKey.apply(base, keyColor: NSColor(layer.keyColor),
+                                   similarity: layer.keySimilarity, smoothness: layer.keySmoothness) ?? base)
+                : base
             ctx.setAlpha(k)
             let w = W * CGFloat(max(8, layer.number1)) / 100
             let h = w * CGFloat(img.height) / CGFloat(img.width)
@@ -365,8 +375,10 @@ enum LayerRenderer {
                 CGPoint(x: m, y: m), CGPoint(x: W - w - m, y: m)]
             let p = origins[min(max(layer.position, 0), 3)]
             let rect = CGRect(x: p.x, y: p.y, width: w, height: h)
-            ctx.setFillColor(NSColor(layer.accent).cgColor)
-            ctx.fill(rect.insetBy(dx: -4, dy: -4))
+            if !layer.keyEnabled {
+                ctx.setFillColor(NSColor(layer.accent).cgColor)
+                ctx.fill(rect.insetBy(dx: -4, dy: -4))
+            }
             coverDraw(img, in: rect, ctx: ctx)
         }
         ctx.restoreGState()
@@ -406,6 +418,9 @@ struct ShowLayer: Codable {
     var textR: Double = 1, textG: Double = 1, textB: Double = 1
     var bgR: Double = 0.04, bgG: Double = 0.05, bgB: Double = 0.06, bgOpacity: Double = 0.88
     var fontScale: Double = 1, align: Int = 0
+    var keyEnabled: Bool = false
+    var keyR: Double = 0, keyG: Double = 0.78, keyB: Double = 0
+    var keySimilarity: Double = 0.12, keySmoothness: Double = 0.08
 }
 
 struct ShowFile: Codable {
@@ -426,6 +441,7 @@ extension Layer {
         let c = accent.rgbaComponents()
         let tc = textColor.rgbaComponents()
         let bc = bgColor.rgbaComponents()
+        let kc = keyColor.rgbaComponents()
         return ShowLayer(kind: kind.rawValue, name: name, isLive: isLive,
                          text1: text1, text2: text2,
                          aR: c.0, aG: c.1, aB: c.2, aA: c.3,
@@ -436,7 +452,9 @@ extension Layer {
                          scaleAdj: scaleAdj, rotationAdj: rotationAdj,
                          textR: tc.0, textG: tc.1, textB: tc.2,
                          bgR: bc.0, bgG: bc.1, bgB: bc.2, bgOpacity: bgOpacity,
-                         fontScale: fontScale, align: align)
+                         fontScale: fontScale, align: align,
+                         keyEnabled: keyEnabled, keyR: kc.0, keyG: kc.1, keyB: kc.2,
+                         keySimilarity: keySimilarity, keySmoothness: keySmoothness)
     }
 
     static func from(_ s: ShowLayer) -> Layer? {
@@ -452,6 +470,9 @@ extension Layer {
         l.textColor = Color(.sRGB, red: s.textR, green: s.textG, blue: s.textB, opacity: 1)
         l.bgColor = Color(.sRGB, red: s.bgR, green: s.bgG, blue: s.bgB, opacity: 1)
         l.bgOpacity = s.bgOpacity; l.fontScale = s.fontScale; l.align = s.align
+        l.keyEnabled = s.keyEnabled
+        l.keyColor = Color(.sRGB, red: s.keyR, green: s.keyG, blue: s.keyB, opacity: 1)
+        l.keySimilarity = s.keySimilarity; l.keySmoothness = s.keySmoothness
         if kind == .countdown { l.remaining = s.number1 * 60 }
         return l
     }
@@ -506,4 +527,70 @@ struct OverlayTemplate: Identifiable {
             l.text1 = "John 3:16"; l.text2 = "Holy Bible"; return l
         }
     ]
+}
+
+// MARK: - Chroma key (Core Image colour cube; GPU accelerated)
+
+enum ChromaKey {
+    private static var cubeCache: (key: String, data: Data)?
+    private static let dim = 64
+
+    static func apply(_ image: CGImage, keyColor: NSColor, similarity: Double, smoothness: Double) -> CGImage? {
+        let ci = CIImage(cgImage: image)
+        let data = cubeData(keyColor: keyColor, similarity: similarity, smoothness: smoothness)
+        guard let f = CIFilter(name: "CIColorCube") else { return image }
+        f.setValue(dim, forKey: "inputCubeDimension")
+        f.setValue(data, forKey: "inputCubeData")
+        f.setValue(ci, forKey: kCIInputImageKey)
+        guard let out = f.outputImage,
+              let cg = sharedCIContext.createCGImage(out, from: ci.extent) else { return image }
+        return cg
+    }
+
+    private static func cubeData(keyColor: NSColor, similarity: Double, smoothness: Double) -> Data {
+        let kc = keyColor.usingColorSpace(.sRGB) ?? keyColor
+        let key = String(format: "%.3f-%.3f-%.3f-%.3f-%.3f",
+                         kc.redComponent, kc.greenComponent, kc.blueComponent, similarity, smoothness)
+        if let c = cubeCache, c.key == key { return c.data }
+        let (kh, _, _) = rgb2hsv(Float(kc.redComponent), Float(kc.greenComponent), Float(kc.blueComponent))
+        let sim = Float(max(0.01, similarity))
+        let smooth = Float(max(0.001, smoothness))
+        var cube = [Float](repeating: 0, count: dim * dim * dim * 4)
+        var offset = 0
+        for b in 0..<dim {
+            for g in 0..<dim {
+                for r in 0..<dim {
+                    let rr = Float(r) / Float(dim - 1)
+                    let gg = Float(g) / Float(dim - 1)
+                    let bb = Float(b) / Float(dim - 1)
+                    let (h, s, v) = rgb2hsv(rr, gg, bb)
+                    var alpha: Float = 1
+                    if s > 0.15 && v > 0.15 {
+                        var dh = abs(h - kh); if dh > 0.5 { dh = 1 - dh }
+                        alpha = min(1, max(0, (dh - sim) / smooth))
+                    }
+                    cube[offset + 0] = rr * alpha
+                    cube[offset + 1] = gg * alpha
+                    cube[offset + 2] = bb * alpha
+                    cube[offset + 3] = alpha
+                    offset += 4
+                }
+            }
+        }
+        let data = Data(bytes: cube, count: cube.count * MemoryLayout<Float>.size)
+        cubeCache = (key, data)
+        return data
+    }
+
+    private static func rgb2hsv(_ r: Float, _ g: Float, _ b: Float) -> (Float, Float, Float) {
+        let mx = max(r, g, b), mn = min(r, g, b), d = mx - mn
+        var h: Float = 0
+        if d != 0 {
+            if mx == r { h = (g - b) / d }
+            else if mx == g { h = 2 + (b - r) / d }
+            else { h = 4 + (r - g) / d }
+            h /= 6; if h < 0 { h += 1 }
+        }
+        return (h, mx == 0 ? 0 : d / mx, mx)
+    }
 }

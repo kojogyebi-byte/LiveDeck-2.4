@@ -1,3 +1,17 @@
+# LiveDeck Studio (macOS) — v3.3
+
+**New in 3.3 — Chroma key (green screen).** The Picture-in-Picture overlay can now key out a background colour so a green-screen presenter composites over your program/slides. Overlays tab → add **Picture in Picture** → pick the source → enable **Chroma key**, choose the key colour (default green), and tune **Similarity** and **Smoothness**. Set the PiP **Size** near 100 to place keyed talent over the whole frame, or keep it small for a cornered cut-out. GPU-accelerated via Core Image; keyed transparency reveals whatever is on Program behind it. Saved with the show file.
+
+---
+
+# LiveDeck Studio (macOS) — v3.2
+
+**New in 3.2:**
+- **Test Pattern (Bars)** input — SMPTE-style colour bars for camera/output line-up (Add Input → Test Pattern).
+- **Live disk-space readout** in the status bar for the recording volume, which turns red and warns when free space drops below 5 GB.
+
+---
+
 # LiveDeck Studio (macOS) — v3.1
 
 **New in 3.1 — far more flexible overlays.**

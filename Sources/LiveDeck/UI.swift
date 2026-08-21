@@ -279,6 +279,7 @@ struct InputAssignMenu<Label: View>: View {
             Button("Image…") { pickFile(types: ["public.image"]) { engine.replaceSource(slotID, with: ImageSource(url: $0)) } }
             Button("Network Stream (HLS / URL)…") { engine.showStreamInput = true }
             Button("Colour") { engine.replaceSource(slotID, with: ColorSource()) }
+            Button("Test Pattern (Bars)") { engine.replaceSource(slotID, with: BarsSource()) }
         } label: { label() }
         .onAppear { if devices.isEmpty { devices = VideoDevices.all() } }
     }
@@ -369,6 +370,7 @@ struct AddInputMenu: View {
             Button("Image…") { pickFile(types: ["public.image"]) { engine.addImage(url: $0) } }
             Button("Network Stream (HLS / URL)…") { engine.showStreamInput = true }
             Button("Colour") { engine.addColor() }
+            Button("Test Pattern (Bars)") { engine.addBars() }
             Divider()
             Button("Blank Input") { engine.addBlankInput() }
         } label: {
@@ -754,6 +756,29 @@ struct LayerRow: View {
 
 // MARK: - Status bar
 
+struct DiskReadout: View {
+    @EnvironmentObject var engine: Engine
+    @State private var freeGB: Double? = nil
+    private let timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+    var body: some View {
+        Group {
+            if let g = freeGB {
+                HStack(spacing: 4) {
+                    Image(systemName: g < 5 ? "externaldrive.badge.exclamationmark" : "externaldrive")
+                        .font(.system(size: 9))
+                    Text(String(format: "%.0f GB free", g)).font(.system(size: 10, design: .monospaced))
+                }
+                .foregroundColor(g < 5 ? .red : .secondary)
+                .help(g < 5 ? "Low disk space on the recording volume" : "Free space on the recording volume")
+            } else {
+                Text("Disk —").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+            }
+        }
+        .onAppear { freeGB = engine.freeDiskGB() }
+        .onReceive(timer) { _ in freeGB = engine.freeDiskGB() }
+    }
+}
+
 struct StatusBar: View {
     @EnvironmentObject var engine: Engine
     @Binding var showOutputs: Bool
@@ -761,7 +786,7 @@ struct StatusBar: View {
         HStack(spacing: 12) {
             Text("\(engine.height)p\(engine.fpsTarget)").font(.system(size: 10, design: .monospaced))
             Text("FPS \(engine.fps)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-            Text("Render —").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+            DiskReadout()
             Spacer()
             ForEach(0..<4) { i in
                 Button { engine.toggleOverlay(i) } label: {
@@ -874,8 +899,18 @@ struct LayerInspector: View {
                     ForEach(engine.sources) { s in Text(s.name).tag(s.id) }
                 }
                 Picker("Corner", selection: $layer.position) { Text("Top left").tag(0); Text("Top right").tag(1); Text("Bottom left").tag(2); Text("Bottom right").tag(3) }
-                HStack { Text("Size").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 8...50) }
+                HStack { Text("Size").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 8...100) }
                 ColorPicker("Border", selection: $layer.accent)
+                Divider()
+                Text("CHROMA KEY").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                Toggle("Enable chroma key", isOn: $layer.keyEnabled)
+                if layer.keyEnabled {
+                    ColorPicker("Key colour", selection: $layer.keyColor)
+                    HStack { Text("Similarity").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.keySimilarity, in: 0.02...0.5) }
+                    HStack { Text("Smoothness").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.keySmoothness, in: 0.005...0.3) }
+                    Text("Tip: set the source full-size (Size ≈ 100) to place keyed talent over the whole program.")
+                        .font(.system(size: 9)).foregroundColor(.secondary)
+                }
             }
         }
         .textFieldStyle(.roundedBorder).padding(12)
