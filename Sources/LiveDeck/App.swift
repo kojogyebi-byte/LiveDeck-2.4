@@ -8,6 +8,7 @@ struct LiveDeckApp: App {
         WindowGroup("LiveDeck Studio") {
             MainView()
                 .environmentObject(engine)
+                .environmentObject(engine.telemetry)
                 .frame(minWidth: 1280, minHeight: 760)
                 .onAppear { engine.start() }
         }

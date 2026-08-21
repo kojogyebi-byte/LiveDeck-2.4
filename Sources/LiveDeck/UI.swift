@@ -121,6 +121,7 @@ struct TopBar: View {
                     }
                 }
                 Divider()
+                checkButton("Mix input faders into recording", engine.mixInputsIntoRecording) { engine.mixInputsIntoRecording.toggle() }
                 Button("Choose recording folder…") { engine.chooseOutputFolder() }
                 Button("Reveal last recording") { engine.revealLastRecording() }
             } label: { Image(systemName: "gearshape") }.frame(width: 34)
@@ -208,7 +209,7 @@ struct TransitionColumn: View {
                 Slider(value: $engine.transitionDuration, in: 0.2...2.0)
             }
             VStack(spacing: 1) {
-                Text(engine.clockText).font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundColor(cProgram)
+                ClockText()
                 Text(String(format: "%02d:%02d:%02d", engine.recordSeconds / 3600, (engine.recordSeconds % 3600) / 60, engine.recordSeconds % 60))
                     .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
             }
@@ -474,7 +475,7 @@ struct InputAdjust: View {
                 Text("None").tag("")
                 ForEach(audioDevices) { d in Text(d.name).tag(d.id) }
             }
-            AudioMeter(level: source.muted ? 0 : source.level).frame(height: 10)
+            ChannelMeterBar(id: source.id, muted: source.muted).frame(height: 10)
             adjSlider("Gain", $source.gain, 0...1.5)
             Toggle("Mute", isOn: $source.muted).font(.system(size: 11))
             Button(showFX ? "Hide Effects" : "Audio Effects (EQ · Comp · Gate)") { showFX.toggle() }
@@ -560,31 +561,74 @@ struct AudioMixerPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 Text("AUDIO MIXER").font(.system(size: 10, weight: .heavy)).kerning(2).foregroundColor(.secondary)
-                MasterStrip(label: "MASTER", level: engine.audioLevel)
-                MasterStrip(label: "RECORDING", level: engine.isRecording ? engine.audioLevel : 0)
+                MasterStrip(label: "MASTER", active: true)
+                MasterStrip(label: "RECORDING", active: engine.isRecording)
                 DBScale().padding(.horizontal, 4)
                 Divider()
                 ForEach(engine.sources) { s in
                     ChannelStrip(source: s)
                 }
-                Text("Each input has its own fader, mute (M) and solo (S). Mute silences that input's live output immediately. Assign an audio device in the Input tab for live metering.")
+                Text("Each input has its own fader, mute (M) and solo (S). Assign an audio device per input (Input tab) for live metering. To record the summed mix (faders, mutes and solos applied), enable “Mix input faders into recording” in the gear menu; otherwise the recording captures the single master device.")
                     .font(.system(size: 9)).foregroundColor(.secondary).padding(.top, 4)
             }.padding(10)
         }
     }
 }
 
+struct ClockText: View {
+    @EnvironmentObject var tele: Telemetry
+    var body: some View {
+        Text(tele.clock).font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundColor(cProgram)
+    }
+}
+
+struct FPSText: View {
+    @EnvironmentObject var tele: Telemetry
+    var body: some View {
+        Text("FPS \(tele.fps)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+    }
+}
+
+// Leaf meters observe Telemetry only, so their parent strips don't re-render each tick.
+struct ChannelMeterBar: View {
+    @EnvironmentObject var tele: Telemetry
+    let id: UUID; var muted: Bool; var segments: Int = 20
+    var body: some View { AudioMeter(level: muted ? 0 : (tele.levels[id] ?? 0), segments: segments) }
+}
+struct ChannelDBLabel: View {
+    @EnvironmentObject var tele: Telemetry
+    let id: UUID; var muted: Bool
+    var body: some View {
+        let lvl = muted ? 0 : (tele.levels[id] ?? 0)
+        Text(dbReadout(lvl)).font(.system(size: 9, weight: .bold, design: .monospaced))
+            .foregroundColor(meterDB(lvl) >= -2 ? vmRed : .secondary)
+    }
+}
+struct BusMeterBar: View {
+    @EnvironmentObject var tele: Telemetry
+    var active: Bool; var segments: Int = 28
+    var body: some View { AudioMeter(level: active ? tele.master : 0, segments: segments) }
+}
+struct BusDBLabel: View {
+    @EnvironmentObject var tele: Telemetry
+    var active: Bool
+    var body: some View {
+        let lvl = active ? tele.master : 0
+        Text(dbReadout(lvl)).font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundColor(meterDB(lvl) >= -2 ? vmRed : .secondary)
+    }
+}
+
 struct MasterStrip: View {
-    var label: String; var level: Float
+    var label: String; var active: Bool
     var body: some View {
         VStack(spacing: 3) {
             HStack {
                 Text(label).font(.system(size: 10, weight: .heavy)).kerning(1).foregroundColor(.white)
                 Spacer()
-                Text(dbReadout(level)).font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(meterDB(level) >= -2 ? vmRed : .secondary)
+                BusDBLabel(active: active)
             }
-            AudioMeter(level: level, segments: 28).frame(height: 16)
+            BusMeterBar(active: active, segments: 28).frame(height: 16)
         }
         .padding(8).background(vmStripBG).cornerRadius(5)
     }
@@ -602,15 +646,13 @@ struct ChannelStrip: View {
             }
             .padding(8).background(Color(white: 0.07)).cornerRadius(5)
         } else {
-            let lvl = source.muted ? 0 : source.level
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(source.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                     Spacer()
-                    Text(dbReadout(lvl)).font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(meterDB(lvl) >= -2 ? vmRed : .secondary)
+                    ChannelDBLabel(id: source.id, muted: source.muted)
                 }
-                AudioMeter(level: lvl).frame(height: 13)
+                ChannelMeterBar(id: source.id, muted: source.muted).frame(height: 13)
                 HStack(spacing: 8) {
                     Image(systemName: "speaker.wave.2.fill").font(.system(size: 9)).foregroundColor(.secondary)
                     Slider(value: $source.gain, in: 0...1.5)
@@ -785,7 +827,7 @@ struct StatusBar: View {
     var body: some View {
         HStack(spacing: 12) {
             Text("\(engine.height)p\(engine.fpsTarget)").font(.system(size: 10, design: .monospaced))
-            Text("FPS \(engine.fps)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+            FPSText()
             DiskReadout()
             Spacer()
             ForEach(0..<4) { i in

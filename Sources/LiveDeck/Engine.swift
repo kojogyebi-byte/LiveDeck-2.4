@@ -47,6 +47,13 @@ struct StreamDestination: Identifiable, Codable {
     var composedURL: String { key.isEmpty ? url : (url.hasSuffix("/") ? url + key : url + "/" + key) }
 }
 
+final class Telemetry: ObservableObject {
+    @Published var fps: Int = 0
+    @Published var clock: String = "--:--:--"
+    @Published var master: Float = 0
+    @Published var levels: [UUID: Float] = [:]
+}
+
 final class Engine: ObservableObject {
     @Published var width = 1280
     @Published var height = 720
@@ -71,8 +78,6 @@ final class Engine: ObservableObject {
 
     @Published var audioDevices: [AudioDeviceInfo] = []
     @Published var selectedAudioDeviceID: String?
-    @Published var audioLevel: Float = 0
-    @Published var fps: Int = 0
     @Published var fpsTarget = 30
     @Published var showSafeGuides = false
 
@@ -83,6 +88,9 @@ final class Engine: ObservableObject {
 
     // Input bus tile size
     @Published var inputTileScale: Double = 1.0 { didSet { persistSettings() } }
+    @Published var mixInputsIntoRecording = false { didSet { persistSettings() } }
+    private var usingMixRecorder = false
+    let mixRecorder = AudioMixRecorder()
 
     // Output folder
     @Published var outputFolderPath: String? { didSet { UserDefaults.standard.set(outputFolderPath, forKey: "outputFolder") } }
@@ -97,7 +105,7 @@ final class Engine: ObservableObject {
         panel.begin { [weak self] resp in if resp == .OK, let url = panel.url { self?.outputFolderPath = url.path } }
     }
     func revealLastRecording() { if let u = lastRecordingURL { NSWorkspace.shared.activateFileViewerSelecting([u]) } }
-    @Published var clockText = "--:--:--"
+    let telemetry = Telemetry()
     @Published var fileOutputActive = false
     @Published var programWindowActive = false
     @Published var rightTab = 0   // 0 = Audio Mixer, 1 = Overlays
@@ -162,10 +170,22 @@ final class Engine: ObservableObject {
         RunLoop.main.add(t, forMode: .common)
         timer = t
         audioCapture.onSampleBuffer = { [weak self] sb in
-            guard let self, self.isRecording, let input = self.audioInput, input.isReadyForMoreMediaData else { return }
+            guard let self, self.isRecording, !self.usingMixRecorder,
+                  let input = self.audioInput, input.isReadyForMoreMediaData else { return }
             input.append(sb)
         }
         audioCapture.start(deviceID: selectedAudioDeviceID)
+        mixRecorder.gainFor = { [weak self] id in
+            guard let self, let s = self.sources.first(where: { $0.id == id }) else { return 0 }
+            if s.muted { return 0 }
+            if self.sources.contains(where: { $0.solo }) && !s.solo { return 0 }
+            return Float(min(1.5, max(0, s.gain)))
+        }
+        mixRecorder.masterGain = { 1.0 }
+        mixRecorder.onMixed = { [weak self] sb in
+            guard let self, self.isRecording, let input = self.audioInput, input.isReadyForMoreMediaData else { return }
+            input.append(sb)
+        }
         // Publish meter levels at a steady ~12 Hz (NOT per audio buffer) to keep the UI responsive.
         let mt = Timer(timeInterval: 1.0 / 12.0, repeats: true) { [weak self] _ in self?.publishMeters() }
         mt.tolerance = 0.02
@@ -177,11 +197,14 @@ final class Engine: ObservableObject {
 
     private func publishMeters() {
         let m = audioCapture.currentLevel
-        if abs(m - audioLevel) > 0.01 { audioLevel = m }
+        if abs(m - telemetry.master) > 0.01 { telemetry.master = m }
+        var newLevels = telemetry.levels
+        var changed = false
         for s in sources {
-            let lvl = s.meter.currentLevel
-            if abs(lvl - s.level) > 0.01 { s.level = lvl }
+            let lvl = s.audioDeviceID == nil ? 0 : s.meter.currentLevel
+            if abs(lvl - (newLevels[s.id] ?? 0)) > 0.01 { newLevels[s.id] = lvl; changed = true }
         }
+        if changed { telemetry.levels = newLevels }
     }
 
     @Published var playlistEnabled = false { didSet { applyPlaylistMode() } }
@@ -226,6 +249,7 @@ final class Engine: ObservableObject {
         d.set(fpsTarget, forKey: "fpsTarget")
         d.set(width, forKey: "rwidth"); d.set(height, forKey: "rheight")
         d.set(inputTileScale, forKey: "tileScale")
+        d.set(mixInputsIntoRecording, forKey: "mixInputs")
     }
     private func loadSettings() {
         let d = UserDefaults.standard
@@ -235,6 +259,7 @@ final class Engine: ObservableObject {
         let f = d.integer(forKey: "fpsTarget"); if f > 0 { fpsTarget = f }
         let w = d.integer(forKey: "rwidth"), h = d.integer(forKey: "rheight"); if w > 0 && h > 0 { width = w; height = h }
         let ts = d.double(forKey: "tileScale"); if ts > 0 { inputTileScale = ts }
+        mixInputsIntoRecording = d.bool(forKey: "mixInputs")
         outputFolderPath = d.string(forKey: "outputFolder")
     }
 
@@ -486,9 +511,11 @@ final class Engine: ObservableObject {
 
         frameCount += 1
         if now - fpsClock >= 1.0 {
-            fps = frameCount; frameCount = 0; fpsClock = now
+            if frameCount != telemetry.fps { telemetry.fps = frameCount }
+            frameCount = 0; fpsClock = now
             let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
-            clockText = f.string(from: Date())
+            let c = f.string(from: Date())
+            if c != telemetry.clock { telemetry.clock = c }
         }
     }
 
@@ -559,7 +586,7 @@ final class Engine: ObservableObject {
             let ad = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: vIn,
                 sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
             if w.canAdd(vIn) { w.add(vIn) }
-            let aSettings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44100,
+            let aSettings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000,
                                             AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 128_000]
             let aIn = AVAssetWriterInput(mediaType: .audio, outputSettings: aSettings)
             aIn.expectsMediaDataInRealTime = true
@@ -567,12 +594,22 @@ final class Engine: ObservableObject {
             w.startWriting(); w.startSession(atSourceTime: CMClockGetTime(CMClockGetHostTimeClock()))
             writer = w; videoInput = vIn; audioInput = aIn; adaptor = ad
             recordSeconds = 0; isRecording = true; fileOutputActive = true
+            let inputDevices: [(id: UUID, deviceID: String)] = sources.compactMap {
+                guard let d = $0.audioDeviceID else { return nil }; return (id: $0.id, deviceID: d)
+            }
+            if mixInputsIntoRecording && !inputDevices.isEmpty {
+                usingMixRecorder = true
+                mixRecorder.start(inputDevices)
+            } else {
+                usingMixRecorder = false
+            }
             recordTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.recordSeconds += 1 }
         } catch { NSLog("Recording failed: \(error.localizedDescription)") }
     }
 
     private func stopRecording() {
         isRecording = false; fileOutputActive = false
+        usingMixRecorder = false; mixRecorder.stop()
         recordTimer?.invalidate(); recordTimer = nil
         guard let w = writer else { return }
         videoInput?.markAsFinished(); audioInput?.markAsFinished()

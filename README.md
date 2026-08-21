@@ -1,3 +1,19 @@
+# LiveDeck Studio (macOS) — v3.5
+
+**New in 3.5 — input audio summed into the recording.** Enable **gear menu → “Mix input faders into recording.”** With it on, every input that has an audio device assigned (Input tab) is summed into the recorded audio track with its **fader, mute and solo** applied, instead of recording only the single master device. Off by default, so the proven single-device path stays the default and you can switch back instantly mid-show.
+
+How it works (kept deliberately robust): each input device is captured in a uniform 48 kHz float format; the first input provides the clock and the others are summed into its buffer in place, so there's no hand-rolled timestamp generation that could desync or produce a silent take.
+
+**Caveats:** this sums **faders / mute / solo** — the per-input EQ/compressor/gate parameters are not yet applied to the mixed audio (that's per-input DSP, a later step). Inputs come from separate hardware devices with independent clocks, so over a long recording non-reference inputs can drift slightly; for true sample-locked multi-device capture, a Core Audio aggregate device is the eventual path.
+
+---
+
+# LiveDeck Studio (macOS) — v3.4
+
+**Fixed — menus and dropdowns now stay open.** Previously the gear menu, the overlay Position/Corner pickers and other dropdowns would snap shut before you could click an item. Cause: the clock, FPS and audio meters were published on the main engine object that the top bar and inspectors observe, so every meter/clock tick invalidated the view hosting the open menu and dismissed it. All fast-changing telemetry now lives in a separate object watched only by the small meter/clock/FPS widgets, so opening a menu no longer triggers a re-render of its host. Menus and pickers stay open.
+
+---
+
 # LiveDeck Studio (macOS) — v3.3
 
 **New in 3.3 — Chroma key (green screen).** The Picture-in-Picture overlay can now key out a background colour so a green-screen presenter composites over your program/slides. Overlays tab → add **Picture in Picture** → pick the source → enable **Chroma key**, choose the key colour (default green), and tune **Similarity** and **Smoothness**. Set the PiP **Size** near 100 to place keyed talent over the whole frame, or keep it small for a cornered cut-out. GPU-accelerated via Core Image; keyed transparency reveals whatever is on Program behind it. Saved with the show file.

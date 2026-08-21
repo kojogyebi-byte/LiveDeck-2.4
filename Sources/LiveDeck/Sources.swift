@@ -65,7 +65,6 @@ class Source: NSObject, ObservableObject, Identifiable {
     var onReachedEnd: (() -> Void)?
 
     // Per-input audio device + live level
-    @Published var level: Float = 0
     @Published var audioDeviceID: String? { didSet { meter.start(deviceID: audioDeviceID) } }
     let meter = InputAudioMeter()
 
@@ -594,4 +593,113 @@ final class NDIBridge {
     /// Placeholder until the NDI SDK headers are wired in. Intentionally does nothing
     /// so it can never crash the live app. Returns false to indicate "not yet active".
     func sendFrame(_ buffer: CVPixelBuffer) -> Bool { false }
+}
+
+// MARK: - Recording audio mixer (sums input faders/mutes/solos into one bus)
+//
+// Design for reliability: every assigned input device is captured in a uniform
+// Float32 / 48 kHz / mono format. The FIRST input is the "reference" and provides
+// the clock; each other input's samples are summed *into the reference buffer in
+// place* (scaled by that input's fader), and the reference buffer — which already
+// carries a valid format description and presentation timestamp — is written to the
+// file. No from-scratch CMSampleBuffer or timestamp generation, so it can't desync
+// or produce silent takes the way a hand-rolled mixer might.
+
+final class AudioMixRecorder {
+    final class Tap: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+        let id: UUID
+        var isReference = false
+        weak var owner: AudioMixRecorder?
+        private var session: AVCaptureSession?
+        private let q: DispatchQueue
+        private var ring = [Float]()
+        private let lock = NSLock()
+
+        init(id: UUID) { self.id = id; q = DispatchQueue(label: "mixtap") }
+
+        func start(deviceID: String) {
+            guard let dev = AVCaptureDevice(uniqueID: deviceID),
+                  let input = try? AVCaptureDeviceInput(device: dev) else { return }
+            let s = AVCaptureSession()
+            if s.canAddInput(input) { s.addInput(input) }
+            let out = AVCaptureAudioDataOutput()
+            out.audioSettings = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 48000,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 32,
+                AVLinearPCMIsFloatKey: true,
+                AVLinearPCMIsNonInterleaved: false,
+                AVLinearPCMIsBigEndian: false
+            ]
+            out.setSampleBufferDelegate(self, queue: q)
+            if s.canAddOutput(out) { s.addOutput(out) }
+            q.async { s.startRunning() }
+            session = s
+        }
+        func stop() { session?.stopRunning(); session = nil; lock.lock(); ring.removeAll(); lock.unlock() }
+
+        func appendSamples(_ p: UnsafePointer<Float>, _ n: Int) {
+            lock.lock()
+            for i in 0..<n { ring.append(p[i]) }
+            if ring.count > 96000 { ring.removeFirst(ring.count - 96000) }   // cap ~2s
+            lock.unlock()
+        }
+        func pull(_ n: Int) -> [Float] {
+            lock.lock(); defer { lock.unlock() }
+            if ring.count >= n { let out = Array(ring.prefix(n)); ring.removeFirst(n); return out }
+            var out = Array(ring); ring.removeAll()
+            if out.count < n { out.append(contentsOf: [Float](repeating: 0, count: n - out.count)) }
+            return out
+        }
+
+        func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+            if isReference { owner?.mixReference(sampleBuffer); return }
+            guard let bb = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
+            var len = 0, total = 0; var dp: UnsafeMutablePointer<Int8>? = nil
+            guard CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: &len,
+                                              totalLengthOut: &total, dataPointerOut: &dp) == kCMBlockBufferNoErr,
+                  let dp else { return }
+            let n = total / MemoryLayout<Float>.size
+            dp.withMemoryRebound(to: Float.self, capacity: n) { fp in appendSamples(fp, n) }
+        }
+    }
+
+    private(set) var taps: [Tap] = []
+    var gainFor: ((UUID) -> Float)?
+    var masterGain: () -> Float = { 1 }
+    var onMixed: ((CMSampleBuffer) -> Void)?
+
+    func start(_ inputs: [(id: UUID, deviceID: String)]) {
+        stop()
+        for (i, inp) in inputs.enumerated() {
+            let t = Tap(id: inp.id); t.owner = self; t.isReference = (i == 0)
+            taps.append(t); t.start(deviceID: inp.deviceID)
+        }
+    }
+    func stop() { for t in taps { t.stop() }; taps.removeAll() }
+
+    fileprivate func mixReference(_ sb: CMSampleBuffer) {
+        guard let bb = CMSampleBufferGetDataBuffer(sb), let ref = taps.first else { return }
+        var len = 0, total = 0; var dp: UnsafeMutablePointer<Int8>? = nil
+        guard CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: &len,
+                                          totalLengthOut: &total, dataPointerOut: &dp) == kCMBlockBufferNoErr,
+              let dp else { return }
+        let n = total / MemoryLayout<Float>.size
+        guard n > 0 else { return }
+        let refGain = gainFor?(ref.id) ?? 1
+        let mg = masterGain()
+        dp.withMemoryRebound(to: Float.self, capacity: n) { fp in
+            for i in 0..<n { fp[i] *= refGain }
+            for t in taps.dropFirst() {
+                let g = gainFor?(t.id) ?? 0
+                if g <= 0 { continue }
+                let s = t.pull(n)
+                let c = min(n, s.count)
+                for i in 0..<c { fp[i] += s[i] * g }
+            }
+            for i in 0..<n { let v = fp[i] * mg; fp[i] = v > 1 ? 1 : (v < -1 ? -1 : v) }
+        }
+        onMixed?(sb)
+    }
 }
