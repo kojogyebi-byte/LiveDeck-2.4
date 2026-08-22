@@ -1,3 +1,14 @@
+# LiveDeck Studio (macOS) — v3.11
+
+**New in 3.11:**
+- **More frame rates:** 24p, 25p (PAL), 30p, 50p, 60p in the gear-menu Frame rate list.
+- **More video formats:** Resolution now offers 720p, 1080p (Full HD), 1440p (2K), 2160p (4K UHD) and 4K DCI (4096×2160).
+- **More text templates & flexible titles:** New overlay templates — Title + subtitle, Announcement box, Quote, Credits, Now speaking — plus the Title overlay now supports a **subtitle line**, an **optional background box** (colour + opacity), separate title/subtitle colours, size, and left/centre/right alignment.
+
+**Note on interlaced (25i/50i):** LiveDeck's compositor renders **progressive** frames, so the frame-rate options are the progressive equivalents (25p, 50p). True interlaced field output would require an interlacing encoder stage, which isn't part of the current pipeline.
+
+---
+
 # LiveDeck Studio (macOS) — v3.10
 
 **New in 3.10 — CPU / RAM / GPU meters in the top bar.** Live system load, sampled ~every 1.5s:

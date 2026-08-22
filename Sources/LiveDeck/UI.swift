@@ -128,12 +128,15 @@ struct TopBar: View {
             Menu {
                 Menu("Resolution") {
                     checkButton("720p", engine.height == 720) { engine.setResolution(width: 1280, height: 720) }
-                    checkButton("1080p", engine.height == 1080) { engine.setResolution(width: 1920, height: 1080) }
-                    checkButton("2160p (4K)", engine.height == 2160) { engine.setResolution(width: 3840, height: 2160) }
+                    checkButton("1080p (Full HD)", engine.height == 1080) { engine.setResolution(width: 1920, height: 1080) }
+                    checkButton("1440p (2K)", engine.height == 1440) { engine.setResolution(width: 2560, height: 1440) }
+                    checkButton("2160p (4K UHD)", engine.height == 2160 && engine.width == 3840) { engine.setResolution(width: 3840, height: 2160) }
+                    checkButton("4K DCI", engine.width == 4096) { engine.setResolution(width: 4096, height: 2160) }
                 }
                 Menu("Frame rate") {
-                    checkButton("30 fps", engine.fpsTarget == 30) { engine.setFrameRate(30) }
-                    checkButton("60 fps", engine.fpsTarget == 60) { engine.setFrameRate(60) }
+                    ForEach([24, 25, 30, 50, 60], id: \.self) { r in
+                        checkButton("\(r)p", engine.fpsTarget == r) { engine.setFrameRate(r) }
+                    }
                 }
                 Divider()
                 Menu("Recording codec") {
@@ -1199,10 +1202,19 @@ struct LayerInspector: View {
                     Button("B +1") { layer.scoreB += 1 }; Button("B −1") { layer.scoreB = max(0, layer.scoreB - 1) }
                 }
             case .title:
-                TextField("Text", text: $layer.text1)
+                TextField("Title text", text: $layer.text1)
+                TextField("Subtitle (optional)", text: $layer.text2)
                 Picker("Align", selection: $layer.align) { Text("Left").tag(0); Text("Centre").tag(1); Text("Right").tag(2) }
                 HStack { Text("Size").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 3...20) }
-                ColorPicker("Color", selection: $layer.accent)
+                ColorPicker("Title colour", selection: $layer.accent)
+                ColorPicker("Subtitle colour", selection: $layer.textColor)
+                Divider()
+                Toggle("Background box", isOn: Binding(get: { layer.bgOpacity > 0.01 }, set: { layer.bgOpacity = $0 ? 0.65 : 0 }))
+                    .font(.system(size: 11))
+                if layer.bgOpacity > 0.01 {
+                    ColorPicker("Box colour", selection: $layer.bgColor)
+                    HStack { Text("Box opacity").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.bgOpacity, in: 0.05...1) }
+                }
             case .logo:
                 Button("Choose image…") {
                     pickFile(types: ["public.image"]) { url in

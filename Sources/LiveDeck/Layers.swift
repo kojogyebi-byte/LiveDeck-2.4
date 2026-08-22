@@ -317,20 +317,32 @@ enum LayerRenderer {
 
         case .title:
             ctx.setAlpha(k)
-            ctx.setShadow(offset: .zero, blur: 18, color: NSColor.black.withAlphaComponent(0.7).cgColor)
             let size = H * CGFloat(max(2, layer.number1)) / 100
             let tf = NSFont.boldSystemFont(ofSize: size)
-            let ty = H * 0.5 - size / 2 - (1 - k) * 30
+            let hasSub = !layer.text2.isEmpty
+            let subF = NSFont.systemFont(ofSize: size * 0.44, weight: .medium)
             let col = NSColor(layer.accent)
-            switch layer.align {
-            case 0:
-                draw(layer.text1, at: CGPoint(x: 90, y: ty), font: tf, color: col, in: ctx)
-            case 2:
-                let tw = textWidth(layer.text1, font: tf)
-                draw(layer.text1, at: CGPoint(x: W - 90 - tw, y: ty), font: tf, color: col, in: ctx)
-            default:
-                draw(layer.text1, at: CGPoint(x: W / 2, y: ty), font: tf, color: col, in: ctx, centered: true)
+            let tcol = NSColor(layer.textColor)
+            let w1 = textWidth(layer.text1, font: tf)
+            let w2 = hasSub ? textWidth(layer.text2, font: subF) : 0
+            let blockW = max(w1, w2)
+            let gap: CGFloat = hasSub ? size * 0.55 : 0
+            let mainY = H * 0.5 + gap * 0.5 - size * 0.35 - (1 - k) * 30
+            let subY = mainY - gap
+            func xFor(_ w: CGFloat) -> CGFloat {
+                switch layer.align { case 0: return 90; case 2: return W - 90 - w; default: return (W - w) / 2 }
             }
+            if layer.bgOpacity > 0.01 {
+                let padX: CGFloat = size * 0.45, padY: CGFloat = size * 0.32
+                let bx = xFor(blockW)
+                let top = mainY + size + padY
+                let bot = (hasSub ? subY : mainY) - padY
+                ctx.setFillColor(NSColor(layer.bgColor).withAlphaComponent(layer.bgOpacity).cgColor)
+                ctx.fill(CGRect(x: bx - padX, y: bot, width: blockW + padX * 2, height: top - bot))
+            }
+            ctx.setShadow(offset: .zero, blur: 14, color: NSColor.black.withAlphaComponent(0.6).cgColor)
+            draw(layer.text1, at: CGPoint(x: xFor(w1), y: mainY), font: tf, color: col, in: ctx)
+            if hasSub { draw(layer.text2, at: CGPoint(x: xFor(w2), y: subY), font: subF, color: tcol, in: ctx) }
 
         case .logo:
             if let img = layer.logoImage {
@@ -531,6 +543,31 @@ struct OverlayTemplate: Identifiable {
         OverlayTemplate(name: "Title card — centred", icon: "textformat") {
             let l = Layer(kind: .title); l.name = "Title"; l.align = 1; l.number1 = 9
             l.accent = .white; l.text1 = "Welcome"; return l
+        },
+        OverlayTemplate(name: "Title + subtitle", icon: "textformat.size") {
+            let l = Layer(kind: .title); l.name = "Title+Sub"; l.align = 1; l.number1 = 8
+            l.accent = .white; l.textColor = Color(white: 0.75)
+            l.text1 = "Main Title"; l.text2 = "Subtitle goes here"; return l
+        },
+        OverlayTemplate(name: "Announcement box", icon: "megaphone") {
+            let l = Layer(kind: .title); l.name = "Announcement"; l.align = 1; l.number1 = 6
+            l.accent = .white; l.bgColor = Color(red: 0.10, green: 0.12, blue: 0.16); l.bgOpacity = 0.8
+            l.text1 = "Service starts at 9:00 AM"; return l
+        },
+        OverlayTemplate(name: "Quote — centred", icon: "quote.bubble") {
+            let l = Layer(kind: .title); l.name = "Quote"; l.align = 1; l.number1 = 7
+            l.accent = .white; l.textColor = Color(white: 0.7)
+            l.text1 = "“Faith is taking the first step.”"; l.text2 = "— Author"; return l
+        },
+        OverlayTemplate(name: "Credits — left", icon: "list.bullet.rectangle") {
+            let l = Layer(kind: .title); l.name = "Credits"; l.align = 0; l.number1 = 5
+            l.accent = .white; l.textColor = Color(white: 0.7)
+            l.text1 = "Produced by"; l.text2 = "Your Ministry Media Team"; return l
+        },
+        OverlayTemplate(name: "Now speaking", icon: "person.wave.2") {
+            let l = Layer(kind: .lowerThird); l.name = "Now speaking"; l.style = 3; l.align = 0
+            l.accent = Color(red: 0.90, green: 0.55, blue: 0.10)
+            l.text1 = "Speaker Name"; l.text2 = "Now Speaking"; return l
         },
         OverlayTemplate(name: "Scripture — minimal", icon: "text.alignleft") {
             let l = Layer(kind: .lowerThird); l.name = "Scripture"; l.style = 2; l.align = 0
