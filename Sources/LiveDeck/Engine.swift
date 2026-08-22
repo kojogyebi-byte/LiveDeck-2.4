@@ -191,6 +191,7 @@ final class Engine: ObservableObject {
     func removeStreamDestination(_ id: UUID) { streamDestinations.removeAll { $0.id == id } }
 
     var ffmpegAvailable: Bool { streamer.available }
+    var ytdlpAvailable: Bool { StreamOutput.ytdlpPath() != nil }
 
     func toggleStream(_ dest: StreamDestination?) {
         if isStreaming { stopStream(); return }
@@ -252,7 +253,7 @@ final class Engine: ObservableObject {
         mixRecorder.gainFor = { [weak self] id in
             if id == self?.masterInputID { return 1 }
             guard let self, let s = self.sources.first(where: { $0.id == id }) else { return 0 }
-            if s.muted { return 0 }
+            if s.muted || !s.sendToMain { return 0 }
             if self.sources.contains(where: { $0.solo }) && !s.solo { return 0 }
             return Float(min(1.5, max(0, s.gain)))
         }
@@ -281,7 +282,15 @@ final class Engine: ObservableObject {
 
     private func publishMeters() {
         if isStreaming != streamer.isStreaming { isStreaming = streamer.isStreaming }
-        let m = audioCapture.currentLevel
+        // Master = energy sum of inputs sent to the main mix (falls back to master device).
+        var energy: Float = 0
+        var contributing = false
+        for s in sources where s.sendToMain && !s.muted && s.audioDeviceID != nil {
+            if sources.contains(where: { $0.solo }) && !s.solo { continue }
+            let l = s.meter.currentLevel * Float(min(1.5, max(0, s.gain)))
+            energy += l * l; contributing = true
+        }
+        let m = contributing ? min(1, sqrtf(energy)) : audioCapture.currentLevel
         if abs(m - telemetry.master) > 0.01 { telemetry.master = m }
         var newLevels = telemetry.levels
         var changed = false
@@ -310,7 +319,7 @@ final class Engine: ObservableObject {
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let src: Source
-        if mode == 2 {
+        if mode == 2 || mode == 3 {
             src = FFmpegStreamSource(url: trimmed)
         } else {
             guard let u = URL(string: trimmed), let sc = u.scheme,
@@ -905,7 +914,19 @@ final class SourceThumbNSView: NSView {
         super.init(frame: frame); wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor; layer?.contentsGravity = .resizeAspectFill
         let timer = Timer(timeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
-            self?.layer?.contents = self?.source?.currentImage()
+            guard let self, let s = self.source else { return }
+            if let img = s.currentImage() {
+                self.layer?.contents = img
+            } else if !s.isPlaceholder {
+                // Draw-only sources (colour bars, solid colour) have no currentImage — render via draw().
+                let w = 320, h = 180
+                if let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                       space: CGColorSpaceCreateDeviceRGB(),
+                                       bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) {
+                    s.draw(in: ctx, rect: CGRect(x: 0, y: 0, width: w, height: h))
+                    self.layer?.contents = ctx.makeImage()
+                }
+            }
         }
         timer.tolerance = 0.05
         RunLoop.main.add(timer, forMode: .common); t = timer

@@ -1025,6 +1025,12 @@ struct ChannelStrip: View {
                         .foregroundColor(.secondary).frame(width: 42, alignment: .trailing)
                 }
                 HStack(spacing: 6) {
+                    Button { source.sendToMain.toggle() } label: {
+                        Text("MAIN").font(.system(size: 9, weight: .heavy))
+                            .frame(maxWidth: .infinity).frame(height: 20)
+                            .background(source.sendToMain ? cProgram : Color(white: 0.17))
+                            .foregroundColor(source.sendToMain ? .black : Color(white: 0.6)).cornerRadius(3)
+                    }.buttonStyle(.plain)
                     Button { source.solo.toggle() } label: {
                         Text("SOLO").font(.system(size: 9, weight: .heavy))
                             .frame(maxWidth: .infinity).frame(height: 20)
@@ -1495,15 +1501,18 @@ struct AddStreamView: View {
                 TextField("rtmp://…  •  rtsp://…  •  srt://…", text: $urlString)
                     .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
             } else if mode == 3 {
-                Text("Page links from YouTube, Twitch and Facebook can't be played directly — those sites don't expose a playable stream URL, and extracting one is against their terms.")
+                Text("Plays a YouTube / Twitch / Facebook link by extracting the real stream with yt-dlp and decoding it with ffmpeg. Best for live streams; both tools must be installed.")
                     .font(.system(size: 11)).foregroundColor(.secondary)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("What works instead:").font(.system(size: 11, weight: .bold))
-                    Text("• If you have the actual HLS (.m3u8) or RTMP source URL, paste it below.\n• Otherwise restream the source to HLS/RTMP (OBS, ffmpeg, or a media server) and use that URL.")
-                        .font(.system(size: 10)).foregroundColor(.secondary)
+                HStack(spacing: 12) {
+                    Label(engine.ffmpegAvailable ? "ffmpeg ✓" : "ffmpeg missing", systemImage: engine.ffmpegAvailable ? "checkmark.circle.fill" : "xmark.circle")
+                        .foregroundColor(engine.ffmpegAvailable ? cProgram : .orange)
+                    Label(engine.ytdlpAvailable ? "yt-dlp ✓" : "yt-dlp missing", systemImage: engine.ytdlpAvailable ? "checkmark.circle.fill" : "xmark.circle")
+                        .foregroundColor(engine.ytdlpAvailable ? cProgram : .orange)
+                }.font(.system(size: 10))
+                if !engine.ytdlpAvailable {
+                    Text("Install once in Terminal: brew install yt-dlp ffmpeg").font(.system(size: 10)).foregroundColor(.secondary)
                 }
-                .padding(10).background(Color(white: 0.12)).cornerRadius(6)
-                TextField("Paste a real .m3u8 / rtmp:// source URL", text: $urlString)
+                TextField("https://www.youtube.com/watch?v=…", text: $urlString)
                     .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
             } else {
                 Text("HLS (.m3u8) live streams and direct HTTP(S) video URLs — full input with transport, trim and audio.")
@@ -1524,11 +1533,13 @@ struct AddStreamView: View {
                 Spacer()
                 Button("Cancel") { engine.streamInputMode = 0; dismiss() }
                 Button(editing ? "Save" : "Add") {
-                    engine.commitStream(url: urlString, mode: mode == 3 ? 1 : mode, peakMbps: peakMbps)
+                    engine.commitStream(url: urlString, mode: mode, peakMbps: peakMbps)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(urlString.trimmingCharacters(in: .whitespaces).isEmpty || (mode == 2 && !engine.ffmpegAvailable))
+                .disabled(urlString.trimmingCharacters(in: .whitespaces).isEmpty
+                          || (mode == 2 && !engine.ffmpegAvailable)
+                          || (mode == 3 && (!engine.ffmpegAvailable || !engine.ytdlpAvailable)))
             }
         }
         .padding(16).frame(width: 560, height: mode == 3 ? 340 : 300).preferredColorScheme(.dark)

@@ -59,6 +59,7 @@ class Source: NSObject, ObservableObject, Identifiable {
     var isPlaceholder: Bool { false }
 
     @Published var muted = false
+    @Published var sendToMain = true
     @Published var gain: Double = 1.0
     @Published var solo = false
 
@@ -1032,6 +1033,12 @@ final class StreamOutput {
         for p in candidates where FileManager.default.isExecutableFile(atPath: p) { return p }
         return nil
     }
+    static func ytdlpPath() -> String? {
+        let candidates = ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp",
+                          "/opt/homebrew/bin/youtube-dl", "/usr/local/bin/youtube-dl"]
+        for p in candidates where FileManager.default.isExecutableFile(atPath: p) { return p }
+        return nil
+    }
     var available: Bool { StreamOutput.ffmpegPath() != nil }
 
     func start(url: String, width: Int, height: Int, fps: Int, bitrateKbps: Int) -> Bool {
@@ -1103,6 +1110,7 @@ final class StreamOutput {
 
 final class FFmpegStreamSource: Source {
     private var process: Process?
+    private var ytdlpProcess: Process?
     private var readThread: Thread?
     private let outW = 1280, outH = 720
     private var running = false
@@ -1116,21 +1124,35 @@ final class FFmpegStreamSource: Source {
 
     private func startPull(_ url: String) {
         guard let ff = StreamOutput.ffmpegPath() else { return }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: ff)
-        p.arguments = [
-            "-loglevel", "error",
-            "-rtsp_transport", "tcp",
-            "-fflags", "nobuffer", "-flags", "low_delay",
-            "-i", url,
-            "-an", "-vf", "scale=\(outW):\(outH)",
-            "-pix_fmt", "bgra", "-f", "rawvideo", "-"
-        ]
+        let host = URL(string: url)?.host?.lowercased() ?? ""
+        let socialHosts = ["youtube.com", "youtu.be", "twitch.tv", "facebook.com", "fb.watch"]
+        let isSocial = socialHosts.contains { host.contains($0) }
+
+        let ffmpeg = Process()
+        ffmpeg.executableURL = URL(fileURLWithPath: ff)
         let outPipe = Pipe()
-        p.standardOutput = outPipe
-        p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { return }
-        process = p; running = true
+        ffmpeg.standardOutput = outPipe
+        ffmpeg.standardError = FileHandle.nullDevice
+
+        if isSocial, let yt = StreamOutput.ytdlpPath() {
+            // yt-dlp (extracts the real media) | ffmpeg (decodes to raw frames)
+            let ytp = Process()
+            ytp.executableURL = URL(fileURLWithPath: yt)
+            ytp.arguments = ["-f", "best", "-o", "-", "--quiet", "--no-warnings", url]
+            let chain = Pipe()
+            ytp.standardOutput = chain
+            ytp.standardError = FileHandle.nullDevice
+            ffmpeg.standardInput = chain
+            ffmpeg.arguments = ["-loglevel", "error", "-i", "pipe:0", "-an",
+                                "-vf", "scale=\(outW):\(outH)", "-pix_fmt", "bgra", "-f", "rawvideo", "-"]
+            ytdlpProcess = ytp
+        } else {
+            ffmpeg.arguments = ["-loglevel", "error", "-rtsp_transport", "tcp", "-fflags", "nobuffer",
+                                "-i", url, "-an", "-vf", "scale=\(outW):\(outH)",
+                                "-pix_fmt", "bgra", "-f", "rawvideo", "-"]
+        }
+        do { try ffmpeg.run(); try ytdlpProcess?.run() } catch { return }
+        process = ffmpeg; running = true
         let handle = outPipe.fileHandleForReading
         let t = Thread { [weak self] in self?.readLoop(handle) }
         t.stackSize = 1 << 20
@@ -1168,5 +1190,6 @@ final class FFmpegStreamSource: Source {
     override func stop() {
         running = false
         process?.terminate(); process = nil
+        ytdlpProcess?.terminate(); ytdlpProcess = nil
     }
 }

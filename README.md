@@ -1,3 +1,13 @@
+# LiveDeck Studio (macOS) — v3.15
+
+**Fixes & audio in 3.15:**
+- **Colour bars & solid-colour inputs now show in their tiles.** Draw-only sources (test pattern, colour) had no still image, so their thumbnails were black even though they rendered fine in Preview/Program — the tile now renders them directly.
+- **Master = the mix of input audios.** The MASTER meter now reflects the summed level of the inputs feeding the main mix (falls back to the master device if none do).
+- **Per-input “send to main mix”.** Each channel strip has a new **MAIN** button (green = sending). Turn it off to drop that input from the master mix and the recorded/streamed mix.
+- **YouTube / Twitch / Facebook links now play** — when **yt-dlp** and **ffmpeg** are installed. LiveDeck extracts the real stream with yt-dlp and decodes it with ffmpeg. The dialog shows whether both tools are present (install once: `brew install yt-dlp ffmpeg`). Best for live streams.
+
+---
+
 # LiveDeck Studio (macOS) — v3.14
 
 **New in 3.14:**
