@@ -153,6 +153,9 @@ final class Engine: ObservableObject {
     func revealLastRecording() { if let u = lastRecordingURL { NSWorkspace.shared.activateFileViewerSelecting([u]) } }
     let telemetry = Telemetry()
     let sysMon = SystemMonitor()
+    let streamer = StreamOutput()
+    @Published var isStreaming = false
+    @Published var streamError = ""
     @Published var fileOutputActive = false
     @Published var programWindowActive = false
     @Published var rightTab = 0   // 0 = Audio Mixer, 1 = Overlays
@@ -176,6 +179,19 @@ final class Engine: ObservableObject {
                                                     proto: p.proto, url: p.url, key: ""))
     }
     func removeStreamDestination(_ id: UUID) { streamDestinations.removeAll { $0.id == id } }
+
+    var ffmpegAvailable: Bool { streamer.available }
+
+    func toggleStream(_ dest: StreamDestination?) {
+        if isStreaming { stopStream(); return }
+        guard let d = dest ?? streamDestinations.first else { streamError = "Add a stream destination first."; return }
+        guard streamer.available else { streamError = "ffmpeg not found. Install it (brew install ffmpeg)."; return }
+        let br = max(2500, recBitrateMbps * 1000)
+        let ok = streamer.start(url: d.composedURL, width: width, height: height, fps: fpsTarget, bitrateKbps: br)
+        streamError = ok ? "" : streamer.lastError
+        isStreaming = streamer.isStreaming
+    }
+    func stopStream() { streamer.stop(); isStreaming = false }
 
     private var transFrom: UUID?
     private var transitioning = false
@@ -254,6 +270,7 @@ final class Engine: ObservableObject {
     }
 
     private func publishMeters() {
+        if isStreaming != streamer.isStreaming { isStreaming = streamer.isStreaming }
         let m = audioCapture.currentLevel
         if abs(m - telemetry.master) > 0.01 { telemetry.master = m }
         var newLevels = telemetry.levels
@@ -606,6 +623,7 @@ final class Engine: ObservableObject {
         if isRecording, let input = videoInput, input.isReadyForMoreMediaData, let adaptor = adaptor {
             adaptor.append(pb, withPresentationTime: CMClockGetTime(CMClockGetHostTimeClock()))
         }
+        if streamer.isStreaming { streamer.writeFrame(pb) }
 
         // ---- PREVIEW MONITOR ----
         if !previewConsumers.allObjects.isEmpty, let pv = previewID, let s = sources.first(where: { $0.id == pv }) {

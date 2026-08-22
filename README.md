@@ -1,3 +1,14 @@
+# LiveDeck Studio (macOS) — v3.12
+
+**New in 3.12 — RTMP / SRT streaming (video) via ffmpeg.** LiveDeck can now push the Program to YouTube / Facebook / Twitch / custom RTMP·RTMPS·SRT.
+- **Uses an ffmpeg you install** (`brew install ffmpeg`) — detected at runtime; not bundled (avoids GPL redistribution + signing an external binary). The Stream Settings panel shows whether ffmpeg was found.
+- **Go Live / Stop** from Stream Settings, or toggle the **Stream** button in the status bar (green when live). Streams the first destination.
+- H.264 (libx264, veryfast, zerolatency), FLV for RTMP/RTMPS and MPEG-TS for SRT chosen automatically; bitrate follows the recording bitrate setting.
+
+**Honest scope (staged on purpose):** this streams **video** with a **silent AAC track** so platforms accept the feed. **Real program audio is the next increment** — I'm shipping video first so you can confirm the connection end-to-end before I wire the audio bus into the encoder. Frames are dropped rather than stalling the app if the network can't keep up. NDI output still awaits the SDK headers.
+
+---
+
 # LiveDeck Studio (macOS) — v3.11
 
 **New in 3.11:**

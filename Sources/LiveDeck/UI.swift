@@ -1124,7 +1124,7 @@ struct StatusBar: View {
                 }.buttonStyle(.plain).help("Toggle overlay channel \(i + 1)")
             }
             SBtn("Record", color: engine.isRecording ? .red : cBtn) { engine.toggleRecording() }
-            SBtn("Stream", color: cBtn).opacity(0.5)
+            SBtn("Stream", color: engine.isStreaming ? cProgram : cBtn) { engine.toggleStream(nil) }
             SBtn("Snapshot") { engine.snapshot() }
             SBtn("Outputs", color: engine.activeScreens.isEmpty ? cBtn : cProgram) { showOutputs = true }
             SBtn("Multiview") { engine.openMultiviewWindow() }
@@ -1326,10 +1326,27 @@ struct StreamSettingsView: View {
                     ForEach($engine.streamDestinations) { $d in StreamRow(dest: $d) }
                 }
             }
-            Text("LiveDeck stores these destinations (RTMP/RTMPS/SRT URL + key). Actually going live needs a streaming encoder, which isn't bundled yet — for now capture the Program window in OBS or YouTube's browser encoder. These saved settings are ready for when the encoder lands.")
+            Divider()
+            HStack(spacing: 8) {
+                Image(systemName: engine.ffmpegAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundColor(engine.ffmpegAvailable ? cProgram : .orange)
+                if engine.ffmpegAvailable {
+                    Text("ffmpeg detected — ready to stream the first destination.").font(.system(size: 11))
+                } else {
+                    Text("ffmpeg not found. Install it once (Terminal: brew install ffmpeg), then reopen.").font(.system(size: 11))
+                }
+                Spacer()
+                Button(engine.isStreaming ? "Stop Streaming" : "Go Live") { engine.toggleStream(engine.streamDestinations.first) }
+                    .disabled(!engine.ffmpegAvailable || engine.streamDestinations.isEmpty)
+                    .foregroundColor(engine.isStreaming ? .red : cProgram)
+            }
+            if !engine.streamError.isEmpty {
+                Text(engine.streamError).font(.system(size: 10)).foregroundColor(.orange)
+            }
+            Text("Streams the Program (video) to the first destination via your installed ffmpeg, with a silent audio track for now — real program audio is the next step. RTMP/RTMPS use FLV; SRT uses MPEG-TS automatically.")
                 .font(.system(size: 10)).foregroundColor(.secondary)
         }
-        .padding(16).frame(width: 540, height: 480)
+        .padding(16).frame(width: 540, height: 520)
         .preferredColorScheme(.dark)
     }
 }

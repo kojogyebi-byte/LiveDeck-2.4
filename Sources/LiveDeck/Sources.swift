@@ -1007,3 +1007,86 @@ final class SystemMonitor: ObservableObject {
         return best
     }
 }
+
+// MARK: - RTMP/SRT streaming via a user-installed ffmpeg
+//
+// LiveDeck does not bundle ffmpeg (that means GPL redistribution + signing an
+// external binary, which we can't verify here). Instead it detects an ffmpeg the
+// user installs (e.g. `brew install ffmpeg`) and pipes the Program frames to it.
+// This first version streams VIDEO with a silent AAC track so platforms accept the
+// feed; real program audio is the next increment.
+
+final class StreamOutput {
+    private var process: Process?
+    private var stdinHandle: FileHandle?
+    private let q = DispatchQueue(label: "livedeck.stream.write")
+    private var busy = false
+    private(set) var isStreaming = false
+    private(set) var lastError = ""
+
+    static func ffmpegPath() -> String? {
+        let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg", "/opt/local/bin/ffmpeg"]
+        for p in candidates where FileManager.default.isExecutableFile(atPath: p) { return p }
+        return nil
+    }
+    var available: Bool { StreamOutput.ffmpegPath() != nil }
+
+    func start(url: String, width: Int, height: Int, fps: Int, bitrateKbps: Int) -> Bool {
+        guard !isStreaming, let ff = StreamOutput.ffmpegPath(),
+              !url.trimmingCharacters(in: .whitespaces).isEmpty else { lastError = "ffmpeg not found or URL empty"; return false }
+        let isSRT = url.hasPrefix("srt://")
+        let outFmt = isSRT ? "mpegts" : "flv"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: ff)
+        p.arguments = [
+            "-loglevel", "error",
+            "-f", "rawvideo", "-pixel_format", "bgra", "-video_size", "\(width)x\(height)", "-framerate", "\(fps)", "-i", "pipe:0",
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=mono:sample_rate=48000",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-b:v", "\(bitrateKbps)k", "-maxrate", "\(bitrateKbps)k", "-bufsize", "\(bitrateKbps * 2)k",
+            "-g", "\(max(2, fps * 2))", "-tune", "zerolatency",
+            "-c:a", "aac", "-b:a", "128k",
+            "-f", outFmt, url
+        ]
+        let inPipe = Pipe()
+        p.standardInput = inPipe
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { lastError = error.localizedDescription; return false }
+        process = p; stdinHandle = inPipe.fileHandleForWriting; isStreaming = true; lastError = ""
+        return true
+    }
+
+    func writeFrame(_ pb: CVPixelBuffer) {
+        guard isStreaming, let h = stdinHandle, !busy else { return }
+        CVPixelBufferLockBaseAddress(pb, .readOnly)
+        let w = CVPixelBufferGetWidth(pb), ht = CVPixelBufferGetHeight(pb)
+        let bpr = CVPixelBufferGetBytesPerRow(pb)
+        var data = Data(count: w * 4 * ht)
+        if let base = CVPixelBufferGetBaseAddress(pb) {
+            data.withUnsafeMutableBytes { dst in
+                guard let d = dst.baseAddress else { return }
+                if bpr == w * 4 {
+                    memcpy(d, base, w * 4 * ht)
+                } else {
+                    for row in 0..<ht { memcpy(d.advanced(by: row * w * 4), base.advanced(by: row * bpr), w * 4) }
+                }
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(pb, .readOnly)
+        busy = true
+        q.async { [weak self] in
+            do { try h.write(contentsOf: data) } catch { DispatchQueue.main.async { self?.stop() } }
+            self?.busy = false
+        }
+    }
+
+    func stop() {
+        guard isStreaming else { return }
+        isStreaming = false
+        let handle = stdinHandle
+        q.async { try? handle?.close() }
+        process?.terminate()
+        process = nil; stdinHandle = nil
+    }
+}
