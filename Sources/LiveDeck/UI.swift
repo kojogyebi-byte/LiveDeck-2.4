@@ -64,6 +64,15 @@ struct MainView: View {
     }
 }
 
+func keyEquivFromName(_ s: String) -> KeyEquivalent? {
+    switch s {
+    case "Return": return .return
+    case "Space": return .space
+    case "None", "": return nil
+    default: if let c = s.lowercased().first { return KeyEquivalent(c) }; return nil
+    }
+}
+
 struct HotKeys: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
@@ -71,16 +80,58 @@ struct HotKeys: View {
             ForEach(1...9, id: \.self) { n in
                 Button("") { stage(n - 1) }.keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: [])
             }
-            Button("") { engine.runTransition() }.keyboardShortcut(.return, modifiers: [])
-            Button("") { engine.cut() }.keyboardShortcut(.return, modifiers: [.command])
-            Button("") { engine.toggleFTB() }.keyboardShortcut("b", modifiers: [])
+            hk("take") { engine.runTransition() }
+            hk("cut") { engine.cut() }
+            hk("ftb") { engine.toggleFTB() }
+            hk("record") { engine.toggleRecording() }
+            hk("snapshot") { engine.snapshot() }
+            hk("stream") { engine.toggleStream(nil) }
         }
         .opacity(0).accessibilityHidden(true)
+    }
+    @ViewBuilder func hk(_ action: String, _ run: @escaping () -> Void) -> some View {
+        if let k = engine.hotkeys[action], let ke = keyEquivFromName(k) {
+            Button("", action: run).keyboardShortcut(ke, modifiers: [])
+        }
     }
     func stage(_ i: Int) {
         guard engine.sources.indices.contains(i) else { return }
         let s = engine.sources[i]
         if !s.isPlaceholder { engine.setPreview(s.id); engine.selectedSourceID = s.id }
+    }
+}
+
+struct HotkeysView: View {
+    @EnvironmentObject var engine: Engine
+    @Environment(\.dismiss) private var dismiss
+    private let actions: [(String, String)] = [
+        ("take", "Take (transition)"), ("cut", "Cut"), ("ftb", "Fade to black"),
+        ("record", "Record"), ("snapshot", "Snapshot"), ("stream", "Stream")]
+    private let keyOptions = ["None", "Return", "Space", "A", "B", "C", "D", "E", "F", "G",
+                              "L", "M", "P", "Q", "R", "S", "T", "V", "W", "X", "Z"]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("KEYBOARD SHORTCUTS").font(.system(size: 13, weight: .heavy)).kerning(1)
+                Spacer()
+                Button("Reset") { engine.hotkeys = Engine.defaultHotkeys }
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            Text("Number keys 1–9 always stage that input to Preview. Assign a key to each action below.")
+                .font(.system(size: 11)).foregroundColor(.secondary)
+            ForEach(actions, id: \.0) { act in
+                HStack {
+                    Text(act.1).font(.system(size: 12)).frame(width: 160, alignment: .leading)
+                    Picker("", selection: Binding(
+                        get: { engine.hotkeys[act.0] ?? "None" },
+                        set: { engine.hotkeys[act.0] = $0 })) {
+                        ForEach(keyOptions, id: \.self) { Text($0).tag($0) }
+                    }.labelsHidden()
+                }
+            }
+            Spacer()
+        }
+        .padding(16).frame(width: 420, height: 380).preferredColorScheme(.dark)
     }
 }
 
@@ -152,12 +203,14 @@ struct TopBar: View {
                     }
                 }
                 Divider()
+                Button("Keyboard shortcuts…") { engine.showHotkeys = true }
                 checkButton("Mix input faders into recording", engine.mixInputsIntoRecording) { engine.mixInputsIntoRecording.toggle() }
                 Button("Choose recording folder…") { engine.chooseOutputFolder() }
                 Button("Reveal last recording") { engine.revealLastRecording() }
             } label: { Image(systemName: "gearshape") }.frame(width: 34)
         }
         .padding(.horizontal, 12).frame(height: 44).background(cBar)
+        .sheet(isPresented: Binding(get: { engine.showHotkeys }, set: { engine.showHotkeys = $0 })) { HotkeysView() }
     }
 }
 
@@ -262,7 +315,7 @@ struct TransitionColumn: View {
 func bestInputGrid(count: Int, area: CGSize, sizeMul: CGFloat) -> (cols: Int, tileW: CGFloat) {
     guard count > 0, area.width > 60, area.height > 60 else { return (1, 176) }
     let gap: CGFloat = 8
-    let headerH: CGFloat = 42
+    let headerH: CGFloat = 54
     let minW: CGFloat = 150 * max(0.6, sizeMul)
     var best: (cols: Int, tileW: CGFloat, score: CGFloat) = (1, 150, -1e9)
     for cols in 1...count {
@@ -343,6 +396,18 @@ struct InputAssignMenu<Label: View>: View {
     }
 }
 
+struct TileTransport<S: MediaPlayback>: View {
+    @ObservedObject var source: S
+    var body: some View {
+        HStack(spacing: 6) {
+            Button { source.restart() } label: { Image(systemName: "backward.end.fill").font(.system(size: 9)) }.buttonStyle(.plain)
+            Button { source.togglePlay() } label: {
+                Image(systemName: source.paused ? "play.fill" : "pause.fill").font(.system(size: 11))
+            }.buttonStyle(.plain).foregroundColor(cPreview)
+        }
+    }
+}
+
 struct InputTile: View {
     @EnvironmentObject var engine: Engine
     var index: Int
@@ -389,10 +454,14 @@ struct InputTile: View {
                         Divider()
                         Button("Remove", role: .destructive) { engine.removeSource(source.id) }
                     }
+                ChannelMeterBar(id: source.id, muted: source.muted, segments: 14)
+                    .frame(width: tileW, height: 6).padding(.vertical, 2)
                 HStack(spacing: 4) {
                     Button("PGM") { engine.setPreview(source.id); engine.cut() }
                         .font(.system(size: 9, weight: .bold)).buttonStyle(.plain)
                         .padding(.horizontal, 8).padding(.vertical, 3).background(Color(white: 0.18)).cornerRadius(3)
+                    if let f = source as? FileSource { TileTransport(source: f) }
+                    else if let a = source as? AudioFileSource { TileTransport(source: a) }
                     Spacer()
                     Button { source.muted.toggle() } label: {
                         Image(systemName: source.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 9))

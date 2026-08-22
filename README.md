@@ -1,3 +1,12 @@
+# LiveDeck Studio (macOS) — v3.13
+
+**New in 3.13:**
+- **Playback buttons on each input tile.** Video and audio-file inputs now have **play/pause** and **restart** buttons right on the tile — no need to open the Input tab.
+- **Audio meter on each input tile.** A slim level meter sits under every input thumbnail (moves once an audio device is assigned to that input).
+- **Customisable keyboard shortcuts.** Gear menu → **Keyboard shortcuts…** lets you assign keys to Take, Cut, Fade-to-black, Record, Snapshot and Stream. Number keys 1–9 always stage that input to Preview. Choices are saved between launches.
+
+---
+
 # LiveDeck Studio (macOS) — v3.12
 
 **New in 3.12 — RTMP / SRT streaming (video) via ffmpeg.** LiveDeck can now push the Program to YouTube / Facebook / Twitch / custom RTMP·RTMPS·SRT.

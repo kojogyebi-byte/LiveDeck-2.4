@@ -124,6 +124,16 @@ final class Engine: ObservableObject {
     // Input bus tile size
     @Published var inputTileScale: Double = 1.0 { didSet { persistSettings() } }
     @Published var mixInputsIntoRecording = false { didSet { persistSettings() } }
+    @Published var showHotkeys = false
+    static let defaultHotkeys: [String: String] = [
+        "take": "Return", "cut": "C", "ftb": "B", "record": "R", "snapshot": "S", "stream": "L"
+    ]
+    @Published var hotkeys: [String: String] = Engine.loadHotkeys() { didSet { UserDefaults.standard.set(hotkeys, forKey: "hotkeys") } }
+    static func loadHotkeys() -> [String: String] {
+        var m = defaultHotkeys
+        if let d = UserDefaults.standard.dictionary(forKey: "hotkeys") as? [String: String] { for (k, v) in d { m[k] = v } }
+        return m
+    }
     private var usingMixRecorder = false
     let mixRecorder = AudioMixRecorder()
     let masterBus = Source(name: "Master Bus", kindLabel: "MASTER")
