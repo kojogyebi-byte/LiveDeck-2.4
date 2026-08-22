@@ -6,6 +6,7 @@ import CoreMediaIO
 import AppKit
 import Darwin
 import IOKit
+import WebKit
 
 let sharedCIContext = CIContext()
 
@@ -1192,4 +1193,47 @@ final class FFmpegStreamSource: Source {
         process?.terminate(); process = nil
         ytdlpProcess?.terminate(); ytdlpProcess = nil
     }
+}
+
+// MARK: - Web page input (renders a website into the switcher via WKWebView snapshots)
+
+final class WebSource: Source {
+    private var webView: WKWebView?
+    private var timer: Timer?
+    private var frameImage: CGImage?
+    private var snapping = false
+    let outW = 1280, outH = 720
+
+    init(url: String) {
+        super.init(name: URL(string: url)?.host ?? "Web page", kindLabel: "WEB")
+        sourceURLString = url
+        DispatchQueue.main.async { [weak self] in self?.setup(url) }
+    }
+
+    private func setup(_ url: String) {
+        let cfg = WKWebViewConfiguration()
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: outW, height: outH), configuration: cfg)
+        if let u = URL(string: url) { wv.load(URLRequest(url: u)) }
+        webView = wv
+        let t = Timer(timeInterval: 1.0 / 12.0, repeats: true) { [weak self] _ in self?.snapshot() }
+        t.tolerance = 0.05
+        RunLoop.main.add(t, forMode: .common); timer = t
+    }
+
+    func reload() { if let s = sourceURLString, let u = URL(string: s) { webView?.load(URLRequest(url: u)) } }
+
+    private func snapshot() {
+        guard let wv = webView, !snapping else { return }
+        snapping = true
+        let cfg = WKSnapshotConfiguration()
+        cfg.rect = CGRect(x: 0, y: 0, width: outW, height: outH)
+        wv.takeSnapshot(with: cfg) { [weak self] image, _ in
+            self?.snapping = false
+            guard let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+            self?.frameImage = cg
+        }
+    }
+
+    override func currentImage() -> CGImage? { frameImage }
+    override func stop() { timer?.invalidate(); timer = nil; webView = nil }
 }

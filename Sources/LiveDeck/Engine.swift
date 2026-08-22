@@ -3,6 +3,7 @@ import AVFoundation
 import AppKit
 import CoreMedia
 import Combine
+import CoreServices
 import UniformTypeIdentifiers
 
 enum TransitionType: String, CaseIterable, Identifiable {
@@ -222,6 +223,8 @@ final class Engine: ObservableObject {
     private var multiviewWindow: NSWindow?
     private var screenWindows: [Int: NSWindow] = [:]
     @Published var activeScreens: Set<Int> = []
+    @Published var screenSource: [Int: UUID] = [:]
+    private var screenViews: [Int: FrameNSView] = [:]
 
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -319,7 +322,9 @@ final class Engine: ObservableObject {
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let src: Source
-        if mode == 2 || mode == 3 {
+        if mode == 4 {
+            src = WebSource(url: trimmed)
+        } else if mode == 2 || mode == 3 {
             src = FFmpegStreamSource(url: trimmed)
         } else {
             guard let u = URL(string: trimmed), let sc = u.scheme,
@@ -590,6 +595,28 @@ final class Engine: ObservableObject {
     // MARK: layers
 
     func addLayer(_ kind: Layer.Kind) { let l = Layer(kind: kind); layers.insert(l, at: 0); selectedLayerID = l.id; rightTab = 2 }
+
+    /// Offline dictionary lookup via macOS Dictionary Services.
+    func defineWord(_ word: String) -> String? {
+        let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let range = CFRangeMake(0, (trimmed as NSString).length)
+        guard let def = DCSCopyTextDefinition(nil, trimmed as CFString, range) else { return nil }
+        let text = def.takeRetainedValue() as String
+        return text.isEmpty ? nil : text
+    }
+
+    /// Create or update the dictionary overlay and put it on the wall.
+    func showDefinition(word: String, definition: String) {
+        let clipped = definition.count > 420 ? String(definition.prefix(420)) + "…" : definition
+        if let existing = layers.first(where: { $0.kind == .definition }) {
+            existing.text1 = word; existing.text2 = clipped; existing.isLive = true; selectedLayerID = existing.id
+        } else {
+            let l = Layer(kind: .definition); l.text1 = word; l.text2 = clipped; l.isLive = true
+            layers.insert(l, at: 0); selectedLayerID = l.id
+        }
+        rightTab = 2
+    }
     func addLayerTemplate(_ t: OverlayTemplate) { let l = t.make(); layers.insert(l, at: 0); selectedLayerID = l.id; rightTab = 2 }
     func removeLayer(_ id: UUID) { layers.removeAll { $0.id == id }; if selectedLayerID == id { selectedLayerID = nil } }
     func moveLayer(_ id: UUID, by delta: Int) {
@@ -663,7 +690,17 @@ final class Engine: ObservableObject {
         }
         if ftbT > 0 { ctx.setFillColor(NSColor.black.withAlphaComponent(CGFloat(ftbT)).cgColor); ctx.fill(full) }
 
-        if let img = ctx.makeImage() { for v in consumers.allObjects { v.show(img) } }
+        if let img = ctx.makeImage() {
+            for v in consumers.allObjects { v.show(img) }
+            // Per-display source override: send a chosen input (instead of Program) to a screen.
+            if !screenSource.isEmpty {
+                for (idx, sid) in screenSource {
+                    guard let v = screenViews[idx], let s = sources.first(where: { $0.id == sid }),
+                          let simg = imageForSource(s) else { continue }
+                    v.show(simg)
+                }
+            }
+        }
         if isRecording, let input = videoInput, input.isReadyForMoreMediaData, let adaptor = adaptor {
             adaptor.append(pb, withPresentationTime: CMClockGetTime(CMClockGetHostTimeClock()))
         }
@@ -866,6 +903,19 @@ final class Engine: ObservableObject {
 
     // MARK: external display outputs (projectors / LED walls) — run simultaneously
 
+    func setScreenSource(_ index: Int, _ id: UUID?) {
+        if let id { screenSource[index] = id } else { screenSource.removeValue(forKey: index) }
+    }
+
+    private func imageForSource(_ s: Source) -> CGImage? {
+        if let img = s.currentImage() { return img }
+        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        s.draw(in: ctx, rect: CGRect(x: 0, y: 0, width: width, height: height))
+        return ctx.makeImage()
+    }
+
     func availableScreens() -> [(index: Int, name: String)] {
         NSScreen.screens.enumerated().map { (idx, s) in
             (idx, s.localizedName.isEmpty ? "Display \(idx + 1)" : s.localizedName)
@@ -874,13 +924,15 @@ final class Engine: ObservableObject {
 
     func toggleScreenOutput(_ index: Int) {
         if let w = screenWindows[index] {
-            w.close(); screenWindows[index] = nil; activeScreens.remove(index); return
+            w.close(); screenWindows[index] = nil; screenViews[index] = nil
+            screenSource.removeValue(forKey: index); activeScreens.remove(index); return
         }
         let screens = NSScreen.screens
         guard screens.indices.contains(index) else { return }
         let screen = screens[index]
         let view = FrameNSView(frame: screen.frame)
         addConsumer(view)
+        screenViews[index] = view
         let win = NSWindow(contentRect: screen.frame, styleMask: [.borderless],
                            backing: .buffered, defer: false, screen: screen)
         win.contentView = view

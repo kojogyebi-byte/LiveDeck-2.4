@@ -16,6 +16,7 @@ final class Layer: ObservableObject, Identifiable {
         case logo = "Logo / Image"
         case qrcode = "QR Code"
         case pip = "Picture in Picture"
+        case definition = "Dictionary"
         var id: String { rawValue }
         var icon: String {
             switch self {
@@ -28,6 +29,7 @@ final class Layer: ObservableObject, Identifiable {
             case .logo: return "photo"
             case .qrcode: return "qrcode"
             case .pip: return "pip"
+            case .definition: return "character.book.closed"
             }
         }
     }
@@ -133,6 +135,9 @@ final class Layer: ObservableObject, Identifiable {
             text1 = ""; text2 = ""
         case .pip:
             text1 = ""; text2 = ""; number1 = 28; position = 3
+        case .definition:
+            text1 = "Grace"; text2 = "Unmerited favour."; number1 = 6
+            bgColor = Color(red: 0.05, green: 0.07, blue: 0.12); bgOpacity = 0.9
         }
     }
 }
@@ -392,8 +397,43 @@ enum LayerRenderer {
                 ctx.fill(rect.insetBy(dx: -4, dy: -4))
             }
             coverDraw(img, in: rect, ctx: ctx)
+
+        case .definition:
+            ctx.setAlpha(k)
+            let panelH = H * CGFloat(max(3, layer.number1)) / 100 * 5   // ~30% at number1=6
+            let ph = min(H, max(H * 0.28, panelH))
+            let rect = CGRect(x: 0, y: 0, width: W, height: ph)
+            if let cg = LayerRenderer.definitionImage(word: layer.text1, def: layer.text2,
+                                                      size: CGSize(width: W, height: ph),
+                                                      bg: NSColor(layer.bgColor).withAlphaComponent(layer.bgOpacity),
+                                                      accent: NSColor(layer.accent)) {
+                ctx.draw(cg, in: rect)
+            }
         }
         ctx.restoreGState()
+    }
+
+    /// Renders a dictionary panel (bold word + wrapped definition) to a CGImage.
+    static func definitionImage(word: String, def: String, size: CGSize, bg: NSColor, accent: NSColor) -> CGImage? {
+        let img = NSImage(size: size)
+        img.lockFocus()
+        bg.setFill(); NSBezierPath(rect: CGRect(origin: .zero, size: size)).fill()
+        // accent bar
+        accent.setFill(); NSBezierPath(rect: CGRect(x: 0, y: size.height - 8, width: size.width, height: 8)).fill()
+        let pad: CGFloat = size.height * 0.12
+        let wordFont = NSFont.boldSystemFont(ofSize: size.height * 0.24)
+        let wordAttr: [NSAttributedString.Key: Any] = [.font: wordFont, .foregroundColor: accent]
+        let wordStr = NSAttributedString(string: word, attributes: wordAttr)
+        let wordH = wordStr.size().height
+        wordStr.draw(at: CGPoint(x: pad, y: size.height - pad - wordH))
+        let para = NSMutableParagraphStyle(); para.lineBreakMode = .byWordWrapping; para.alignment = .left
+        let defFont = NSFont.systemFont(ofSize: size.height * 0.11, weight: .regular)
+        let defAttr: [NSAttributedString.Key: Any] = [.font: defFont, .foregroundColor: NSColor.white, .paragraphStyle: para]
+        let defRect = CGRect(x: pad, y: pad, width: size.width - pad * 2, height: size.height - pad * 2 - wordH - pad * 0.6)
+        NSAttributedString(string: def, attributes: defAttr).draw(in: defRect)
+        img.unlockFocus()
+        var rect = CGRect(origin: .zero, size: size)
+        return img.cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
 
     static func makeQR(_ text: String) -> CGImage? {

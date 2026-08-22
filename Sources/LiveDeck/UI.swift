@@ -507,6 +507,7 @@ struct AddInputMenu: View {
             Button("Network Stream (HLS / URL)…") { engine.openAddStream(1) }
             Button("RTMP / RTSP / SRT (ffmpeg)…") { engine.openAddStream(2) }
             Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
+            Button("Web Page…") { engine.openAddStream(4) }
             Button("Colour") { engine.addColor() }
             Button("Test Pattern (Bars)") { engine.addBars() }
             Divider()
@@ -1117,10 +1118,42 @@ struct DBScale: View {
     }
 }
 
+struct DictionaryLookup: View {
+    @EnvironmentObject var engine: Engine
+    @State private var word = ""
+    @State private var definition = ""
+    @State private var notFound = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("DICTIONARY").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            HStack {
+                TextField("Search a word", text: $word, onCommit: lookup).textFieldStyle(.roundedBorder)
+                Button("Look up", action: lookup)
+            }
+            if notFound {
+                Text("No definition found in the installed dictionaries.").font(.system(size: 10)).foregroundColor(.orange)
+            }
+            if !definition.isEmpty {
+                ScrollView { Text(definition).font(.system(size: 11)).frame(maxWidth: .infinity, alignment: .leading) }
+                    .frame(height: 90).padding(6).background(Color(white: 0.1)).cornerRadius(5)
+                Button("Show on Program / Video Wall") { engine.showDefinition(word: word, definition: definition) }
+                    .font(.system(size: 11, weight: .semibold))
+            }
+        }
+        .padding(10).background(Color(white: 0.07))
+    }
+    func lookup() {
+        notFound = false; definition = ""
+        if let d = engine.defineWord(word) { definition = d } else { notFound = true }
+    }
+}
+
 struct OverlaysPanel: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            DictionaryLookup()
+            Divider()
             HStack {
                 Text("OVERLAY CHANNELS / LAYERS").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(.secondary)
                 Spacer()
@@ -1333,6 +1366,16 @@ struct LayerInspector: View {
                     Text("Tip: set the source full-size (Size ≈ 100) to place keyed talent over the whole program.")
                         .font(.system(size: 9)).foregroundColor(.secondary)
                 }
+            case .definition:
+                TextField("Word", text: $layer.text1)
+                Text("Definition").font(.system(size: 10)).foregroundColor(.secondary)
+                TextField("Definition", text: $layer.text2, axis: .vertical).lineLimit(2...6)
+                HStack { Text("Panel height").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 4...12) }
+                ColorPicker("Word colour", selection: $layer.accent)
+                ColorPicker("Panel colour", selection: $layer.bgColor)
+                HStack { Text("Panel opacity").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.bgOpacity, in: 0.3...1) }
+                Text("Tip: use the Dictionary search at the top of this tab to fill this automatically.")
+                    .font(.system(size: 9)).foregroundColor(.secondary)
             }
         }
         .textFieldStyle(.roundedBorder).padding(12)
@@ -1484,6 +1527,7 @@ struct AddStreamView: View {
         switch mode {
         case 2: return editing ? "EDIT RTMP / RTSP / SRT" : "ADD RTMP / RTSP / SRT (FFMPEG)"
         case 3: return "YOUTUBE / TWITCH / FACEBOOK LINK"
+        case 4: return editing ? "EDIT WEB PAGE" : "ADD WEB PAGE"
         default: return editing ? "EDIT NETWORK STREAM" : "ADD NETWORK STREAM (HLS / URL)"
         }
     }
@@ -1492,7 +1536,12 @@ struct AddStreamView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title).font(.system(size: 13, weight: .heavy)).kerning(1)
 
-            if mode == 2 {
+            if mode == 4 {
+                Text("Displays any website as an input — great for online lyrics, Bible sites, countdowns, dashboards or web-based graphics. It renders at 1280×720 and refreshes continuously.")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+                TextField("https://…", text: $urlString)
+                    .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+            } else if mode == 2 {
                 Text("Pulls and decodes an RTMP / RTSP / SRT (or HTTP) stream using your installed ffmpeg, and shows it as an input. Requires ffmpeg (brew install ffmpeg).")
                     .font(.system(size: 11)).foregroundColor(.secondary)
                 if !engine.ffmpegAvailable {
@@ -1572,13 +1621,26 @@ struct OutputsView: View {
                     .font(.system(size: 11)).foregroundColor(.secondary)
             }
             ForEach(screens, id: \.index) { s in
-                HStack {
-                    Image(systemName: "display").foregroundColor(.secondary)
-                    Text(s.name + (s.index == 0 ? "  (main)" : "")).font(.system(size: 12))
-                    Spacer()
-                    Toggle("", isOn: Binding(
-                        get: { engine.activeScreens.contains(s.index) },
-                        set: { _ in engine.toggleScreenOutput(s.index) })).labelsHidden()
+                VStack(spacing: 6) {
+                    HStack {
+                        Image(systemName: "display").foregroundColor(.secondary)
+                        Text(s.name + (s.index == 0 ? "  (main)" : "")).font(.system(size: 12))
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { engine.activeScreens.contains(s.index) },
+                            set: { _ in engine.toggleScreenOutput(s.index) })).labelsHidden()
+                    }
+                    if engine.activeScreens.contains(s.index) {
+                        HStack {
+                            Text("Send").font(.system(size: 10)).foregroundColor(.secondary)
+                            Picker("", selection: Binding(
+                                get: { engine.screenSource[s.index] ?? pipNoneTag },
+                                set: { engine.setScreenSource(s.index, $0 == pipNoneTag ? nil : $0) })) {
+                                Text("Program").tag(pipNoneTag)
+                                ForEach(engine.sources.filter { !$0.isPlaceholder }) { src in Text(src.name).tag(src.id) }
+                            }.labelsHidden()
+                        }
+                    }
                 }
                 .padding(10).background(Color(white: 0.12)).cornerRadius(6)
             }

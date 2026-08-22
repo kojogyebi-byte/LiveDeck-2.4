@@ -1,3 +1,13 @@
+# LiveDeck Studio (macOS) — v3.16
+
+**New in 3.16 — church-media toolkit:**
+- **Web page input.** Add Input → **Web Page…** displays any website as an input (online lyrics, Bible sites, countdowns, dashboards, web graphics). Renders at 1280×720 and refreshes continuously via WKWebView.
+- **Per-display source out.** Outputs panel: each external display (HDMI / video card / projector / LED wall) can now send **Program or any individual input** — pick it from the per-display dropdown. Multiple displays run at once, each with its own source.
+- **Dictionary → video wall.** Overlays tab has a **Dictionary** search: type a word, get its definition (offline, from macOS Dictionary Services), and **Show on Program / Video Wall** as a clean readable panel overlay. Editable like any overlay.
+- NDI output still awaits the SDK headers (detector present; sender stubbed).
+
+---
+
 # LiveDeck Studio (macOS) — v3.15
 
 **Fixes & audio in 3.15:**
