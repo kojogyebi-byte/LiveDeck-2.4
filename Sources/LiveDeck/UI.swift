@@ -315,7 +315,7 @@ struct TransitionColumn: View {
 func bestInputGrid(count: Int, area: CGSize, sizeMul: CGFloat) -> (cols: Int, tileW: CGFloat) {
     guard count > 0, area.width > 60, area.height > 60 else { return (1, 176) }
     let gap: CGFloat = 8
-    let headerH: CGFloat = 54
+    let headerH: CGFloat = 74
     let minW: CGFloat = 150 * max(0.6, sizeMul)
     var best: (cols: Int, tileW: CGFloat, score: CGFloat) = (1, 150, -1e9)
     for cols in 1...count {
@@ -361,7 +361,7 @@ struct InputBus: View {
             }
         }
         .background(cPanel)
-        .sheet(isPresented: Binding(get: { engine.showStreamInput }, set: { engine.showStreamInput = $0 })) { AddStreamView() }
+        .sheet(isPresented: Binding(get: { engine.streamInputMode != 0 }, set: { if !$0 { engine.streamInputMode = 0 } })) { AddStreamView() }
     }
 }
 
@@ -388,7 +388,9 @@ struct InputAssignMenu<Label: View>: View {
             Button("Screen Capture") { engine.replaceSource(slotID, with: ScreenSource()) }
             Button("Video File…") { pickFile(types: videoFileTypes) { engine.replaceSource(slotID, with: FileSource(url: $0)) } }
             Button("Image…") { pickFile(types: ["public.image"]) { engine.replaceSource(slotID, with: ImageSource(url: $0)) } }
-            Button("Network Stream (HLS / URL)…") { engine.showStreamInput = true }
+            Button("Network Stream (HLS / URL)…") { engine.openAddStream(1) }
+            Button("RTMP / RTSP / SRT (ffmpeg)…") { engine.openAddStream(2) }
+            Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
             Button("Colour") { engine.replaceSource(slotID, with: ColorSource()) }
             Button("Test Pattern (Bars)") { engine.replaceSource(slotID, with: BarsSource()) }
         } label: { label() }
@@ -399,11 +401,14 @@ struct InputAssignMenu<Label: View>: View {
 struct TileTransport<S: MediaPlayback>: View {
     @ObservedObject var source: S
     var body: some View {
-        HStack(spacing: 6) {
-            Button { source.restart() } label: { Image(systemName: "backward.end.fill").font(.system(size: 9)) }.buttonStyle(.plain)
+        HStack(spacing: 12) {
+            Button { source.restart() } label: { Image(systemName: "backward.end.fill").font(.system(size: 16)) }.buttonStyle(.plain)
             Button { source.togglePlay() } label: {
-                Image(systemName: source.paused ? "play.fill" : "pause.fill").font(.system(size: 11))
+                Image(systemName: source.paused ? "play.fill" : "pause.fill").font(.system(size: 20))
             }.buttonStyle(.plain).foregroundColor(cPreview)
+            Button { source.loop.toggle() } label: {
+                Image(systemName: "repeat").font(.system(size: 15)).foregroundColor(source.loop ? cProgram : .secondary)
+            }.buttonStyle(.plain)
         }
     }
 }
@@ -426,6 +431,10 @@ struct InputTile: View {
                 Text(source.isPlaceholder ? "Empty" : source.name).font(.system(size: 10))
                     .foregroundColor(source.isPlaceholder ? .secondary : .primary).lineLimit(1)
                 Spacer()
+                if source.sourceURLString != nil {
+                    Button { engine.openEditStream(source.id) } label: { Image(systemName: "pencil").font(.system(size: 9)) }
+                        .buttonStyle(.plain).foregroundColor(.secondary)
+                }
                 Button { engine.removeSource(source.id) } label: { Image(systemName: "xmark").font(.system(size: 8)) }
                     .buttonStyle(.plain).foregroundColor(.secondary)
             }
@@ -456,19 +465,19 @@ struct InputTile: View {
                     }
                 ChannelMeterBar(id: source.id, muted: source.muted, segments: 14)
                     .frame(width: tileW, height: 6).padding(.vertical, 2)
-                HStack(spacing: 4) {
+                HStack(spacing: 8) {
                     Button("PGM") { engine.setPreview(source.id); engine.cut() }
-                        .font(.system(size: 9, weight: .bold)).buttonStyle(.plain)
-                        .padding(.horizontal, 8).padding(.vertical, 3).background(Color(white: 0.18)).cornerRadius(3)
+                        .font(.system(size: 13, weight: .bold)).buttonStyle(.plain)
+                        .padding(.horizontal, 12).padding(.vertical, 6).background(Color(white: 0.18)).cornerRadius(4)
                     if let f = source as? FileSource { TileTransport(source: f) }
                     else if let a = source as? AudioFileSource { TileTransport(source: a) }
                     Spacer()
                     Button { source.muted.toggle() } label: {
-                        Image(systemName: source.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 9))
+                        Image(systemName: source.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 16))
                             .foregroundColor(source.muted ? .red : cProgram)
                     }.buttonStyle(.plain)
                 }
-                .frame(width: tileW).padding(.horizontal, 5).frame(height: 22).background(cBar)
+                .frame(width: tileW).padding(.horizontal, 8).frame(height: 40).background(cBar)
             }
         }
         .overlay(Rectangle().stroke(border, lineWidth: 2))
@@ -495,7 +504,9 @@ struct AddInputMenu: View {
             Button("Screen Capture") { engine.addScreen() }
             Button("Video File…") { pickFile(types: videoFileTypes) { engine.addFile(url: $0) } }
             Button("Image…") { pickFile(types: ["public.image"]) { engine.addImage(url: $0) } }
-            Button("Network Stream (HLS / URL)…") { engine.showStreamInput = true }
+            Button("Network Stream (HLS / URL)…") { engine.openAddStream(1) }
+            Button("RTMP / RTSP / SRT (ffmpeg)…") { engine.openAddStream(2) }
+            Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
             Button("Colour") { engine.addColor() }
             Button("Test Pattern (Bars)") { engine.addBars() }
             Divider()
@@ -1459,28 +1470,69 @@ struct AddStreamView: View {
     @EnvironmentObject var engine: Engine
     @Environment(\.dismiss) private var dismiss
     @State private var urlString = ""
+    @State private var peakMbps: Double = 0
+    private var mode: Int { engine.streamInputMode }
+    private var editing: Bool { engine.editStreamID != nil }
+
+    private var title: String {
+        switch mode {
+        case 2: return editing ? "EDIT RTMP / RTSP / SRT" : "ADD RTMP / RTSP / SRT (FFMPEG)"
+        case 3: return "YOUTUBE / TWITCH / FACEBOOK LINK"
+        default: return editing ? "EDIT NETWORK STREAM" : "ADD NETWORK STREAM (HLS / URL)"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("ADD NETWORK STREAM").font(.system(size: 13, weight: .heavy)).kerning(1)
-            Text("Enter a stream URL. Supported natively: HLS (.m3u8) live streams and direct HTTP(S) video URLs (MP4, MOV, etc.). These run through the same engine as file inputs — with transport, trim, and audio.")
-                .font(.system(size: 11)).foregroundColor(.secondary)
-            TextField("https://example.com/live/stream.m3u8", text: $urlString)
-                .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Not directly supported:").font(.system(size: 11, weight: .bold))
-                Text("• RTMP / RTSP pull — needs an external demuxer (FFmpeg). Restream it to HLS and paste that URL.\n• YouTube / Twitch / Facebook page links — these don't expose a playable URL; pull the source feed or restream to HLS instead.")
-                    .font(.system(size: 10)).foregroundColor(.secondary)
+            Text(title).font(.system(size: 13, weight: .heavy)).kerning(1)
+
+            if mode == 2 {
+                Text("Pulls and decodes an RTMP / RTSP / SRT (or HTTP) stream using your installed ffmpeg, and shows it as an input. Requires ffmpeg (brew install ffmpeg).")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+                if !engine.ffmpegAvailable {
+                    Text("⚠︎ ffmpeg not found — install it first, then reopen.").font(.system(size: 11)).foregroundColor(.orange)
+                }
+                TextField("rtmp://…  •  rtsp://…  •  srt://…", text: $urlString)
+                    .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+            } else if mode == 3 {
+                Text("Page links from YouTube, Twitch and Facebook can't be played directly — those sites don't expose a playable stream URL, and extracting one is against their terms.")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("What works instead:").font(.system(size: 11, weight: .bold))
+                    Text("• If you have the actual HLS (.m3u8) or RTMP source URL, paste it below.\n• Otherwise restream the source to HLS/RTMP (OBS, ffmpeg, or a media server) and use that URL.")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+                .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+                TextField("Paste a real .m3u8 / rtmp:// source URL", text: $urlString)
+                    .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+            } else {
+                Text("HLS (.m3u8) live streams and direct HTTP(S) video URLs — full input with transport, trim and audio.")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+                TextField("https://example.com/live/stream.m3u8", text: $urlString)
+                    .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+                HStack {
+                    Text("Max bitrate").font(.system(size: 11)).foregroundColor(.secondary)
+                    Slider(value: $peakMbps, in: 0...20)
+                    Text(peakMbps < 0.1 ? "Auto" : String(format: "%.0f Mbps", peakMbps))
+                        .font(.system(size: 10, design: .monospaced)).frame(width: 60, alignment: .trailing)
+                }
+                Text("Caps the adaptive (ABR) bitrate for HLS. Auto lets the player choose.")
+                    .font(.system(size: 9)).foregroundColor(.secondary)
             }
-            .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Add Stream") { engine.addNetworkStream(urlString); dismiss() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(urlString.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Cancel") { engine.streamInputMode = 0; dismiss() }
+                Button(editing ? "Save" : "Add") {
+                    engine.commitStream(url: urlString, mode: mode == 3 ? 1 : mode, peakMbps: peakMbps)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(urlString.trimmingCharacters(in: .whitespaces).isEmpty || (mode == 2 && !engine.ffmpegAvailable))
             }
         }
-        .padding(16).frame(width: 540, height: 320).preferredColorScheme(.dark)
+        .padding(16).frame(width: 560, height: mode == 3 ? 340 : 300).preferredColorScheme(.dark)
+        .onAppear { urlString = engine.editStreamURL }
     }
 }
 

@@ -118,6 +118,7 @@ class Source: NSObject, ObservableObject, Identifiable {
     }
 
     var latestBuffer: CVPixelBuffer?
+    var sourceURLString: String?
     private var cachedImage: CGImage?
 
     init(name: String, kindLabel: String) {
@@ -278,6 +279,7 @@ final class FileSource: Source, MediaPlayback {
         item.add(output)
         player = AVPlayer(playerItem: item)
         super.init(name: displayName ?? url.lastPathComponent, kindLabel: label)
+        if url.scheme == "http" || url.scheme == "https" { sourceURLString = url.absoluteString }
         loop = startLooping
         loopObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
@@ -318,6 +320,7 @@ final class FileSource: Source, MediaPlayback {
     func setOut() { outPoint = currentTime > inPoint ? currentTime : duration }
     func clearTrim() { inPoint = 0; outPoint = 0 }
     func playFromIn() { player.seek(to: CMTime(seconds: inPoint, preferredTimescale: 600)); paused = false; player.play() }
+    func setPeakBitrate(_ bitsPerSecond: Double) { player.currentItem?.preferredPeakBitRate = bitsPerSecond }
 
     override func currentImage() -> CGImage? {
         let time = player.currentTime()
@@ -1088,5 +1091,82 @@ final class StreamOutput {
         q.async { try? handle?.close() }
         process?.terminate()
         process = nil; stdinHandle = nil
+    }
+}
+
+// MARK: - RTMP / RTSP / SRT input via ffmpeg (pulls & decodes to frames)
+//
+// Uses the user-installed ffmpeg to open an RTMP/RTSP/SRT/HTTP stream, decode it to
+// raw BGRA frames, and feed them into LiveDeck as an input. Requires ffmpeg; if it's
+// not installed the source stays black. Best-effort — protocol/codec support depends
+// on the installed ffmpeg build.
+
+final class FFmpegStreamSource: Source {
+    private var process: Process?
+    private var readThread: Thread?
+    private let outW = 1280, outH = 720
+    private var running = false
+    private var frameImage: CGImage?
+
+    init(url: String) {
+        super.init(name: URL(string: url)?.host ?? "Stream", kindLabel: "RTMP/RTSP")
+        sourceURLString = url
+        startPull(url)
+    }
+
+    private func startPull(_ url: String) {
+        guard let ff = StreamOutput.ffmpegPath() else { return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: ff)
+        p.arguments = [
+            "-loglevel", "error",
+            "-rtsp_transport", "tcp",
+            "-fflags", "nobuffer", "-flags", "low_delay",
+            "-i", url,
+            "-an", "-vf", "scale=\(outW):\(outH)",
+            "-pix_fmt", "bgra", "-f", "rawvideo", "-"
+        ]
+        let outPipe = Pipe()
+        p.standardOutput = outPipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return }
+        process = p; running = true
+        let handle = outPipe.fileHandleForReading
+        let t = Thread { [weak self] in self?.readLoop(handle) }
+        t.stackSize = 1 << 20
+        readThread = t
+        t.start()
+    }
+
+    private func readLoop(_ handle: FileHandle) {
+        let frameSize = outW * outH * 4
+        var buffer = Data()
+        while running {
+            let chunk = handle.availableData
+            if chunk.isEmpty { break }
+            buffer.append(chunk)
+            while buffer.count >= frameSize {
+                let frame = Data(buffer.prefix(frameSize))
+                buffer.removeFirst(frameSize)
+                if let cg = FFmpegStreamSource.image(from: frame, w: outW, h: outH) {
+                    DispatchQueue.main.async { [weak self] in self?.frameImage = cg }
+                }
+            }
+        }
+    }
+
+    static func image(from data: Data, w: Int, h: Int) -> CGImage? {
+        guard let provider = CGDataProvider(data: data as CFData) else { return nil }
+        let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info, provider: provider,
+                       decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+    }
+
+    override func currentImage() -> CGImage? { frameImage }
+
+    override func stop() {
+        running = false
+        process?.terminate(); process = nil
     }
 }

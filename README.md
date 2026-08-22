@@ -1,3 +1,15 @@
+# LiveDeck Studio (macOS) — v3.14
+
+**New in 3.14:**
+- **Bigger input controls + loop.** The play/pause, restart and PGM/mute buttons under each input are now ~2× larger, and there's a **loop** toggle on video/audio inputs (lights green when on).
+- **Editable network streams.** Stream inputs now have a **pencil edit** button — change the URL or (for HLS) cap the **max ABR bitrate** without removing and re-adding the input.
+- **Separate stream input types.** Add Input now lists three distinct network types:
+  - **Network Stream (HLS / URL)** — plays natively via AVFoundation, with an optional max-bitrate cap.
+  - **RTMP / RTSP / SRT (ffmpeg)** — pulls and decodes the stream via your installed ffmpeg and shows it as an input (best-effort; requires ffmpeg).
+  - **YouTube / Twitch / Facebook link** — a clearly-labelled type that explains these page links can't play directly and guides you to paste a real source URL or restream.
+
+---
+
 # LiveDeck Studio (macOS) — v3.13
 
 **New in 3.13:**

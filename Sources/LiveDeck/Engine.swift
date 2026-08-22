@@ -293,17 +293,42 @@ final class Engine: ObservableObject {
     }
 
     @Published var playlistEnabled = false { didSet { applyPlaylistMode() } }
-    @Published var showStreamInput = false
+    // Stream input dialog: 0 = closed, 1 = HLS/URL, 2 = RTMP/RTSP/SRT (ffmpeg), 3 = social link
+    @Published var streamInputMode = 0
+    @Published var editStreamID: UUID?
+    @Published var editStreamURL = ""
+
+    func openAddStream(_ mode: Int) { editStreamID = nil; editStreamURL = ""; streamInputMode = mode }
+    func openEditStream(_ id: UUID) {
+        guard let s = sources.first(where: { $0.id == id }) else { return }
+        editStreamID = id; editStreamURL = s.sourceURLString ?? ""
+        streamInputMode = (s is FFmpegStreamSource) ? 2 : 1
+    }
+
+    /// Create/replace a network input from the dialog.
+    func commitStream(url: String, mode: Int, peakMbps: Double) {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let src: Source
+        if mode == 2 {
+            src = FFmpegStreamSource(url: trimmed)
+        } else {
+            guard let u = URL(string: trimmed), let sc = u.scheme,
+                  ["http", "https"].contains(sc.lowercased()) else { return }
+            let f = FileSource(url: u, displayName: u.host ?? "Stream", label: "STREAM", startLooping: false)
+            if peakMbps > 0 { f.setPeakBitrate(peakMbps * 1_000_000) }
+            src = f
+        }
+        if let eid = editStreamID, sources.contains(where: { $0.id == eid }) {
+            replaceSource(eid, with: src)
+        } else {
+            placeSource(src)
+        }
+        editStreamID = nil; streamInputMode = 0
+    }
 
     /// Add an HLS/HTTP network stream as an input (AVFoundation-supported URLs).
-    func addNetworkStream(_ urlString: String) {
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), let scheme = url.scheme,
-              ["http", "https"].contains(scheme.lowercased()) else { return }
-        let name = url.host ?? "Stream"
-        let src = FileSource(url: url, displayName: name, label: "STREAM", startLooping: false)
-        placeSource(src)
-    }
+    func addNetworkStream(_ urlString: String) { commitStream(url: urlString, mode: 1, peakMbps: 0) }
 
     /// Replace a slot (e.g. a blank placeholder) with a real source in place.
     func replaceSource(_ oldID: UUID, with new: Source) {
