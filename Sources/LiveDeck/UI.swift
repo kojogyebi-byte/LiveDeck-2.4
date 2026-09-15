@@ -311,11 +311,15 @@ struct TransitionColumn: View {
 
 // MARK: - Input bus
 
+let inputTileChrome: CGFloat = 70   // header 20 + meter 10 + footer 40
+
 // Choose column count + tile width so the input tiles fill the region and reflow on resize.
-func bestInputGrid(count: Int, area: CGSize, sizeMul: CGFloat) -> (cols: Int, tileW: CGFloat) {
-    guard count > 0, area.width > 60, area.height > 60 else { return (1, 176) }
+// 3.18: when everything fits, the tile "screens" also stretch vertically so the whole
+// input region is filled (like a wall of TVs); if it has to scroll, screens stay 16:9.
+func bestInputGrid(count: Int, area: CGSize, sizeMul: CGFloat) -> (cols: Int, tileW: CGFloat, screenH: CGFloat) {
+    guard count > 0, area.width > 60, area.height > 60 else { return (1, 176, 99) }
     let gap: CGFloat = 8
-    let headerH: CGFloat = 74
+    let headerH: CGFloat = inputTileChrome
     let minW: CGFloat = 150 * max(0.6, sizeMul)
     var best: (cols: Int, tileW: CGFloat, score: CGFloat) = (1, 150, -1e9)
     for cols in 1...count {
@@ -329,7 +333,11 @@ func bestInputGrid(count: Int, area: CGSize, sizeMul: CGFloat) -> (cols: Int, ti
         let score = -waste
         if score > best.score { best = (cols, tileW, score) }
     }
-    return (best.cols, max(120, best.tileW))
+    let tileW = max(120, best.tileW)
+    let rows = CGFloat(Int(ceil(Double(count) / Double(best.cols))))
+    let natural = tileW * 9.0 / 16.0
+    let stretched = floor((area.height - gap * (rows + 1)) / rows - headerH) - 1
+    return (best.cols, tileW, max(natural, stretched))
 }
 
 struct InputBus: View {
@@ -354,7 +362,7 @@ struct InputBus: View {
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVGrid(columns: columns, alignment: .center, spacing: 8) {
                         ForEach(Array(engine.sources.enumerated()), id: \.element.id) { idx, src in
-                            InputTile(index: idx + 1, source: src, tileW: g.tileW)
+                            InputTile(index: idx + 1, source: src, tileW: g.tileW, screenH: g.screenH)
                         }
                     }.padding(8).frame(maxWidth: .infinity)
                 }
@@ -418,10 +426,11 @@ struct InputTile: View {
     var index: Int
     @ObservedObject var source: Source
     var tileW: CGFloat = 176
+    var screenH: CGFloat? = nil
     var isProgram: Bool { engine.programID == source.id }
     var isPreview: Bool { engine.previewID == source.id }
-    var border: Color { source.isPlaceholder ? Color(white: 0.22) : (isProgram ? .red : isPreview ? cProgram : Color(white: 0.25)) }
-    var th: CGFloat { tileW * 9.0 / 16.0 }
+    var border: Color { source.isPlaceholder ? Color(white: 0.14) : (isProgram ? .red : isPreview ? cProgram : Color(white: 0.25)) }
+    var th: CGFloat { screenH ?? tileW * 9.0 / 16.0 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -441,17 +450,18 @@ struct InputTile: View {
             .frame(width: tileW).padding(.horizontal, 5).frame(height: 20).background(cBar)
 
             if source.isPlaceholder {
-                InputAssignMenu(slotID: source.id) {
-                    VStack(spacing: 6) {
-                        Image(systemName: "plus.circle").font(.system(size: 22)).foregroundColor(Color(white: 0.35))
-                        Text("Select input").font(.system(size: 10)).foregroundColor(.secondary)
+                // Blank holder = a switched-off TV: solid black over the full tile height
+                // (same size as a live tile), with a discreet assign button in the middle.
+                ZStack {
+                    Color.black
+                    InputAssignMenu(slotID: source.id) {
+                        Image(systemName: "plus").font(.system(size: 13, weight: .semibold))
                     }
-                    .frame(width: tileW, height: th).background(Color.black)
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4])).foregroundColor(Color(white: 0.25)))
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .opacity(0.35)
+                    .help("Assign an input to this slot (or drop a file on the window)")
                 }
-                .menuStyle(.borderlessButton)
-                Color.clear.frame(width: tileW, height: 22)
+                .frame(width: tileW, height: th + (inputTileChrome - 20))
             } else {
                 SourceThumb(source: source)
                     .frame(width: tileW, height: th).background(Color.black)

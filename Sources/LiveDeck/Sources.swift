@@ -272,8 +272,11 @@ final class FileSource: Source, MediaPlayback {
     @Published var duration: Double = 0
     @Published var inPoint: Double = 0
     @Published var outPoint: Double = 0   // 0 = clip end
+    private var posterImage: CGImage?
+    private var posterGen: AVAssetImageGenerator?
 
-    init(url: URL, displayName: String? = nil, label: String = "FILE", startLooping: Bool = true) {
+    /// Media files load PAUSED on their first frame (3.18); only live network streams autoplay.
+    init(url: URL, displayName: String? = nil, label: String = "FILE", startLooping: Bool = true, autoplay: Bool = false) {
         let item = AVPlayerItem(url: url)
         output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -297,7 +300,24 @@ final class FileSource: Source, MediaPlayback {
             self.player.volume = self.muted ? 0 : Float(min(1, self.gain))
         }
         RunLoop.main.add(vt, forMode: .common); volTimer = vt
-        player.play()
+        if autoplay {
+            player.play()
+        } else {
+            paused = true
+            if url.isFileURL { loadPoster(url) }
+        }
+    }
+
+    /// First frame shown in the tile / monitors while the clip is paused and hasn't played yet.
+    private func loadPoster(_ url: URL) {
+        let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 1920, height: 1080)
+        posterGen = gen
+        gen.generateCGImagesAsynchronously(forTimes: [NSValue(time: .zero)]) { [weak self] _, image, _, _, _ in
+            guard let image else { return }
+            DispatchQueue.main.async { self?.posterImage = image; self?.posterGen = nil }
+        }
     }
 
     private func endReached() {
@@ -330,7 +350,7 @@ final class FileSource: Source, MediaPlayback {
            let pb = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) {
             latestBuffer = pb
         }
-        return super.currentImage()
+        return super.currentImage() ?? posterImage
     }
 
     override func stop() {
@@ -434,7 +454,7 @@ final class AudioFileSource: Source, MediaPlayback {
     @Published var inPoint: Double = 0
     @Published var outPoint: Double = 0
 
-    init(url: URL) {
+    init(url: URL, autoplay: Bool = false) {
         player = AVPlayer(url: url)
         super.init(name: url.lastPathComponent, kindLabel: "AUDIO")
         loopObserver = NotificationCenter.default.addObserver(
@@ -451,7 +471,7 @@ final class AudioFileSource: Source, MediaPlayback {
             self.player.volume = self.muted ? 0 : Float(min(1, self.gain))
         }
         RunLoop.main.add(vt, forMode: .common); volTimer = vt
-        player.play()
+        if autoplay { player.play() } else { paused = true }
     }
 
     private func endReached() {

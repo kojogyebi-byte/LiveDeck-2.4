@@ -377,7 +377,7 @@ final class Engine: ObservableObject {
         } else {
             guard let u = URL(string: trimmed), let sc = u.scheme,
                   ["http", "https"].contains(sc.lowercased()) else { return }
-            let f = FileSource(url: u, displayName: u.host ?? "Stream", label: "STREAM", startLooping: false)
+            let f = FileSource(url: u, displayName: u.host ?? "Stream", label: "STREAM", startLooping: false, autoplay: true)
             if peakMbps > 0 { f.setPeakBitrate(peakMbps * 1_000_000) }
             src = f
         }
@@ -1015,7 +1015,7 @@ final class SourceThumbNSView: NSView {
     private var t: Timer?
     override init(frame: NSRect) {
         super.init(frame: frame); wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor; layer?.contentsGravity = .resizeAspectFill
+        layer?.backgroundColor = NSColor.black.cgColor; layer?.contentsGravity = .resizeAspect
         let timer = Timer(timeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
             guard let self, let s = self.source else { return }
             if let img = s.currentImage() {

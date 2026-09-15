@@ -1,3 +1,13 @@
+# LiveDeck Studio (macOS) — v3.18
+
+**Changes in 3.18:**
+- **Media no longer auto-plays when added.** Video and audio files dropped or assigned into an input (including blank holders) load **paused on their first frame** — press play on the tile when you're ready. Live network streams (HLS/URL) still start immediately.
+- **Blank holders look like a switched-off TV.** Empty input slots are now solid black across the whole tile (same size as a live input) with a discreet **+** to assign an input.
+- **Input tiles fill the input area.** When all inputs fit, tile screens stretch vertically so the whole region is used; pictures are letterboxed on black instead of cropped. If there are too many inputs to fit, tiles stay 16:9 and the area scrolls.
+- **Presentation engine — Phase 1 architecture** added at `docs/PRESENTATION-ARCHITECTURE.md` (proposal, awaiting approval; no presentation code yet).
+
+---
+
 # LiveDeck Studio (macOS) — v3.17
 
 **New in 3.17 — real audio on the live stream + simulcast:**
