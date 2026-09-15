@@ -167,6 +167,10 @@ final class Engine: ObservableObject {
     let streamer = StreamOutput()
     @Published var isStreaming = false
     @Published var streamError = ""
+    /// 3.17: send the mixed program audio to the stream (off = silent track, the 3.12–3.16 behaviour).
+    @Published var streamAudio = true { didSet { persistSettings() } }
+    @Published var streamBitrateKbps = 4500 { didSet { persistSettings() } }
+    static let streamBitrates = [2500, 3500, 4500, 6000, 8000, 12000]
     @Published var fileOutputActive = false
     @Published var programWindowActive = false
     @Published var rightTab = 0   // 0 = Audio Mixer, 1 = Overlays
@@ -194,16 +198,57 @@ final class Engine: ObservableObject {
     var ffmpegAvailable: Bool { streamer.available }
     var ytdlpAvailable: Bool { StreamOutput.ytdlpPath() != nil }
 
+    /// Destinations "Go Live" sends to: the given one, else every enabled one (simulcast).
+    var liveDestinations: [StreamDestination] {
+        streamDestinations.filter { $0.enabled && !$0.composedURL.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
     func toggleStream(_ dest: StreamDestination?) {
         if isStreaming { stopStream(); return }
-        guard let d = dest ?? streamDestinations.first else { streamError = "Add a stream destination first."; return }
+        let targets: [StreamDestination] = dest.map { [$0] } ?? liveDestinations
+        guard !targets.isEmpty else { streamError = "Add (and enable) a stream destination first."; return }
         guard streamer.available else { streamError = "ffmpeg not found. Install it (brew install ffmpeg)."; return }
-        let br = max(2500, recBitrateMbps * 1000)
-        let ok = streamer.start(url: d.composedURL, width: width, height: height, fps: fpsTarget, bitrateKbps: br)
+        streamer.onUnexpectedExit = { [weak self] msg in
+            guard let self else { return }
+            self.streamError = msg
+            self.isStreaming = false
+            self.releaseAudioBus()
+        }
+        let ok = streamer.start(urls: targets.map { $0.composedURL }, width: width, height: height,
+                                fps: fpsTarget, bitrateKbps: streamBitrateKbps, audio: streamAudio)
         streamError = ok ? "" : streamer.lastError
         isStreaming = streamer.isStreaming
+        if ok && streamer.withAudio { ensureAudioBus() }
     }
-    func stopStream() { streamer.stop(); isStreaming = false }
+    func stopStream() { streamer.stop(); isStreaming = false; releaseAudioBus() }
+
+    // MARK: shared program-audio bus (feeds recording and/or stream)
+
+    private var audioBusRunning = false
+    private func audioBusInputs() -> [(id: UUID, deviceID: String)] {
+        let inputDevices: [(id: UUID, deviceID: String)] = sources.compactMap {
+            guard let d = $0.audioDeviceID else { return nil }; return (id: $0.id, deviceID: d)
+        }
+        if mixInputsIntoRecording && !inputDevices.isEmpty { return inputDevices }
+        if let md = selectedAudioDeviceID ?? AVCaptureDevice.default(for: .audio)?.uniqueID {
+            return [(id: masterInputID, deviceID: md)]
+        }
+        return []
+    }
+    /// Starts the mixer if nothing is using it yet. Returns false if there is no audio device at all.
+    @discardableResult private func ensureAudioBus() -> Bool {
+        if audioBusRunning { return true }
+        let inputs = audioBusInputs()
+        guard !inputs.isEmpty else { return false }
+        mixRecorder.start(inputs)
+        audioBusRunning = true
+        return true
+    }
+    private func releaseAudioBus() {
+        guard audioBusRunning, !isRecording, !streamer.isStreaming else { return }
+        mixRecorder.stop()
+        audioBusRunning = false
+    }
 
     private var transFrom: UUID?
     private var transitioning = false
@@ -271,7 +316,10 @@ final class Engine: ObservableObject {
             return self.effectSnapshot(self.masterBus)
         }
         mixRecorder.onMixed = { [weak self] sb in
-            guard let self, self.isRecording, let input = self.audioInput, input.isReadyForMoreMediaData else { return }
+            guard let self else { return }
+            if self.streamer.acceptsAudio { self.streamer.pushAudio(sb) }
+            guard self.isRecording, self.usingMixRecorder,
+                  let input = self.audioInput, input.isReadyForMoreMediaData else { return }
             input.append(sb)
         }
         // Publish meter levels at a steady ~12 Hz (NOT per audio buffer) to keep the UI responsive.
@@ -365,7 +413,9 @@ final class Engine: ObservableObject {
     func addConsumer(_ v: FrameNSView) { consumers.add(v) }
     func addPreviewConsumer(_ v: FrameNSView) { previewConsumers.add(v) }
 
+    private var loadingSettings = false
     private func persistSettings() {
+        guard !loadingSettings else { return }   // didSet during load must not overwrite unloaded keys
         let d = UserDefaults.standard
         d.set(recCodec.rawValue, forKey: "recCodec")
         d.set(recContainer, forKey: "recContainer")
@@ -374,8 +424,12 @@ final class Engine: ObservableObject {
         d.set(width, forKey: "rwidth"); d.set(height, forKey: "rheight")
         d.set(inputTileScale, forKey: "tileScale")
         d.set(mixInputsIntoRecording, forKey: "mixInputs")
+        d.set(streamAudio, forKey: "streamAudio")
+        d.set(streamBitrateKbps, forKey: "streamBitrate")
     }
     private func loadSettings() {
+        loadingSettings = true
+        defer { loadingSettings = false }
         let d = UserDefaults.standard
         if let c = d.string(forKey: "recCodec"), let rc = RecCodec(rawValue: c) { recCodec = rc }
         if let cont = d.string(forKey: "recContainer") { recContainer = cont }
@@ -384,6 +438,8 @@ final class Engine: ObservableObject {
         let w = d.integer(forKey: "rwidth"), h = d.integer(forKey: "rheight"); if w > 0 && h > 0 { width = w; height = h }
         let ts = d.double(forKey: "tileScale"); if ts > 0 { inputTileScale = ts }
         mixInputsIntoRecording = d.bool(forKey: "mixInputs")
+        if d.object(forKey: "streamAudio") != nil { streamAudio = d.bool(forKey: "streamAudio") }
+        let sbr = d.integer(forKey: "streamBitrate"); if sbr > 0 { streamBitrateKbps = sbr }
         outputFolderPath = d.string(forKey: "outputFolder")
     }
 
@@ -451,10 +507,10 @@ final class Engine: ObservableObject {
         (next as? FileSource)?.playFromIn()
         (next as? AudioFileSource)?.playFromIn()
     }
-    func setResolution(width: Int, height: Int) { guard !isRecording else { return }; self.width = width; self.height = height; persistSettings() }
+    func setResolution(width: Int, height: Int) { guard !isRecording, !isStreaming else { return }; self.width = width; self.height = height; persistSettings() }
 
     func setFrameRate(_ f: Int) {
-        guard !isRecording, f != fpsTarget else { return }
+        guard !isRecording, !isStreaming, f != fpsTarget else { return }
         fpsTarget = f
         persistSettings()
         timer?.invalidate()
@@ -805,16 +861,11 @@ final class Engine: ObservableObject {
             w.startWriting(); w.startSession(atSourceTime: CMClockGetTime(CMClockGetHostTimeClock()))
             writer = w; videoInput = vIn; audioInput = aIn; adaptor = ad
             recordSeconds = 0; isRecording = true; fileOutputActive = true
-            let inputDevices: [(id: UUID, deviceID: String)] = sources.compactMap {
-                guard let d = $0.audioDeviceID else { return nil }; return (id: $0.id, deviceID: d)
-            }
-            let masterDevID = selectedAudioDeviceID ?? AVCaptureDevice.default(for: .audio)?.uniqueID
-            if mixInputsIntoRecording && !inputDevices.isEmpty {
-                usingMixRecorder = true
-                mixRecorder.start(inputDevices)
-            } else if masterBus.fxEnabled, let md = masterDevID {
-                usingMixRecorder = true
-                mixRecorder.start([(id: masterInputID, deviceID: md)])
+            let hasInputDevices = sources.contains { $0.audioDeviceID != nil }
+            // Use the shared mixer when mixing inputs, when master FX is on, or when the stream
+            // already runs it (so record + stream carry the same mix). Otherwise the direct path.
+            if (mixInputsIntoRecording && hasInputDevices) || masterBus.fxEnabled || audioBusRunning {
+                usingMixRecorder = ensureAudioBus()
             } else {
                 usingMixRecorder = false
             }
@@ -824,7 +875,7 @@ final class Engine: ObservableObject {
 
     private func stopRecording() {
         isRecording = false; fileOutputActive = false
-        usingMixRecorder = false; mixRecorder.stop()
+        usingMixRecorder = false; releaseAudioBus()
         recordTimer?.invalidate(); recordTimer = nil
         guard let w = writer else { return }
         videoInput?.markAsFinished(); audioInput?.markAsFinished()

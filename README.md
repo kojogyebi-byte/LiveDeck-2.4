@@ -1,3 +1,16 @@
+# LiveDeck Studio (macOS) — v3.17
+
+**New in 3.17 — real audio on the live stream + simulcast:**
+- **Program audio goes to the stream.** STREAM → **Send program audio** (on by default). The stream now carries the same audio as the recording: the master audio device (with master FX), or — with gear → **Mix input faders into recording & stream** — the per-input mix (faders, MAIN send, mute, solo, per-input FX). Switch it off to fall back to the old silent track.
+- **Built to keep A/V in step** (untested on a live platform yet). Video and audio are each written to ffmpeg by their own wall-clock-paced thread, so the stream's timeline follows real time even if the app stutters (the last frame is repeated; silence fills gaps if the audio device stalls).
+- **Simulcast.** **Go Live** sends to *every enabled destination at once* (e.g. YouTube + Facebook). If one destination fails, the others keep going.
+- **Separate stream bitrate** (2.5–12 Mbps, default 4.5) — no longer tied to the recording bitrate (which could push 20–40 Mbps at a platform).
+- **Stream errors are shown.** If ffmpeg stops (wrong key, network drop, server refused) LiveDeck now shows ffmpeg's actual error and resets the Stream button instead of silently staying "live".
+- **Fixes:** resolution & frame-rate choices now actually persist across launches (they were being overwritten during settings load); resolution/frame rate are locked while streaming (changing them mid-stream corrupted the feed); guards against LiveDeck being killed if ffmpeg exits mid-write.
+- **Still not in the mix:** audio from video/audio-file inputs (plays to speakers only). Workaround: route system audio back in with a loopback device (e.g. BlackHole) as the master device.
+
+---
+
 # LiveDeck Studio (macOS) — v3.16
 
 **New in 3.16 — church-media toolkit:**

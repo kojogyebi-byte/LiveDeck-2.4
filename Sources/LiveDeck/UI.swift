@@ -204,7 +204,7 @@ struct TopBar: View {
                 }
                 Divider()
                 Button("Keyboard shortcuts…") { engine.showHotkeys = true }
-                checkButton("Mix input faders into recording", engine.mixInputsIntoRecording) { engine.mixInputsIntoRecording.toggle() }
+                checkButton("Mix input faders into recording & stream", engine.mixInputsIntoRecording) { engine.mixInputsIntoRecording.toggle() }
                 Button("Choose recording folder…") { engine.chooseOutputFolder() }
                 Button("Reveal last recording") { engine.revealLastRecording() }
             } label: { Image(systemName: "gearshape") }.frame(width: 34)
@@ -868,7 +868,7 @@ struct AudioEffects: View {
                     Menu("Preset") { ForEach(FXPreset.all) { p in Button(p.name) { source.applyFXPreset(p) } } }
                         .frame(width: 110)
                 }
-                Text("Effects process the recorded mix when “Mix input faders into recording” is on.")
+                Text("Effects process the recorded & streamed mix when “Mix input faders into recording & stream” is on.")
                     .font(.system(size: 9)).foregroundColor(.secondary)
                 Divider()
                 Text("PARAMETRIC EQ").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(.secondary)
@@ -922,7 +922,7 @@ struct AudioMixerPanel: View {
                 ForEach(engine.sources) { s in
                     ChannelStrip(source: s)
                 }
-                Text("Each input has its own fader, mute (M) and solo (S). Assign an audio device per input (Input tab) for live metering. To record the summed mix (faders, mutes and solos applied), enable “Mix input faders into recording” in the gear menu; otherwise the recording captures the single master device.")
+                Text("Each input has its own fader, mute (M) and solo (S). Assign an audio device per input (Input tab) for live metering. To record the summed mix (faders, mutes and solos applied), enable “Mix input faders into recording & stream” in the gear menu; otherwise recording and stream carry the single master device.")
                     .font(.system(size: 9)).foregroundColor(.secondary).padding(.top, 4)
             }.padding(10)
         }
@@ -1438,6 +1438,19 @@ struct LayerTransformView: View {
 struct StreamSettingsView: View {
     @EnvironmentObject var engine: Engine
     @Environment(\.dismiss) private var dismiss
+    private var liveSummary: String {
+        let n = engine.liveDestinations.count
+        if n == 0 { return "ffmpeg detected — enable at least one destination." }
+        return n == 1 ? "ffmpeg detected — ready to stream to 1 destination."
+                      : "ffmpeg detected — ready to simulcast to \(n) destinations."
+    }
+    private var streamAudioNote: String {
+        guard engine.streamAudio else { return "Audio: silent track." }
+        let mixing = engine.mixInputsIntoRecording && engine.sources.contains { $0.audioDeviceID != nil }
+        return mixing
+            ? "Audio: the input-fader mix (MAIN / mute / solo / FX apply). Video/audio-file inputs play to speakers only and are not in the mix yet."
+            : "Audio: the master audio device (+ master FX). Turn on \u{201C}Mix input faders into recording & stream\u{201D} (gear menu) to stream the per-input mix instead."
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -1456,26 +1469,47 @@ struct StreamSettingsView: View {
                 }
             }
             Divider()
+            HStack(spacing: 14) {
+                Toggle("Send program audio", isOn: $engine.streamAudio)
+                    .disabled(engine.isStreaming)
+                    .help("On: the mixed program audio goes to the stream. Off: a silent audio track (older behaviour).")
+                Picker("Video bitrate", selection: $engine.streamBitrateKbps) {
+                    ForEach(Engine.streamBitrates, id: \.self) { b in
+                        Text(String(format: "%.1f Mbps", Double(b) / 1000)).tag(b)
+                    }
+                }
+                .frame(width: 210)
+                .disabled(engine.isStreaming)
+            }
+            .font(.system(size: 11))
+            Text(streamAudioNote).font(.system(size: 10)).foregroundColor(.secondary)
             HStack(spacing: 8) {
                 Image(systemName: engine.ffmpegAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundColor(engine.ffmpegAvailable ? cProgram : .orange)
                 if engine.ffmpegAvailable {
-                    Text("ffmpeg detected — ready to stream the first destination.").font(.system(size: 11))
+                    Text(liveSummary).font(.system(size: 11))
                 } else {
                     Text("ffmpeg not found. Install it once (Terminal: brew install ffmpeg), then reopen.").font(.system(size: 11))
                 }
                 Spacer()
-                Button(engine.isStreaming ? "Stop Streaming" : "Go Live") { engine.toggleStream(engine.streamDestinations.first) }
-                    .disabled(!engine.ffmpegAvailable || engine.streamDestinations.isEmpty)
+                if engine.isStreaming {
+                    HStack(spacing: 4) {
+                        Circle().fill(Color.red).frame(width: 8, height: 8)
+                        Text("LIVE").font(.system(size: 10, weight: .heavy)).foregroundColor(.red)
+                    }
+                }
+                Button(engine.isStreaming ? "Stop Streaming" : "Go Live") { engine.toggleStream(nil) }
+                    .disabled(!engine.ffmpegAvailable || (!engine.isStreaming && engine.liveDestinations.isEmpty))
                     .foregroundColor(engine.isStreaming ? .red : cProgram)
             }
             if !engine.streamError.isEmpty {
                 Text(engine.streamError).font(.system(size: 10)).foregroundColor(.orange)
+                    .textSelection(.enabled).lineLimit(6)
             }
-            Text("Streams the Program (video) to the first destination via your installed ffmpeg, with a silent audio track for now — real program audio is the next step. RTMP/RTMPS use FLV; SRT uses MPEG-TS automatically.")
+            Text("Go Live sends the Program to every enabled destination at once (simulcast). RTMP/RTMPS use FLV; SRT uses MPEG-TS automatically. Resolution and frame rate are locked while live.")
                 .font(.system(size: 10)).foregroundColor(.secondary)
         }
-        .padding(16).frame(width: 540, height: 520)
+        .padding(16).frame(width: 560, height: 600)
         .preferredColorScheme(.dark)
     }
 }

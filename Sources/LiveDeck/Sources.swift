@@ -1015,19 +1015,33 @@ final class SystemMonitor: ObservableObject {
 
 // MARK: - RTMP/SRT streaming via a user-installed ffmpeg
 //
-// LiveDeck does not bundle ffmpeg (that means GPL redistribution + signing an
-// external binary, which we can't verify here). Instead it detects an ffmpeg the
-// user installs (e.g. `brew install ffmpeg`) and pipes the Program frames to it.
-// This first version streams VIDEO with a silent AAC track so platforms accept the
-// feed; real program audio is the next increment.
+// LiveDeck does not bundle ffmpeg (GPL redistribution + signing an external binary).
+// It detects an ffmpeg the user installs (`brew install ffmpeg`) and feeds it:
+//   • VIDEO: raw BGRA Program frames on stdin, paced by a wall-clock thread that
+//     writes exactly `fps` frames per second (repeating the last frame if the
+//     renderer is late) so the video timeline never drifts from real time.
+//   • AUDIO (3.17): the mixed program bus as 48 kHz mono Float32 into a named pipe
+//     (FIFO), paced the same way (silence is inserted if no audio arrives), so the
+//     two timelines stay aligned. If audio is switched off, a silent AAC track is used.
+// One enabled destination → direct flv/mpegts. Several → ffmpeg `tee` (simulcast),
+// where one failing destination doesn't stop the others.
 
 final class StreamOutput {
     private var process: Process?
-    private var stdinHandle: FileHandle?
-    private let q = DispatchQueue(label: "livedeck.stream.write")
-    private var busy = false
     private(set) var isStreaming = false
     private(set) var lastError = ""
+    private(set) var withAudio = false
+    /// Called on the main thread if ffmpeg exits on its own (bad key, network drop…).
+    var onUnexpectedExit: ((String) -> Void)?
+
+    private let lock = NSLock()
+    private var running = false
+    private var latestFrame: Data?
+    private var audioRing = [Float]()
+    private var fifoPath: String?
+    private var startTime: TimeInterval = 0
+    private var fps = 30
+    private var stderrTail = ""
 
     static func ffmpegPath() -> String? {
         let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg", "/opt/local/bin/ffmpeg"]
@@ -1042,34 +1056,103 @@ final class StreamOutput {
     }
     var available: Bool { StreamOutput.ffmpegPath() != nil }
 
-    func start(url: String, width: Int, height: Int, fps: Int, bitrateKbps: Int) -> Bool {
-        guard !isStreaming, let ff = StreamOutput.ffmpegPath(),
-              !url.trimmingCharacters(in: .whitespaces).isEmpty else { lastError = "ffmpeg not found or URL empty"; return false }
-        let isSRT = url.hasPrefix("srt://")
-        let outFmt = isSRT ? "mpegts" : "flv"
+    private var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return running }
+    /// True while the stream wants program-audio samples.
+    var acceptsAudio: Bool { lock.lock(); defer { lock.unlock() }; return running && withAudio }
+
+    static func muxer(for url: String) -> String { url.lowercased().hasPrefix("srt://") ? "mpegts" : "flv" }
+
+    func start(urls: [String], width: Int, height: Int, fps: Int, bitrateKbps: Int, audio: Bool) -> Bool {
+        let targets = urls.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !isStreaming else { return false }
+        guard let ff = StreamOutput.ffmpegPath() else { lastError = "ffmpeg not found."; return false }
+        guard !targets.isEmpty else { lastError = "Stream URL is empty."; return false }
+        signal(SIGPIPE, SIG_IGN)   // a dead ffmpeg must produce a write error, not kill LiveDeck
+
+        var args: [String] = [
+            "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-f", "rawvideo", "-pixel_format", "bgra", "-video_size", "\(width)x\(height)",
+            "-framerate", "\(fps)", "-i", "pipe:0"
+        ]
+        var useAudio = false
+        if audio {
+            let path = NSTemporaryDirectory() + "livedeck-audio-\(UUID().uuidString.prefix(8)).f32"
+            unlink(path)
+            if mkfifo(path, 0o600) == 0 {
+                fifoPath = path; useAudio = true
+                args += ["-thread_queue_size", "1024", "-f", "f32le", "-ar", "48000", "-ac", "1", "-i", path]
+            }
+        }
+        if !useAudio {
+            args += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+        }
+        args += [
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p",
+            "-b:v", "\(bitrateKbps)k", "-maxrate", "\(bitrateKbps)k", "-bufsize", "\(bitrateKbps * 2)k",
+            "-g", "\(max(2, fps * 2))", "-keyint_min", "\(max(2, fps * 2))", "-sc_threshold", "0",
+            "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"
+        ]
+        if targets.count == 1 {
+            args += ["-f", StreamOutput.muxer(for: targets[0]), targets[0]]
+        } else {
+            let spec = targets.map { u -> String in
+                StreamOutput.muxer(for: u) == "mpegts"
+                    ? "[f=mpegts:onfail=ignore:bsfs/v=dump_extra]\(u)"
+                    : "[f=flv:onfail=ignore]\(u)"
+            }.joined(separator: "|")
+            args += ["-flags", "+global_header", "-f", "tee", spec]
+        }
+
         let p = Process()
         p.executableURL = URL(fileURLWithPath: ff)
-        p.arguments = [
-            "-loglevel", "error",
-            "-f", "rawvideo", "-pixel_format", "bgra", "-video_size", "\(width)x\(height)", "-framerate", "\(fps)", "-i", "pipe:0",
-            "-f", "lavfi", "-i", "anullsrc=channel_layout=mono:sample_rate=48000",
-            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            "-b:v", "\(bitrateKbps)k", "-maxrate", "\(bitrateKbps)k", "-bufsize", "\(bitrateKbps * 2)k",
-            "-g", "\(max(2, fps * 2))", "-tune", "zerolatency",
-            "-c:a", "aac", "-b:a", "128k",
-            "-f", outFmt, url
-        ]
-        let inPipe = Pipe()
+        p.arguments = args
+        let inPipe = Pipe(), errPipe = Pipe()
         p.standardInput = inPipe
         p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { lastError = error.localizedDescription; return false }
-        process = p; stdinHandle = inPipe.fileHandleForWriting; isStreaming = true; lastError = ""
+        p.standardError = errPipe
+        stderrTail = ""
+        errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let d = h.availableData
+            guard let self, !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
+            self.lock.lock()
+            self.stderrTail = String((self.stderrTail + s).suffix(600))
+            self.lock.unlock()
+        }
+        p.terminationHandler = { [weak self] proc in
+            // short delay so the last stderr lines (the actual error) are captured first
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                errPipe.fileHandleForReading.readabilityHandler = nil
+                self?.processEnded(proc)
+            }
+        }
+
+        lock.lock()
+        running = true; withAudio = useAudio; latestFrame = nil; audioRing.removeAll()
+        self.fps = fps; startTime = ProcessInfo.processInfo.systemUptime
+        lock.unlock()
+
+        do { try p.run() } catch {
+            lock.lock(); running = false; withAudio = false; lock.unlock()
+            cleanupFIFO()
+            lastError = error.localizedDescription
+            return false
+        }
+        process = p; isStreaming = true; lastError = ""
+
+        let vh = inPipe.fileHandleForWriting
+        let vt = Thread { [weak self] in self?.videoLoop(vh) }
+        vt.name = "livedeck.stream.video"; vt.qualityOfService = .userInteractive; vt.start()
+        if useAudio, let path = fifoPath {
+            let at = Thread { [weak self] in self?.audioLoop(path) }
+            at.name = "livedeck.stream.audio"; at.qualityOfService = .userInteractive; at.start()
+        }
         return true
     }
 
+    /// Called from the render loop (main thread) with each Program frame.
     func writeFrame(_ pb: CVPixelBuffer) {
-        guard isStreaming, let h = stdinHandle, !busy else { return }
+        guard isStreaming else { return }
         CVPixelBufferLockBaseAddress(pb, .readOnly)
         let w = CVPixelBufferGetWidth(pb), ht = CVPixelBufferGetHeight(pb)
         let bpr = CVPixelBufferGetBytesPerRow(pb)
@@ -1085,20 +1168,126 @@ final class StreamOutput {
             }
         }
         CVPixelBufferUnlockBaseAddress(pb, .readOnly)
-        busy = true
-        q.async { [weak self] in
-            do { try h.write(contentsOf: data) } catch { DispatchQueue.main.async { self?.stop() } }
-            self?.busy = false
+        lock.lock(); latestFrame = data; lock.unlock()
+    }
+
+    /// Mixed program audio (Float32 / 48 kHz / mono sample buffers from AudioMixRecorder).
+    func pushAudio(_ sb: CMSampleBuffer) {
+        guard let bb = CMSampleBufferGetDataBuffer(sb) else { return }
+        var len = 0, total = 0; var dp: UnsafeMutablePointer<Int8>? = nil
+        guard CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: &len,
+                                          totalLengthOut: &total, dataPointerOut: &dp) == kCMBlockBufferNoErr,
+              let dp else { return }
+        let n = min(len, total) / MemoryLayout<Float>.size
+        guard n > 0 else { return }
+        lock.lock(); defer { lock.unlock() }
+        guard running && withAudio else { return }
+        dp.withMemoryRebound(to: Float.self, capacity: n) { fp in
+            audioRing.append(contentsOf: UnsafeBufferPointer(start: fp, count: n))
+        }
+        // Device clock faster than host clock → never let latency build past 0.5 s.
+        if audioRing.count > 24000 { audioRing.removeFirst(audioRing.count - 4800) }
+    }
+
+    private func videoLoop(_ h: FileHandle) {
+        var written: Int64 = 0
+        var failed = false
+        while isRunning {
+            lock.lock(); let t0 = startTime, rate = Double(fps), frame = latestFrame; lock.unlock()
+            let elapsed = ProcessInfo.processInfo.systemUptime - t0
+            let due = Int64(elapsed * rate) + 1
+            if written >= due {
+                Thread.sleep(forTimeInterval: max(0.001, Double(written) / rate - elapsed))
+                continue
+            }
+            guard let frame else { Thread.sleep(forTimeInterval: 0.005); continue }
+            if due - written > Int64(rate * 20) {
+                failed = true
+                lock.lock(); stderrTail = "Encoder/network can't keep up (20 s behind). Lower resolution, frame rate or bitrate.\n" + stderrTail; lock.unlock()
+                break
+            }
+            do { try h.write(contentsOf: frame) } catch { failed = true; break }
+            written += 1
+        }
+        try? h.close()
+        if failed { DispatchQueue.main.async { [weak self] in self?.process?.terminate() } }
+    }
+
+    private func audioLoop(_ path: String) {
+        let fd = open(path, O_WRONLY)          // blocks until ffmpeg opens the FIFO
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        var written: Int64 = 0
+        let sr = 48000.0
+        while isRunning {
+            lock.lock(); let t0 = startTime; lock.unlock()
+            let due = Int64((ProcessInfo.processInfo.systemUptime - t0) * sr)
+            let need = Int(min(due - written, 48000))
+            if need < 480 { Thread.sleep(forTimeInterval: 0.004); continue }
+
+            lock.lock()
+            let take = min(need, audioRing.count)
+            // Only write real samples; insert silence only when we're >100 ms short
+            // (no device / capture stalled), keeping a 50 ms cushion to avoid clicks.
+            let pad = (take < need && need > 4800) ? max(0, need - take - 2400) : 0
+            var buf = [Float](repeating: 0, count: take + pad)
+            if take > 0 {
+                for i in 0..<take { buf[i] = audioRing[i] }
+                audioRing.removeFirst(take)
+            }
+            lock.unlock()
+            if buf.isEmpty { Thread.sleep(forTimeInterval: 0.004); continue }
+
+            let ok = buf.withUnsafeBytes { raw -> Bool in
+                guard let base = raw.baseAddress else { return true }
+                var off = 0
+                while off < raw.count {
+                    let r = Darwin.write(fd, base.advanced(by: off), raw.count - off)
+                    if r < 0 { if errno == EINTR { continue }; return false }
+                    if r == 0 { return false }
+                    off += r
+                }
+                return true
+            }
+            if !ok { break }
+            written += Int64(buf.count)
+        }
+    }
+
+    private func processEnded(_ proc: Process) {
+        // Ignore exits of a process the user already stopped (or an older session).
+        guard let cur = process, cur === proc else { return }
+        lock.lock(); let tail = stderrTail.trimmingCharacters(in: .whitespacesAndNewlines); lock.unlock()
+        teardown()
+        lastError = tail.isEmpty ? "ffmpeg stopped (exit \(proc.terminationStatus))." : "Stream stopped: " + tail
+        onUnexpectedExit?(lastError)
+    }
+
+    private func teardown() {
+        lock.lock(); running = false; withAudio = false; latestFrame = nil; audioRing.removeAll(); lock.unlock()
+        isStreaming = false
+        process = nil
+        cleanupFIFO()
+    }
+
+    private func cleanupFIFO() {
+        guard let path = fifoPath else { return }
+        fifoPath = nil
+        // Unblock an audio thread still waiting in open() (ffmpeg never opened the pipe).
+        DispatchQueue.global().async {
+            let rfd = open(path, O_RDONLY | O_NONBLOCK)
+            if rfd >= 0 { Thread.sleep(forTimeInterval: 0.3); close(rfd) }
+            unlink(path)
         }
     }
 
     func stop() {
         guard isStreaming else { return }
-        isStreaming = false
-        let handle = stdinHandle
-        q.async { try? handle?.close() }
-        process?.terminate()
-        process = nil; stdinHandle = nil
+        let p = process
+        teardown()          // stops the writer threads → stdin closes → ffmpeg flushes & exits
+        if let p, p.isRunning {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) { if p.isRunning { p.terminate() } }
+        }
     }
 }
 
