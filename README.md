@@ -1,3 +1,17 @@
+# LiveDeck Studio (macOS) — v4.2.0
+
+**New in 4.2:**
+- **Redesigned control panel** (right side), following the supplied mockup: large icon tabs (Input · Audio · Overlays · Scenes · Outputs); an **Input Channel** card to pick which input you are adjusting, with Reset; collapsible cards with icons and descriptions for **Geometry**, **Crop**, **Colour** and **Audio**; blue faders with **typed numeric values** and a **reset button on every control and every card**; audio device picker with refresh, gain with a 24-segment level meter, mute switch, and an expandable **Audio Effects (EQ · Compressor · Gate)** card. Songs/Bible/Dictionary inputs show a **Display** card (key over Program, hide text/background, open formatting). The **Outputs** tab and all effect/overlay sliders use the same style.
+- **Right-click to add inputs.** Right-click any empty part of the input area for the full Add Input menu. Right-click an empty holder to assign an input to that slot; right-click a live input for Take, Preview, Key, Reload page, Edit address, Remove.
+- **Find lyrics online** (Songs & Bible → *Find online*):
+  - **Lyrics databases searched inside the app:** **LRCLIB** (free, open lyrics database — title, artist or any words) and **Lyrics.ovh** (free — artist + title). Pick a result, **edit the words** (add *Verse 1*, *Chorus*… lines), **Save to Song Library**; the song opens ready to use and stays in the library for future services.
+  - **Web sites in a built-in browser:** Hymnary.org (full texts of public-domain hymns), Hymnal.net, Genius, Musixmatch, AZLyrics, CCLI SongSelect and general web search. Select the words on the page and press **Use selection** (or copy and **Paste**), edit, save.
+  - Reminder shown in the app: public-domain hymns are free to project; copyrighted songs need a church licence such as CCLI or OneLicense.
+- **Web page inputs now show the page** instead of a white tile. The page renders in an invisible helper window (macOS does not draw web views that are off-screen). Addresses without *https://* are accepted, a loading/error card shows until the page appears, *http* pages load, and **Edit address** on a web input no longer turns it into a video stream.
+- `PresentationKit` gains `LyricsSearch.swift`; **36 automated tests** (was 32).
+
+---
+
 # LiveDeck Studio (macOS) — v4.1.0
 
 **New in 4.1 — Songs, Bible and Dictionary on the production page:**

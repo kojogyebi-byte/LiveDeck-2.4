@@ -365,7 +365,7 @@ final class Engine: ObservableObject {
     func openEditStream(_ id: UUID) {
         guard let s = sources.first(where: { $0.id == id }) else { return }
         editStreamID = id; editStreamURL = s.sourceURLString ?? ""
-        streamInputMode = (s is FFmpegStreamSource) ? 2 : 1
+        streamInputMode = (s is WebSource) ? 4 : ((s is FFmpegStreamSource) ? 2 : 1)
     }
 
     /// Create/replace a network input from the dialog.

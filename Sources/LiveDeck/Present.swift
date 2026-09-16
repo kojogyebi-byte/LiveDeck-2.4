@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import WebKit
 import PresentationKit
 
 // MARK: - Lower deck tabs (same page as the switcher)
@@ -31,6 +32,8 @@ final class PresentModel: ObservableObject {
     @Published var deck: Int = DeckTab.inputs.rawValue
     @Published var tab: PresentLibraryTab = .songs
     @Published var editingSong = false
+    @Published var findingLyrics = false
+    let finder = LyricsFinder()
 
     let library: PresentationLibrary
     let looks: LookLibrary
@@ -395,6 +398,24 @@ final class PresentModel: ObservableObject {
         return img
     }
 
+    /// Saves lyrics found online (after editing) as a new song in the library and opens it.
+    func saveFoundLyrics(title: String, artist: String, text: String, source: String) {
+        let body = LyricsSearch.clean(text)
+        guard !body.isEmpty else { status = "Nothing to save — the lyrics are empty."; return }
+        flushPendingSave()
+        let song = LyricsSearch.song(title: title, artist: artist, lyrics: body, source: source)
+        do {
+            try library.songs.save(song)
+            songQuery = ""; songFolder = ""; favoritesOnly = false; recentOnly = false
+            refreshSongs()
+            tab = .songs
+            selectedSongID = song.id
+            findingLyrics = false
+            editingSong = true
+            status = "Saved “\(song.title)” to the song library — check the verse and chorus labels, then click slides to go live."
+        } catch { status = "Could not save song: \(error.localizedDescription)" }
+    }
+
     func saveLook(_ look: SlideLook, as name: String) {
         do { try looks.save(look, as: name); looksRevision += 1; status = "Saved look “\(name)”." }
         catch { status = "Could not save look: \(error.localizedDescription)" }
@@ -433,6 +454,8 @@ struct SongListPane: View {
             HStack(spacing: 6) {
                 Button { present.newSong() } label: { Label("New", systemImage: "plus") }
                 Button { present.importSongs() } label: { Label("Import…", systemImage: "square.and.arrow.down") }
+                Button { present.findingLyrics = true } label: { Label("Find online", systemImage: "globe") }
+                    .help("Search free lyrics sources on the internet, edit and save")
                 Spacer()
                 Menu {
                     let trashed = present.trashedSongs
@@ -930,7 +953,8 @@ struct PresentCenter: View {
     var body: some View {
         VStack(spacing: 0) {
             PresentOperatorBar()
-            if present.tab == .songs { songArea } else { ScriptureArea() }
+            if present.tab == .songs && present.findingLyrics { LyricsFinderView(finder: present.finder) }
+            else if present.tab == .songs { songArea } else { ScriptureArea() }
             if !present.status.isEmpty {
                 Text(present.status).font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(height: 20).background(DS.bg2)
@@ -948,6 +972,8 @@ struct PresentCenter: View {
                         .font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(1)
                 }
                 Spacer()
+                Button { present.findingLyrics = true } label: { Label("Find lyrics online", systemImage: "globe") }
+                    .buttonStyle(.ds(.normal, .small))
                 Button(present.editingSong ? "Done editing" : "Edit lyrics") { present.editingSong.toggle() }
                     .buttonStyle(.ds(.normal, .small, active: present.editingSong))
             }
@@ -965,6 +991,7 @@ struct PresentCenter: View {
                 Text("Choose a song on the left, create a new one, or import song files.").font(DS.label).foregroundColor(DS.text2)
                 HStack {
                     Button("New Song") { present.newSong(); present.editingSong = true }.buttonStyle(.ds(.primary))
+                    Button("Find lyrics online") { present.findingLyrics = true }.buttonStyle(.ds())
                     Button("Import…") { present.importSongs() }.buttonStyle(.ds())
                 }
             }
@@ -1532,4 +1559,281 @@ struct DictionaryCandidate: View {
         .frame(width: width, height: width * 9 / 16)
         .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(DS.line, lineWidth: 1))
     }
+}
+
+
+// MARK: - Find lyrics online
+
+final class LyricsFinder: ObservableObject {
+    enum Mode: Int { case databases = 0, websites = 1 }
+
+    @Published var mode: Mode = .databases
+    @Published var provider: LyricsProvider = .lrclib
+    @Published var title = ""
+    @Published var artist = ""
+    @Published var words = ""
+    @Published var hits: [LyricsHit] = []
+    @Published var selectedID: String? { didSet { if let h = hits.first(where: { $0.id == selectedID }) { use(h) } } }
+    @Published var loading = false
+    @Published var message = ""
+
+    // editor
+    @Published var editTitle = ""
+    @Published var editArtist = ""
+    @Published var editText = ""
+    @Published var editSource = ""
+
+    // web
+    @Published var webQuery = ""
+    @Published var site: LyricsWebSite?
+    @Published var webURL: URL?
+    weak var webView: WKWebView?
+
+    func search() {
+        message = ""; hits = []; loading = true
+        let p = provider
+        LyricsSearch.search(p, query: words, title: title, artist: artist) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.loading = false
+                switch result {
+                case .success(let list):
+                    self.hits = list
+                    if list.isEmpty { self.message = "No lyrics found. Try fewer words, check the spelling, or search the web sites." }
+                    else { self.selectedID = list.first?.id }
+                case .failure(let e):
+                    self.message = "Search failed: \(e.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func use(_ h: LyricsHit) {
+        editTitle = h.title
+        editArtist = h.artist
+        editText = h.lyrics
+        editSource = h.provider
+    }
+
+    func open(_ s: LyricsWebSite) {
+        site = s
+        let q = webQuery.trimmingCharacters(in: .whitespaces).isEmpty
+            ? [title, artist].filter { !$0.isEmpty }.joined(separator: " ")
+            : webQuery
+        webURL = s.url(for: q)
+        if editSource.isEmpty { editSource = s.name }
+    }
+
+    /// Copies the text selected in the built-in browser into the editor.
+    func grabSelection(replace: Bool) {
+        webView?.evaluateJavaScript("window.getSelection().toString()") { [weak self] value, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let text = LyricsSearch.clean((value as? String) ?? "")
+                guard !text.isEmpty else { self.message = "Select the lyrics on the page first (click and drag), then press Use selection."; return }
+                self.editText = replace || self.editText.isEmpty ? text : self.editText + "\n\n" + text
+                if let host = self.webView?.url?.host { self.editSource = host }
+                if self.editTitle.isEmpty, let t = self.webView?.title { self.editTitle = t.components(separatedBy: " - ").first ?? t }
+                self.message = ""
+            }
+        }
+    }
+
+    func pasteClipboard() {
+        if let t = NSPasteboard.general.string(forType: .string) {
+            let text = LyricsSearch.clean(t)
+            editText = editText.isEmpty ? text : editText + "\n\n" + text
+        }
+    }
+
+    func clearEditor() { editTitle = ""; editArtist = ""; editText = ""; editSource = "" }
+}
+
+struct LyricsFinderView: View {
+    @EnvironmentObject var present: PresentModel
+    @ObservedObject var finder: LyricsFinder
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "globe").foregroundColor(DS.accent)
+                Text("Find lyrics online").font(.system(size: 13, weight: .bold)).foregroundColor(DS.text)
+                DSSegmented(selection: $finder.mode, options: [(LyricsFinder.Mode.databases, "Lyrics databases"), (LyricsFinder.Mode.websites, "Web sites")])
+                    .frame(width: 250)
+                Spacer()
+                Button("Close") { present.findingLyrics = false }.buttonStyle(.ds(.ghost, .small))
+            }
+            .padding(.horizontal, 10).frame(height: 40)
+            .overlay(Rectangle().fill(DS.lineSoft).frame(height: 1), alignment: .bottom)
+
+            HSplitView {
+                Group {
+                    if finder.mode == .databases { databaseColumn } else { websiteColumn }
+                }
+                .frame(minWidth: 240, idealWidth: 300, maxWidth: 420, maxHeight: .infinity)
+
+                VStack(spacing: 0) {
+                    if finder.mode == .websites { browser.frame(minHeight: 180, maxHeight: .infinity) }
+                    editor.frame(minHeight: 220, maxHeight: .infinity)
+                }
+                .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(DS.bg1)
+    }
+
+    // MARK: databases
+
+    private var databaseColumn: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldRow(label: "Source", labelWidth: 56) {
+                Picker("", selection: $finder.provider) {
+                    ForEach(LyricsProvider.allCases) { p in Text(p.rawValue).tag(p) }
+                }.labelsHidden()
+            }
+            Text(finder.provider.detail).font(.system(size: 10)).foregroundColor(DS.text3).fixedSize(horizontal: false, vertical: true)
+            TextField("Song title", text: $finder.title).dsField().onSubmit { finder.search() }
+            TextField("Artist / writer" + (finder.provider == .lyricsOvh ? " (required)" : " (optional)"), text: $finder.artist).dsField()
+                .onSubmit { finder.search() }
+            if finder.provider == .lrclib {
+                TextField("…or any words from the song", text: $finder.words).dsField().onSubmit { finder.search() }
+            }
+            HStack {
+                Button { finder.search() } label: { Label("Search", systemImage: "magnifyingglass") }.buttonStyle(.ds(.primary))
+                if finder.loading { ProgressView().controlSize(.small) }
+                Spacer()
+            }
+            if !finder.message.isEmpty { Text(finder.message).font(.system(size: 10)).foregroundColor(DS.amber).fixedSize(horizontal: false, vertical: true) }
+            List(selection: $finder.selectedID) {
+                ForEach(finder.hits) { h in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(h.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        Text([h.artist, h.album].filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(1)
+                        Text(h.firstLine).font(.system(size: 10)).foregroundColor(DS.text3).lineLimit(1)
+                    }
+                    .tag(h.id)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .padding(10)
+    }
+
+    // MARK: web sites
+
+    private var websiteColumn: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Song title and artist", text: $finder.webQuery).dsField()
+                .onSubmit { if let s = finder.site ?? LyricsWebSite.all.first { finder.open(s) } }
+            Text("Choose a site. When the lyrics appear, select them on the page and press **Use selection** — or copy them and press **Paste**.")
+                .font(.system(size: 10)).foregroundColor(DS.text3).fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(LyricsWebSite.all) { site in
+                        Button { finder.open(site) } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(site.name).font(.system(size: 12, weight: .semibold)).foregroundColor(DS.text)
+                                    Text(site.detail).font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(2)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundColor(DS.text3)
+                            }
+                            .padding(8)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(finder.site == site ? DS.accent.opacity(0.18) : DS.bg2))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(finder.site == site ? DS.accent : DS.lineSoft, lineWidth: 1))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            if !finder.message.isEmpty { Text(finder.message).font(.system(size: 10)).foregroundColor(DS.amber) }
+        }
+        .padding(10)
+    }
+
+    private var browser: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                DSIconButton(symbol: "chevron.left", help: "Back") { finder.webView?.goBack() }
+                DSIconButton(symbol: "chevron.right", help: "Forward") { finder.webView?.goForward() }
+                DSIconButton(symbol: "arrow.clockwise", help: "Reload") { finder.webView?.reload() }
+                Text(finder.webURL?.host ?? "Choose a site on the left").font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(1)
+                Spacer()
+                Button { finder.grabSelection(replace: true) } label: { Label("Use selection", systemImage: "text.cursor") }
+                    .buttonStyle(.ds(.primary, .small)).disabled(finder.webURL == nil)
+                Button("Add selection") { finder.grabSelection(replace: false) }.buttonStyle(.ds(.normal, .small)).disabled(finder.webURL == nil)
+                Button { if let u = finder.webView?.url ?? finder.webURL { NSWorkspace.shared.open(u) } } label: { Image(systemName: "safari") }
+                    .buttonStyle(.ds(.normal, .small)).help("Open in your web browser").disabled(finder.webURL == nil)
+            }
+            .padding(.horizontal, 8).frame(height: 36).background(DS.bg2)
+            ZStack {
+                Color.white.opacity(0.03)
+                if let u = finder.webURL {
+                    LyricsWebView(url: u, finder: finder)
+                } else {
+                    Text("The site opens here.").font(DS.label).foregroundColor(DS.text3)
+                }
+            }
+        }
+    }
+
+    // MARK: editor
+
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                TextField("Title", text: $finder.editTitle).dsField()
+                TextField("Author / artist", text: $finder.editArtist).dsField().frame(maxWidth: 220)
+            }
+            TextEditor(text: $finder.editText)
+                .font(.system(size: 13))
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 6).fill(DS.bg0))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DS.line, lineWidth: 1))
+            Text("Edit freely. Put Verse 1, Chorus, Bridge… on their own lines; a blank line starts a new slide. Repeated choruses are merged automatically.")
+                .font(.system(size: 10)).foregroundColor(DS.text3).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                Button("Tidy spacing") { finder.editText = LyricsSearch.clean(finder.editText) }.buttonStyle(.ds(.normal, .small))
+                Button("Paste") { finder.pasteClipboard() }.buttonStyle(.ds(.normal, .small))
+                Button("Clear") { finder.clearEditor() }.buttonStyle(.ds(.ghost, .small))
+                Spacer()
+                Text(finder.editSource.isEmpty ? "" : "Source: \(finder.editSource)").font(.system(size: 10)).foregroundColor(DS.text3).lineLimit(1)
+                Button { present.saveFoundLyrics(title: finder.editTitle, artist: finder.editArtist, text: finder.editText, source: finder.editSource) } label: {
+                    Label("Save to Song Library", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.ds(.primary))
+                .disabled(finder.editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            Text("Lyrics belong to their writers and publishers. Public-domain hymns are free to project; for copyrighted songs make sure your church holds a licence such as CCLI or OneLicense.")
+                .font(.system(size: 9.5)).foregroundColor(DS.text3).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+    }
+}
+
+/// Built-in browser for lyrics sites (selection can be copied into the editor).
+struct LyricsWebView: NSViewRepresentable {
+    let url: URL
+    let finder: LyricsFinder
+    func makeNSView(context: Context) -> WKWebView {
+        let wv = WKWebView(frame: .zero)
+        wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        wv.load(URLRequest(url: url))
+        finder.webView = wv
+        context.coordinator.lastURL = url
+        return wv
+    }
+    func updateNSView(_ wv: WKWebView, context: Context) {
+        finder.webView = wv
+        if context.coordinator.lastURL != url {
+            context.coordinator.lastURL = url
+            wv.load(URLRequest(url: url))
+        }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    final class Coordinator { var lastURL: URL? }
 }

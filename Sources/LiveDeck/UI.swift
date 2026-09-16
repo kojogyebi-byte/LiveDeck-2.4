@@ -469,7 +469,12 @@ struct InputBus: View {
                         ForEach(Array(engine.sources.enumerated()), id: \.element.id) { idx, src in
                             InputTile(index: idx + 1, source: src, tileW: g.tileW, screenH: g.screenH)
                         }
-                    }.padding(8).frame(maxWidth: .infinity)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
+                    // Right-click anywhere in the empty part of the input area to add an input.
+                    .contentShape(Rectangle())
+                    .contextMenu { AddInputMenuItems() }
                 }
             }
         }
@@ -483,42 +488,48 @@ let videoFileTypes = ["public.movie", "public.video", "public.audiovisual-conten
                       "public.mpeg", "public.mpeg-2-transport-stream",
                       "org.matroska.mkv", "com.microsoft.windows-media-wmv"]
 
-struct InputAssignMenu<Label: View>: View {
+/// Items that fill a specific (blank) holder.
+struct InputAssignMenuItems: View {
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
     var slotID: UUID
-    @ViewBuilder var label: () -> Label
-    @State private var devices: [AVCaptureDevice] = []
     var body: some View {
-        Menu {
-            Menu("Cameras & Capture Devices") {
-                ForEach(devices, id: \.uniqueID) { d in
-                    Button(d.localizedName) { engine.replaceSource(slotID, with: CameraSource(device: d)) }
-                }
-                if devices.isEmpty { Text("No devices found") }
-                Divider()
-                Button("Refresh devices") { devices = VideoDevices.all() }
+        Menu("Cameras & Capture Devices") {
+            let devices = VideoDevices.all()
+            ForEach(devices, id: \.uniqueID) { d in
+                Button(d.localizedName) { engine.replaceSource(slotID, with: CameraSource(device: d)) }
             }
-            Button("Screen Capture") { engine.replaceSource(slotID, with: ScreenSource()) }
-            Button("Video File…") { pickFile(types: videoFileTypes) { engine.replaceSource(slotID, with: FileSource(url: $0)) } }
-            Button("Image…") { pickFile(types: ["public.image"]) { engine.replaceSource(slotID, with: ImageSource(url: $0)) } }
-            Button("Network Stream (HLS / URL)…") { engine.openAddStream(1) }
-            Button("RTMP / RTSP / SRT (ffmpeg)…") { engine.openAddStream(2) }
-            Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
-            Button("Colour") { engine.replaceSource(slotID, with: ColorSource()) }
-            Button("Test Pattern (Bars)") { engine.replaceSource(slotID, with: BarsSource()) }
-            Divider()
-            Button("Songs & Bible (Presentation)") {
-                let s = PresentationSource(); engine.replaceSource(slotID, with: s)
-                present.targetID = s.id; present.deck = DeckTab.present.rawValue
-            }
-            Button("Dictionary") {
-                let s = DictionarySource(); engine.replaceSource(slotID, with: s)
-                dict.targetID = s.id; present.deck = DeckTab.dictionary.rawValue
-            }
-        } label: { label() }
-        .onAppear { if devices.isEmpty { devices = VideoDevices.all() } }
+            if devices.isEmpty { Text("No devices found") }
+        }
+        Button("Screen Capture") { engine.replaceSource(slotID, with: ScreenSource()) }
+        Button("Video File…") { pickFile(types: videoFileTypes) { engine.replaceSource(slotID, with: FileSource(url: $0)) } }
+        Button("Image…") { pickFile(types: ["public.image"]) { engine.replaceSource(slotID, with: ImageSource(url: $0)) } }
+        Divider()
+        Button("Songs & Bible (Presentation)") {
+            let s = PresentationSource(); engine.replaceSource(slotID, with: s)
+            present.targetID = s.id; present.deck = DeckTab.present.rawValue
+        }
+        Button("Dictionary") {
+            let s = DictionarySource(); engine.replaceSource(slotID, with: s)
+            dict.targetID = s.id; present.deck = DeckTab.dictionary.rawValue
+        }
+        Divider()
+        Button("Network Stream (HLS / URL)…") { engine.openAddStream(1) }
+        Button("RTMP / RTSP / SRT (ffmpeg)…") { engine.openAddStream(2) }
+        Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
+        Button("Web Page…") { engine.openAddStream(4) }
+        Divider()
+        Button("Colour") { engine.replaceSource(slotID, with: ColorSource()) }
+        Button("Test Pattern (Bars)") { engine.replaceSource(slotID, with: BarsSource()) }
+    }
+}
+
+struct InputAssignMenu<Label: View>: View {
+    var slotID: UUID
+    @ViewBuilder var label: () -> Label
+    var body: some View {
+        Menu { InputAssignMenuItems(slotID: slotID) } label: { label() }
     }
 }
 
@@ -588,20 +599,12 @@ struct InputTile: View {
                 }
                 .frame(width: tileW, height: th)
                 DS.bg2.frame(width: tileW, height: inputTileChrome - 20)
-            } else {
+            }
+            if !source.isPlaceholder {
                 SourceThumb(source: source)
                     .frame(width: tileW, height: th).background(Color.black)
                     .onTapGesture(count: 2) { engine.setPreview(source.id); engine.cut() }
                     .onTapGesture { select() }
-                    .contextMenu {
-                        Button("Take to Program") { engine.setPreview(source.id); engine.cut() }
-                        Button("Set as Preview") { select() }
-                        if source is SlideSource {
-                            Button(isKeyed ? "Remove key from Program" : "Key over Program") { engine.toggleKey(source.id) }
-                        }
-                        Divider()
-                        Button("Remove", role: .destructive) { engine.removeSource(source.id) }
-                    }
                 ChannelMeterBar(id: source.id, muted: source.muted, segments: 14)
                     .frame(width: tileW, height: 6).padding(.vertical, 2).background(DS.bg1)
                 HStack(spacing: 6) {
@@ -626,6 +629,29 @@ struct InputTile: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(tally, lineWidth: isProgram || isPreview || isKeyed ? 2 : 1))
+        .contentShape(Rectangle())
+        .contextMenu {
+            if source.isPlaceholder {
+                Menu("Assign input") { InputAssignMenuItems(slotID: source.id) }
+                Divider()
+                Button("Remove holder", role: .destructive) { engine.removeSource(source.id) }
+            } else {
+                Button("Take to Program") { engine.setPreview(source.id); engine.cut() }
+                Button("Set as Preview") { select() }
+                if source is SlideSource {
+                    Button(isKeyed ? "Remove key from Program" : "Key over Program") { engine.toggleKey(source.id) }
+                    Button("Open controls") { openController() }
+                }
+                if source.sourceURLString != nil {
+                    Button("Edit address…") { engine.openEditStream(source.id) }
+                }
+                if let w = source as? WebSource { Button("Reload page") { w.reload() } }
+                Divider()
+                Button("Adjust in Input panel") { select(); engine.rightTab = 1 }
+                Divider()
+                Button("Remove", role: .destructive) { engine.removeSource(source.id) }
+            }
+        }
     }
 
     private func select() {
@@ -645,37 +671,44 @@ struct SourceThumb: NSViewRepresentable {
     func updateNSView(_ v: SourceThumbNSView, context: Context) { v.source = source }
 }
 
-struct AddInputMenu: View {
+/// Items shared by the "Add Input" button menu and the right-click menu of the input area.
+struct AddInputMenuItems: View {
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
-    @State private var devices: [AVCaptureDevice] = []
+    var body: some View {
+        Menu("Cameras & Capture Devices") {
+            let devices = VideoDevices.all()
+            ForEach(devices, id: \.uniqueID) { d in Button(d.localizedName) { engine.addCamera(d) } }
+            if devices.isEmpty { Text("No devices found") }
+        }
+        Button("Screen Capture") { engine.addScreen() }
+        Button("Video File…") { pickFile(types: videoFileTypes) { engine.addFile(url: $0) } }
+        Button("Image…") { pickFile(types: ["public.image"]) { engine.addImage(url: $0) } }
+        Divider()
+        Button("Songs & Bible (Presentation)") {
+            let s = engine.addPresentationInput(); present.targetID = s.id; present.deck = DeckTab.present.rawValue
+        }
+        Button("Dictionary") {
+            let s = engine.addDictionaryInput(); dict.targetID = s.id; present.deck = DeckTab.dictionary.rawValue
+        }
+        Divider()
+        Button("Network Stream (HLS / URL)…") { engine.openAddStream(1) }
+        Button("RTMP / RTSP / SRT (ffmpeg)…") { engine.openAddStream(2) }
+        Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
+        Button("Web Page…") { engine.openAddStream(4) }
+        Divider()
+        Button("Colour") { engine.addColor() }
+        Button("Test Pattern (Bars)") { engine.addBars() }
+        Divider()
+        Button("Blank Input") { engine.addBlankInput() }
+    }
+}
+
+struct AddInputMenu: View {
     var body: some View {
         Menu {
-            Menu("Cameras & Capture Devices") {
-                ForEach(devices, id: \.uniqueID) { d in Button(d.localizedName) { engine.addCamera(d) } }
-                if devices.isEmpty { Text("No devices found") }
-                Divider()
-                Button("Refresh devices") { devices = VideoDevices.all() }
-            }
-            Button("Screen Capture") { engine.addScreen() }
-            Button("Video File…") { pickFile(types: videoFileTypes) { engine.addFile(url: $0) } }
-            Button("Image…") { pickFile(types: ["public.image"]) { engine.addImage(url: $0) } }
-            Button("Network Stream (HLS / URL)…") { engine.openAddStream(1) }
-            Button("RTMP / RTSP / SRT (ffmpeg)…") { engine.openAddStream(2) }
-            Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
-            Button("Web Page…") { engine.openAddStream(4) }
-            Button("Colour") { engine.addColor() }
-            Button("Test Pattern (Bars)") { engine.addBars() }
-            Divider()
-            Button("Songs & Bible (Presentation)") {
-                let s = engine.addPresentationInput(); present.targetID = s.id; present.deck = DeckTab.present.rawValue
-            }
-            Button("Dictionary") {
-                let s = engine.addDictionaryInput(); dict.targetID = s.id; present.deck = DeckTab.dictionary.rawValue
-            }
-            Divider()
-            Button("Blank Input") { engine.addBlankInput() }
+            AddInputMenuItems()
         } label: {
             Label("Add Input", systemImage: "plus").font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.white)
@@ -683,7 +716,6 @@ struct AddInputMenu: View {
                 .background(RoundedRectangle(cornerRadius: 5).fill(DS.accent))
         }
         .menuStyle(.borderlessButton).fixedSize()
-        .onAppear { if devices.isEmpty { devices = VideoDevices.all() } }
     }
 }
 
@@ -791,16 +823,14 @@ struct RightPanel: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         VStack(spacing: 0) {
-            DSTabBar(selection: $engine.rightTab, items: [
+            CPTabBar(selection: $engine.rightTab, items: [
+                DSTabItem(id: 1, title: "Input", icon: "rectangle.and.hand.point.up.left"),
                 DSTabItem(id: 0, title: "Audio", icon: "slider.vertical.3"),
-                DSTabItem(id: 1, title: "Input", icon: "dial.medium"),
                 DSTabItem(id: 2, title: "Overlays", icon: "square.stack.3d.up"),
                 DSTabItem(id: 3, title: "Scenes", icon: "rectangle.split.2x2"),
-                DSTabItem(id: 4, title: "Outputs", icon: "display.2")
-            ], compact: true)
-            .padding(8)
-            .background(DS.bg2)
-            .overlay(Rectangle().fill(DS.lineSoft).frame(height: 1), alignment: .bottom)
+                DSTabItem(id: 4, title: "Outputs", icon: "display")
+            ])
+            .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
             Group {
                 if engine.rightTab == 0 { AudioMixerPanel() }
                 else if engine.rightTab == 1 { InputSettingsPanel() }
@@ -810,7 +840,7 @@ struct RightPanel: View {
             }
             .frame(maxHeight: .infinity)
         }
-        .background(DS.bg1).overlay(Rectangle().frame(width: 1).foregroundColor(DS.line), alignment: .leading)
+        .background(CP.bg).overlay(Rectangle().frame(width: 1).foregroundColor(DS.line), alignment: .leading)
     }
 }
 
@@ -825,72 +855,194 @@ func checkButton(_ title: String, _ on: Bool, _ action: @escaping () -> Void) ->
 func adjSlider(_ label: String, _ value: Binding<Double>, _ range: ClosedRange<Double>, _ def: Double? = nil) -> some View {
     let fallback: Double? = def ?? (range.contains(0) && range.lowerBound < 0 ? 0 : nil)
     let fmt = (range.upperBound - range.lowerBound) >= 100 ? "%.0f" : "%.2f"
-    return ParamSlider(label: label, value: value, range: range, defaultValue: fallback, format: fmt)
+    return CPSliderRow(label: label, value: value, range: range, defaultValue: fallback, format: fmt)
 }
 
 struct InputSettingsPanel: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         ScrollView {
-            if let s = engine.sources.first(where: { $0.id == engine.selectedSourceID }) {
-                InputAdjust(source: s)
-            } else {
-                Text("Tap an input's thumbnail to adjust its zoom, pan, rotation, crop, colour and audio here.")
-                    .font(.system(size: 11)).foregroundColor(.secondary).padding(12)
+            VStack(spacing: 12) {
+                InputChannelCard()
+                if let s = engine.sources.first(where: { $0.id == engine.selectedSourceID }), !s.isPlaceholder {
+                    InputAdjust(source: s).id(s.id)
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "hand.tap").font(.system(size: 26)).foregroundColor(CP.text2)
+                        Text("Choose an input above, or click an input's picture, to adjust its geometry, crop, colour and audio.")
+                            .font(.system(size: 11.5)).foregroundColor(CP.text2).multilineTextAlignment(.center)
+                    }
+                    .padding(24).frame(maxWidth: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 11).fill(CP.card))
+                    .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(CP.border, lineWidth: 1))
+                }
             }
+            .padding(10)
         }
+        .background(CP.bg)
+    }
+}
+
+/// "Input Channel" card: which input is being edited + reset all.
+struct InputChannelCard: View {
+    @EnvironmentObject var engine: Engine
+    var body: some View {
+        let selected = engine.sources.first(where: { $0.id == engine.selectedSourceID && !$0.isPlaceholder })
+        HStack(spacing: 10) {
+            Image(systemName: "rectangle.and.hand.point.up.left.filled")
+                .font(.system(size: 18, weight: .semibold)).foregroundColor(CP.icon).frame(width: 26)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Input Channel").font(.system(size: 13, weight: .semibold)).foregroundColor(CP.text)
+                Picker("", selection: Binding(
+                    get: { engine.selectedSourceID ?? pipNoneTag },
+                    set: { id in
+                        guard id != pipNoneTag else { engine.selectedSourceID = nil; return }
+                        engine.selectedSourceID = id
+                        engine.setPreview(id)
+                    })) {
+                    Text("None").tag(pipNoneTag)
+                    ForEach(Array(engine.sources.enumerated()).filter { !$0.element.isPlaceholder }, id: \.element.id) { idx, src in
+                        Text("\(idx + 1)  ·  \(src.name)").tag(src.id)
+                    }
+                }
+                .cpPickerChrome()
+            }
+            CPButton(icon: "arrow.counterclockwise", title: "Reset") { selected?.resetAdjustments(); selected?.gain = 1 }
+                .disabled(selected == nil)
+                .padding(.top, 18)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 11).fill(CP.card))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(CP.border, lineWidth: 1))
     }
 }
 
 struct InputAdjust: View {
+    @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var dict: DictionaryModel
     @ObservedObject var source: Source
     @State private var audioDevices: [AudioDeviceInfo] = []
     @State private var showFX = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                SectionLabel("INPUT NAME")
-                Spacer()
-                Button("Reset") { source.resetAdjustments() }.font(.system(size: 10))
+        VStack(spacing: 12) {
+            CPCard(title: "Name & Playback", subtitle: source.kindLabel.capitalized + " input", icon: "tv") {
+                CPRow(icon: "character.cursor.ibeam", label: "Name", showDivider: source is FileSource || source is AudioFileSource) {
+                    TextField("Name", text: $source.name)
+                        .textFieldStyle(.plain).font(.system(size: 12)).foregroundColor(CP.text)
+                        .padding(.horizontal, 8).frame(height: 28)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(CP.field))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(CP.border, lineWidth: 1))
+                }
+                if let f = source as? FileSource { PlaybackTransport(source: f).padding(.vertical, 8) }
+                if let a = source as? AudioFileSource { PlaybackTransport(source: a).padding(.vertical, 8) }
             }
-            TextField("Name", text: $source.name)
 
-            if let f = source as? FileSource { PlaybackTransport(source: f) }
-            if let a = source as? AudioFileSource { PlaybackTransport(source: a) }
+            if let slide = source as? SlideSource {
+                CPCard(title: "Display", subtitle: "Songs, scripture or dictionary", icon: "text.below.photo") {
+                    CPRow(icon: "square.2.layers.3d.top.filled", label: "Key over Program") {
+                        Toggle("", isOn: Binding(get: { engine.isKeyed(slide.id) }, set: { _ in engine.toggleKey(slide.id) }))
+                            .toggleStyle(.switch).tint(CP.blue).labelsHidden()
+                    }
+                    CPRow(icon: "textformat", label: "Hide text") {
+                        SlideVisibilityToggles(source: slide)
+                    }
+                    HStack {
+                        CPButton(icon: "paintbrush.pointed", title: "Formatting & slides", prominent: true) {
+                            if slide is DictionarySource { dict.targetID = slide.id; present.deck = DeckTab.dictionary.rawValue }
+                            else { present.targetID = slide.id; present.deck = DeckTab.present.rawValue }
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 10)
+                }
+            } else {
+                CPCard(title: "Geometry", subtitle: "Position and rotation of the input", icon: "scope",
+                       onReset: { source.zoom = 1; source.panX = 0; source.panY = 0; source.rotation = 0 }) {
+                    CPSliderRow(icon: "magnifyingglass", label: "Zoom", value: $source.zoom, range: 0.2...4, defaultValue: 1)
+                    CPSliderRow(icon: "arrow.left.and.right", label: "Pan X", value: $source.panX, range: -1...1, defaultValue: 0)
+                    CPSliderRow(icon: "arrow.up.and.down", label: "Pan Y", value: $source.panY, range: -1...1, defaultValue: 0)
+                    CPSliderRow(icon: "arrow.clockwise", label: "Rotate", value: $source.rotation, range: -180...180, defaultValue: 0, format: "%.0f", showDivider: false)
+                }
 
-            SectionLabel("GEOMETRY")
-            adjSlider("Zoom", $source.zoom, 0.2...4, 1)
-            adjSlider("Pan X", $source.panX, -1...1)
-            adjSlider("Pan Y", $source.panY, -1...1)
-            adjSlider("Rotate", $source.rotation, -180...180)
-            Divider()
-            SectionLabel("CROP")
-            adjSlider("Left", $source.cropL, 0...0.45)
-            adjSlider("Right", $source.cropR, 0...0.45)
-            adjSlider("Top", $source.cropT, 0...0.45)
-            adjSlider("Bottom", $source.cropB, 0...0.45)
-            Divider()
-            SectionLabel("COLOUR")
-            adjSlider("Brightness", $source.brightness, -0.5...0.5)
-            adjSlider("Contrast", $source.contrast, 0...2, 1)
-            adjSlider("Saturation", $source.saturation, 0...2, 1)
-            Divider()
-            SectionLabel("AUDIO")
-            Picker("Audio device", selection: Binding(
-                get: { source.audioDeviceID ?? "" },
-                set: { source.audioDeviceID = $0.isEmpty ? nil : $0 })) {
-                Text("None").tag("")
-                ForEach(audioDevices) { d in Text(d.name).tag(d.id) }
+                CPCard(title: "Crop", subtitle: "Trim the input frame", icon: "crop",
+                       onReset: { source.cropL = 0; source.cropR = 0; source.cropT = 0; source.cropB = 0 }) {
+                    CPSliderRow(icon: "arrow.left", label: "Left", value: $source.cropL, range: 0...0.45, defaultValue: 0)
+                    CPSliderRow(icon: "arrow.right", label: "Right", value: $source.cropR, range: 0...0.45, defaultValue: 0)
+                    CPSliderRow(icon: "arrow.up", label: "Top", value: $source.cropT, range: 0...0.45, defaultValue: 0)
+                    CPSliderRow(icon: "arrow.down", label: "Bottom", value: $source.cropB, range: 0...0.45, defaultValue: 0, showDivider: false)
+                }
+
+                CPCard(title: "Colour", subtitle: "Adjust colour properties", icon: "circle.hexagongrid.fill",
+                       onReset: { source.brightness = 0; source.contrast = 1; source.saturation = 1 }) {
+                    CPSliderRow(icon: "sun.max", label: "Brightness", value: $source.brightness, range: -0.5...0.5, defaultValue: 0)
+                    CPSliderRow(icon: "circle.lefthalf.filled", label: "Contrast", value: $source.contrast, range: 0...2, defaultValue: 1)
+                    CPSliderRow(icon: "drop", label: "Saturation", value: $source.saturation, range: 0...2, defaultValue: 1, showDivider: false)
+                }
             }
-            ChannelMeterBar(id: source.id, muted: source.muted).frame(height: 10)
-            adjSlider("Gain", $source.gain, 0...1.5, 1)
-            Toggle("Mute", isOn: $source.muted).font(.system(size: 11))
-            Button(showFX ? "Hide Effects" : "Audio Effects (EQ · Comp · Gate)") { showFX.toggle() }
-                .font(.system(size: 11))
-            if showFX { AudioEffects(source: source) }
+
+            CPCard(title: "Audio", subtitle: "Audio monitoring and control", icon: "speaker.wave.2.fill",
+                   onReset: { source.gain = 1; source.muted = false }) {
+                CPRow(icon: "headphones", label: "Device") {
+                    Picker("", selection: Binding(
+                        get: { source.audioDeviceID ?? "" },
+                        set: { source.audioDeviceID = $0.isEmpty ? nil : $0 })) {
+                        Text("None").tag("")
+                        ForEach(audioDevices) { d in Text(d.name).tag(d.id) }
+                    }
+                    .cpPickerChrome()
+                    .frame(maxWidth: 170)
+                    Button { audioDevices = AudioCapture.availableDevices() } label: {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold)).foregroundColor(CP.text)
+                            .frame(width: 30, height: 30)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(CP.field))
+                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(CP.border, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain).help("Refresh audio devices")
+                }
+                VStack(spacing: 2) {
+                    CPSliderRow(icon: "dial.medium", label: "Gain", value: $source.gain, range: 0...1.5, defaultValue: 1, showDivider: false)
+                    HStack(spacing: 8) {
+                        Color.clear.frame(width: 18 + 64 + 8, height: 1)
+                        ChannelMeterBar(id: source.id, muted: source.muted, segments: 24).frame(height: 11)
+                        Color.clear.frame(width: 52 + 22 + 8, height: 1)
+                    }
+                    .padding(.bottom, 8)
+                    CPDivider()
+                }
+                CPRow(icon: source.muted ? "speaker.slash.fill" : "speaker.wave.1", label: "Mute") {
+                    Toggle("", isOn: $source.muted).toggleStyle(.switch).tint(DS.program).labelsHidden()
+                }
+                HStack {
+                    CPPillButton(icon: "slider.vertical.3", title: "Audio Effects (EQ · Compressor · Gate)", expanded: showFX) {
+                        withAnimation(.easeInOut(duration: 0.18)) { showFX.toggle() }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 10)
+            }
+
+            if showFX {
+                CPCard(title: "Audio Effects", subtitle: "EQ · Noise gate · Compressor", icon: "waveform") {
+                    AudioEffectsBody(source: source).padding(.vertical, 6)
+                }
+            }
         }
-        .padding(12)
         .onAppear { audioDevices = AudioCapture.availableDevices() }
+    }
+}
+
+/// Clear-text / hide-background switches for a slide input.
+struct SlideVisibilityToggles: View {
+    @ObservedObject var source: SlideSource
+    var body: some View {
+        HStack(spacing: 8) {
+            Toggle("", isOn: $source.textCleared).toggleStyle(.switch).tint(DS.amber).labelsHidden().help("Hide text")
+            Text("BG").font(.system(size: 10, weight: .semibold)).foregroundColor(CP.text2)
+            Toggle("", isOn: Binding(get: { !source.backgroundCleared }, set: { source.backgroundCleared = !$0 }))
+                .toggleStyle(.switch).tint(CP.blue).labelsHidden().help("Show background")
+        }
     }
 }
 
@@ -939,7 +1091,9 @@ struct PlaybackTransport<S: MediaPlayback>: View {
                     .font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary)
             }
         }
-        .padding(8).background(Color(white: 0.10)).cornerRadius(6)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 9).fill(CP.field))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(CP.border, lineWidth: 1))
     }
 }
 
@@ -1030,7 +1184,15 @@ struct CompCurve: View {
 struct AudioEffects: View {
     @ObservedObject var source: Source
     var body: some View {
-        ScrollView {
+        ScrollView { AudioEffectsBody(source: source).padding(12) }
+            .frame(width: 380, height: 560)
+            .background(CP.bg)
+    }
+}
+
+struct AudioEffectsBody: View {
+    @ObservedObject var source: Source
+    var body: some View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Toggle("Effects", isOn: $source.fxEnabled).font(.system(size: 11, weight: .semibold))
@@ -1072,10 +1234,6 @@ struct AudioEffects: View {
                 adjSlider("Release ms", $source.compRelease, 10...500)
                 adjSlider("Makeup dB", $source.compMakeup, 0...18)
             }
-            .padding(12)
-        }
-        .frame(width: 340, height: 540)
-        .background(Color(white: 0.09))
     }
 }
 
@@ -1796,80 +1954,83 @@ struct OutputsPanel: View {
     @State private var screens: [(index: Int, name: String)] = []
     @State private var ndiAvailable = false
     @State private var ndiVersion = ""
+
+    private func refresh() {
+        screens = engine.availableScreens(); NDIBridge.shared.detect()
+        ndiAvailable = NDIBridge.shared.isAvailable; ndiVersion = NDIBridge.shared.versionString
+    }
+
     var body: some View {
         ScrollView {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                SectionLabel("Simultaneous outputs")
-                Button("Refresh") { screens = engine.availableScreens(); NDIBridge.shared.detect(); ndiAvailable = NDIBridge.shared.isAvailable; ndiVersion = NDIBridge.shared.versionString }
-                    .buttonStyle(.ds(.normal, .small))
-            }
-            Text("Every output below runs at the same time — and alongside Record and Stream. Send the clean Program feed to a projector or LED wall by enabling its display.")
-                .font(.system(size: 11)).foregroundColor(.secondary)
-
-            SectionLabel("EXTERNAL DISPLAYS")
-            if screens.count <= 1 {
-                Text("No additional displays detected. Connect a projector, monitor or LED processor and click Refresh.")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
-            }
-            ForEach(screens, id: \.index) { s in
-                VStack(spacing: 6) {
-                    HStack {
-                        Image(systemName: "display").foregroundColor(.secondary)
-                        Text(s.name + (s.index == 0 ? "  (main)" : "")).font(.system(size: 12))
-                        Spacer()
-                        Toggle("", isOn: Binding(
-                            get: { engine.activeScreens.contains(s.index) },
-                            set: { _ in engine.toggleScreenOutput(s.index) })).labelsHidden()
+            VStack(spacing: 12) {
+                CPCard(title: "Program Out", subtitle: "Full screen, no title bar", icon: "rectangle.inset.filled") {
+                    CPRow(icon: "display", label: "Full-screen Program") {
+                        Toggle("", isOn: Binding(get: { engine.programWindowActive }, set: { _ in engine.openOutputWindow() }))
+                            .toggleStyle(.switch).tint(CP.blue).labelsHidden()
                     }
-                    if engine.activeScreens.contains(s.index) {
-                        HStack {
-                            Text("Send").font(.system(size: 10)).foregroundColor(.secondary)
-                            Picker("", selection: Binding(
-                                get: { engine.screenSource[s.index] ?? pipNoneTag },
-                                set: { engine.setScreenSource(s.index, $0 == pipNoneTag ? nil : $0) })) {
-                                Text("Program").tag(pipNoneTag)
-                                ForEach(engine.sources.filter { !$0.isPlaceholder }) { src in Text(src.name).tag(src.id) }
-                            }.labelsHidden()
+                    CPRow(icon: "square.grid.3x3", label: "Multiview window", showDivider: false) {
+                        CPButton(title: "Open") { engine.openMultiviewWindow() }
+                    }
+                    Text("Program Out uses the second display when one is connected. Press Esc or double-click it to close.")
+                        .font(.system(size: 10.5)).foregroundColor(CP.text2).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 8)
+                }
+
+                CPCard(title: "External Displays", subtitle: "Projectors, monitors and LED walls", icon: "display.2") {
+                    HStack {
+                        Text("All outputs run at the same time as Record and Stream.")
+                            .font(.system(size: 10.5)).foregroundColor(CP.text2)
+                        Spacer()
+                        CPButton(icon: "arrow.clockwise", title: "Refresh") { refresh() }
+                    }
+                    .padding(.vertical, 8)
+                    CPDivider()
+                    if screens.count <= 1 {
+                        Text("No additional displays detected. Connect a projector, monitor or LED processor and click Refresh.")
+                            .font(.system(size: 11)).foregroundColor(CP.text2).padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    ForEach(screens, id: \.index) { sc in
+                        CPRow(icon: "display", label: sc.name + (sc.index == 0 ? " (main)" : ""), showDivider: !engine.activeScreens.contains(sc.index)) {
+                            Toggle("", isOn: Binding(
+                                get: { engine.activeScreens.contains(sc.index) },
+                                set: { _ in engine.toggleScreenOutput(sc.index) }))
+                                .toggleStyle(.switch).tint(CP.blue).labelsHidden()
+                        }
+                        if engine.activeScreens.contains(sc.index) {
+                            CPRow(icon: "arrow.turn.down.right", label: "Send") {
+                                Picker("", selection: Binding(
+                                    get: { engine.screenSource[sc.index] ?? pipNoneTag },
+                                    set: { engine.setScreenSource(sc.index, $0 == pipNoneTag ? nil : $0) })) {
+                                    Text("Program").tag(pipNoneTag)
+                                    ForEach(engine.sources.filter { !$0.isPlaceholder }) { src in Text(src.name).tag(src.id) }
+                                }
+                                .cpPickerChrome().frame(maxWidth: 170)
+                            }
                         }
                     }
                 }
-                .padding(10).background(DS.bg2).cornerRadius(6)
-            }
 
-            Divider()
-            SectionLabel("WINDOWS")
-            HStack {
-                Button(engine.programWindowActive ? "Close Program Full Screen" : "Program Full Screen") { engine.openOutputWindow() }
-                    .buttonStyle(.ds(.normal, .small, active: engine.programWindowActive))
-                Button("Open Multiview") { engine.openMultiviewWindow() }.buttonStyle(.ds(.normal, .small))
-            }
-
-            Divider()
-            SectionLabel("NDI OUTPUT (NETWORK)")
-            HStack(spacing: 8) {
-                Image(systemName: ndiAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundColor(ndiAvailable ? cProgram : .orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    if ndiAvailable {
-                        Text("NDI runtime detected\(ndiVersion.isEmpty ? "" : " — \(ndiVersion)")").font(.system(size: 11))
-                        Text("Frame-sending will be enabled once the NDI SDK headers are wired into the build.")
-                            .font(.system(size: 10)).foregroundColor(.secondary)
-                    } else {
-                        Text("NDI runtime not found.").font(.system(size: 11))
-                        Text("Run the libNDI for Mac installer, then click Refresh.")
-                            .font(.system(size: 10)).foregroundColor(.secondary)
+                CPCard(title: "NDI Output", subtitle: "Network video", icon: "network") {
+                    HStack(spacing: 10) {
+                        Image(systemName: ndiAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundColor(ndiAvailable ? DS.ok : DS.amber)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(ndiAvailable ? "NDI runtime detected\(ndiVersion.isEmpty ? "" : " — \(ndiVersion)")" : "NDI runtime not found")
+                                .font(.system(size: 12)).foregroundColor(CP.text)
+                            Text(ndiAvailable ? "Frame sending arrives once the NDI SDK headers are added to the build."
+                                              : "Install libNDI for Mac, then click Refresh.")
+                                .font(.system(size: 10.5)).foregroundColor(CP.text2)
+                        }
+                        Spacer()
                     }
+                    .padding(.vertical, 10)
                 }
-                Spacer()
             }
-            .padding(10).background(DS.bg2).cornerRadius(6)
-            Toggle("Enable NDI output", isOn: .constant(false)).disabled(true)
-                .font(.system(size: 11)).foregroundColor(.secondary)
+            .padding(10)
         }
-        .padding(12)
-        }
-        .onAppear { screens = engine.availableScreens(); ndiAvailable = NDIBridge.shared.isAvailable; ndiVersion = NDIBridge.shared.versionString }
+        .background(CP.bg)
+        .onAppear { refresh() }
     }
 }
 

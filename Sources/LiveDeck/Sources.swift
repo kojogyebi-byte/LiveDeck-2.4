@@ -1406,43 +1406,147 @@ final class FFmpegStreamSource: Source {
 
 // MARK: - Web page input (renders a website into the switcher via WKWebView snapshots)
 
+/// Web page input.
+///
+/// Why pages used to show as a white tile: WKWebView only renders while it is inside a window that
+/// macOS considers visible. A web view that is not in any window (or in a window placed fully
+/// off-screen, which macOS marks as occluded) loads the page but never paints, so every snapshot
+/// was blank white. The page is now hosted in a borderless, click-through, practically transparent
+/// window that keeps a single pixel on screen, so WebKit keeps rendering while the user never sees it.
 final class WebSource: Source {
     private var webView: WKWebView?
+    private var hostWindow: NSWindow?
     private var timer: Timer?
     private var frameImage: CGImage?
     private var snapping = false
+    private var delegateProxy: WebNavigationProxy?
+    @Published private(set) var status = "Loading…"
     let outW = 1280, outH = 720
 
-    init(url: String) {
-        super.init(name: URL(string: url)?.host ?? "Web page", kindLabel: "WEB")
-        sourceURLString = url
-        DispatchQueue.main.async { [weak self] in self?.setup(url) }
+    /// Adds https:// when the scheme is missing ("example.com" → "https://example.com").
+    static func normalized(_ raw: String) -> URL? {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        if !t.contains("://") { t = "https://" + t }
+        guard let u = URL(string: t) ?? URL(string: t.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? t),
+              let scheme = u.scheme?.lowercased(), ["http", "https", "file"].contains(scheme) else { return nil }
+        return u
     }
 
-    private func setup(_ url: String) {
+    init(url: String) {
+        let u = WebSource.normalized(url)
+        super.init(name: u?.host ?? "Web page", kindLabel: "WEB")
+        sourceURLString = u?.absoluteString ?? url
+        if u == nil { status = "Invalid address" }
+        DispatchQueue.main.async { [weak self] in self?.setup(u) }
+    }
+
+    private func setup(_ url: URL?) {
         let cfg = WKWebViewConfiguration()
+        cfg.mediaTypesRequiringUserActionForPlayback = []
+        cfg.preferences.javaScriptCanOpenWindowsAutomatically = false
         let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: outW, height: outH), configuration: cfg)
-        if let u = URL(string: url) { wv.load(URLRequest(url: u)) }
+        wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        let proxy = WebNavigationProxy(owner: self)
+        wv.navigationDelegate = proxy
+        delegateProxy = proxy
+
+        // Rendering host: borderless, ignores the mouse, alpha ~0, 1 pixel left on screen.
+        let screen = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let origin = CGPoint(x: screen.minX - CGFloat(outW) + 1, y: screen.minY - CGFloat(outH) + 1)
+        let win = NSWindow(contentRect: CGRect(origin: origin, size: CGSize(width: outW, height: outH)),
+                           styleMask: [.borderless], backing: .buffered, defer: false)
+        win.isReleasedWhenClosed = false
+        win.ignoresMouseEvents = true
+        win.hasShadow = false
+        win.isOpaque = false
+        win.backgroundColor = .clear
+        win.alphaValue = 0.02
+        win.level = .floating
+        win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        win.contentView = wv
+        win.orderFrontRegardless()
+        hostWindow = win
         webView = wv
-        let t = Timer(timeInterval: 1.0 / 12.0, repeats: true) { [weak self] _ in self?.snapshot() }
+
+        if let url { wv.load(URLRequest(url: url)) }
+        let t = Timer(timeInterval: 1.0 / 10.0, repeats: true) { [weak self] _ in self?.snapshot() }
         t.tolerance = 0.05
         RunLoop.main.add(t, forMode: .common); timer = t
     }
 
-    func reload() { if let s = sourceURLString, let u = URL(string: s) { webView?.load(URLRequest(url: u)) } }
+    fileprivate func navigationChanged(_ text: String, loaded: Bool) {
+        status = text
+        if loaded { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.snapshot() } }
+    }
+
+    func reload() {
+        guard let s = sourceURLString, let u = WebSource.normalized(s) else { return }
+        status = "Loading…"
+        webView?.load(URLRequest(url: u))
+    }
 
     private func snapshot() {
         guard let wv = webView, !snapping else { return }
+        takeSnapshot(wv)
+    }
+
+    private func takeSnapshot(_ wv: WKWebView) {
         snapping = true
         let cfg = WKSnapshotConfiguration()
         cfg.rect = CGRect(x: 0, y: 0, width: outW, height: outH)
+        cfg.afterScreenUpdates = true
+        cfg.snapshotWidth = NSNumber(value: outW)
         wv.takeSnapshot(with: cfg) { [weak self] image, _ in
             self?.snapping = false
-            guard let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+            guard let image else { return }
+            var r = CGRect(origin: .zero, size: image.size)
+            guard let cg = image.cgImage(forProposedRect: &r, context: nil, hints: nil) else { return }
             self?.frameImage = cg
         }
     }
 
     override func currentImage() -> CGImage? { frameImage }
-    override func stop() { timer?.invalidate(); timer = nil; webView = nil }
+
+    /// Until the first frame arrives, show the page status instead of a blank tile.
+    override func draw(in ctx: CGContext, rect: CGRect) {
+        if frameImage != nil { super.draw(in: ctx, rect: rect); return }
+        ctx.setFillColor(NSColor(red: 0.05, green: 0.07, blue: 0.11, alpha: 1).cgColor)
+        ctx.fill(rect)
+        let ns = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = ns
+        let p = NSMutableParagraphStyle(); p.alignment = .center
+        let title = NSAttributedString(string: "🌐  " + (sourceURLString ?? "Web page"), attributes: [
+            .font: NSFont.systemFont(ofSize: max(9, rect.height * 0.045), weight: .semibold),
+            .foregroundColor: NSColor.white, .paragraphStyle: p])
+        let sub = NSAttributedString(string: status, attributes: [
+            .font: NSFont.systemFont(ofSize: max(8, rect.height * 0.035)),
+            .foregroundColor: NSColor(white: 0.65, alpha: 1), .paragraphStyle: p])
+        let h = rect.height * 0.08
+        title.draw(with: CGRect(x: rect.minX + 10, y: rect.midY, width: rect.width - 20, height: h), options: [.usesLineFragmentOrigin])
+        sub.draw(with: CGRect(x: rect.minX + 10, y: rect.midY - h, width: rect.width - 20, height: h), options: [.usesLineFragmentOrigin])
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    override func stop() {
+        timer?.invalidate(); timer = nil
+        webView?.stopLoading()
+        webView?.navigationDelegate = nil
+        hostWindow?.orderOut(nil); hostWindow?.contentView = nil; hostWindow?.close()
+        hostWindow = nil; webView = nil; delegateProxy = nil
+    }
+}
+
+private final class WebNavigationProxy: NSObject, WKNavigationDelegate {
+    weak var owner: WebSource?
+    init(owner: WebSource) { self.owner = owner }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { owner?.navigationChanged("Loading…", loaded: false) }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { owner?.navigationChanged("Loaded", loaded: true) }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        owner?.navigationChanged("Could not load: \(error.localizedDescription)", loaded: false)
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        owner?.navigationChanged("Could not load: \(error.localizedDescription)", loaded: false)
+    }
 }

@@ -416,3 +416,298 @@ struct WindowChrome: NSViewRepresentable {
         }
     }
 }
+
+// MARK: - Control panel (right-hand inspector) — card design
+//
+// Navy-tinted cards with icon headers, collapsible sections, blue faders with numeric value
+// boxes and per-control reset buttons.
+
+enum CP {
+    static let bg = Color(rgb: 0x0B111C)          // panel background
+    static let card = Color(rgb: 0x111A28)        // card body
+    static let cardHeader = Color(rgb: 0x152034)   // card header strip
+    static let border = Color(rgb: 0x1F2B40)
+    static let divider = Color(rgb: 0x1A2436)
+    static let field = Color(rgb: 0x0A101A)
+    static let blue = Color(rgb: 0x2F7BFF)
+    static let blueSoft = Color(rgb: 0x2F7BFF, opacity: 0.16)
+    static let icon = Color(rgb: 0x4A90FF)
+    static let text = Color(rgb: 0xE8EDF5)
+    static let text2 = Color(rgb: 0x93A0B5)
+    static let track = Color(rgb: 0x243047)
+}
+
+/// Large icon-over-label tab bar (selected tab filled blue).
+struct CPTabBar: View {
+    @Binding var selection: Int
+    let items: [DSTabItem]
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(items) { item in
+                let on = selection == item.id
+                Button { selection = item.id } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: item.icon).font(.system(size: 15, weight: .medium))
+                        Text(item.title).font(.system(size: 10, weight: on ? .semibold : .medium)).lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                    .foregroundColor(on ? .white : CP.text2)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(on ? LinearGradient(colors: [Color(rgb: 0x3A86FF), Color(rgb: 0x1F5FE0)], startPoint: .top, endPoint: .bottom)
+                                     : LinearGradient(colors: [Color.clear, Color.clear], startPoint: .top, endPoint: .bottom))
+                            .shadow(color: on ? CP.blue.opacity(0.45) : .clear, radius: 6, y: 2)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(item.title)
+            }
+        }
+        .padding(5)
+        .background(RoundedRectangle(cornerRadius: 12).fill(CP.card))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(CP.border, lineWidth: 1))
+    }
+}
+
+/// Small circular reset button (arrow counter-clockwise).
+struct CPResetButton: View {
+    var help = "Reset"
+    let action: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.counterclockwise")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(hover ? CP.text : CP.text2)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(hover ? CP.cardHeader : Color.clear))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(help)
+    }
+}
+
+/// Collapsible section card: icon · title + subtitle · reset · chevron.
+struct CPCard<Content: View>: View {
+    let title: String
+    var subtitle: String = ""
+    var icon: String
+    var iconColor: Color = CP.icon
+    var onReset: (() -> Void)? = nil
+    @ViewBuilder var content: () -> Content
+    @State private var expanded = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(iconColor)
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.system(size: 13, weight: .semibold)).foregroundColor(CP.text)
+                    if !subtitle.isEmpty {
+                        Text(subtitle).font(.system(size: 10.5)).foregroundColor(CP.text2).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                if let onReset { CPResetButton(help: "Reset \(title.lowercased())", action: onReset) }
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(CP.text2)
+                    .rotationEffect(.degrees(expanded ? 0 : 180))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(CP.cardHeader)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } }
+
+            if expanded {
+                VStack(spacing: 0) { content() }
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+            }
+        }
+        .background(CP.card)
+        .clipShape(RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(CP.border, lineWidth: 1))
+    }
+}
+
+/// Thin divider used between rows inside a card.
+struct CPDivider: View {
+    var body: some View { Rectangle().fill(CP.divider).frame(height: 1) }
+}
+
+/// Blue fader track + white knob (no labels).
+struct CPFader: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    @State private var dragging = false
+    private var span: Double { max(0.000001, range.upperBound - range.lowerBound) }
+    var body: some View {
+        GeometryReader { g in
+            let w = max(1, g.size.width)
+            let f = CGFloat((min(max(value, range.lowerBound), range.upperBound) - range.lowerBound) / span)
+            ZStack(alignment: .leading) {
+                Capsule().fill(CP.track).frame(height: 5)
+                Capsule().fill(LinearGradient(colors: [Color(rgb: 0x1F5FE0), CP.blue], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(0, f * w), height: 5)
+                Circle().fill(Color.white)
+                    .frame(width: dragging ? 16 : 14, height: dragging ? 16 : 14)
+                    .overlay(Circle().strokeBorder(CP.blue.opacity(0.9), lineWidth: dragging ? 3 : 2))
+                    .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
+                    .offset(x: f * w - (dragging ? 8 : 7))
+            }
+            .frame(width: w, height: 22)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { d in
+                    dragging = true
+                    value = range.lowerBound + Double(min(max(d.location.x / w, 0), 1)) * span
+                }
+                .onEnded { _ in dragging = false })
+        }
+        .frame(height: 22)
+    }
+}
+
+/// Editable numeric value box (type a value and press Return).
+struct CPValueField: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var format: String = "%.2f"
+    @State private var text = ""
+    @FocusState private var focused: Bool
+    var body: some View {
+        TextField("", text: $text)
+            .textFieldStyle(.plain)
+            .multilineTextAlignment(.center)
+            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+            .foregroundColor(CP.text)
+            .focused($focused)
+            .frame(width: 52, height: 26)
+            .background(RoundedRectangle(cornerRadius: 6).fill(CP.field))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(focused ? CP.blue : CP.border, lineWidth: 1))
+            .onAppear { text = String(format: format, value) }
+            .onChange(of: value) { v in if !focused { text = String(format: format, v) } }
+            .onChange(of: focused) { f in if !f { commit() } }
+            .onSubmit { commit() }
+    }
+    private func commit() {
+        let cleaned = text.replacingOccurrences(of: ",", with: ".").filter { "0123456789.-".contains($0) }
+        if let v = Double(cleaned) { value = min(max(v, range.lowerBound), range.upperBound) }
+        text = String(format: format, value)
+    }
+}
+
+/// icon · label · fader · value box · reset
+struct CPSliderRow: View {
+    var icon: String? = nil
+    let label: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var defaultValue: Double? = nil
+    var format: String = "%.2f"
+    var showDivider = true
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                if let icon {
+                    Image(systemName: icon).font(.system(size: 13, weight: .medium)).foregroundColor(CP.text2).frame(width: 18)
+                }
+                Text(label).font(.system(size: 12)).foregroundColor(CP.text).lineLimit(1)
+                    .frame(width: icon == nil ? 86 : 64, alignment: .leading)
+                CPFader(value: $value, range: range)
+                CPValueField(value: $value, range: range, format: format)
+                if let d = defaultValue {
+                    CPResetButton(help: "Reset \(label.lowercased())") { value = d }
+                } else {
+                    Color.clear.frame(width: 22, height: 22)
+                }
+            }
+            .padding(.vertical, 7)
+            if showDivider { CPDivider() }
+        }
+    }
+}
+
+/// icon · label · trailing control (picker, toggle…)
+struct CPRow<Trailing: View>: View {
+    var icon: String? = nil
+    let label: String
+    var showDivider = true
+    @ViewBuilder var trailing: () -> Trailing
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                if let icon {
+                    Image(systemName: icon).font(.system(size: 13, weight: .medium)).foregroundColor(CP.text2).frame(width: 18)
+                }
+                Text(label).font(.system(size: 12)).foregroundColor(CP.text).lineLimit(1)
+                Spacer(minLength: 6)
+                trailing()
+            }
+            .padding(.vertical, 8)
+            if showDivider { CPDivider() }
+        }
+    }
+}
+
+/// Rounded pill button with icon, title and chevron (e.g. "Audio Effects  ›").
+struct CPPillButton: View {
+    let icon: String
+    let title: String
+    var expanded = false
+    let action: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 12, weight: .medium))
+                Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .bold))
+            }
+            .foregroundColor(CP.text)
+            .padding(.horizontal, 14).frame(height: 32)
+            .background(Capsule().fill(hover ? CP.cardHeader : CP.field))
+            .overlay(Capsule().strokeBorder(expanded ? CP.blue : CP.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+    }
+}
+
+/// Text button in the card style (e.g. "Reset" in the Input Channel card).
+struct CPButton: View {
+    var icon: String? = nil
+    let title: String
+    var prominent = false
+    let action: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon { Image(systemName: icon).font(.system(size: 12, weight: .semibold)) }
+                Text(title).font(.system(size: 12, weight: .medium))
+            }
+            .foregroundColor(prominent ? .white : CP.text)
+            .padding(.horizontal, 12).frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 8).fill(prominent ? CP.blue : (hover ? CP.cardHeader : CP.field)))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(prominent ? Color.clear : CP.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+    }
+}
+
+extension View {
+    /// Dark field look for native pickers inside cards.
+    func cpPickerChrome() -> some View {
+        self.labelsHidden()
+            .padding(.horizontal, 6).frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 7).fill(CP.field))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(CP.border, lineWidth: 1))
+    }
+}

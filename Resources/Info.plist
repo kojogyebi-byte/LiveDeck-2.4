@@ -13,7 +13,7 @@
     <key>CFBundleIdentifier</key>
     <string>org.livedeck.studio</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.1.0</string>
+    <string>4.2.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundlePackageType</key>
@@ -24,6 +24,13 @@
     <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoadsInWebContent</key>
+        <true/>
+        <key>NSAllowsArbitraryLoadsForMedia</key>
+        <true/>
+    </dict>
     <key>NSCameraUsageDescription</key>
     <string>LiveDeck needs camera access to use cameras as live video sources.</string>
     <key>NSMicrophoneUsageDescription</key>
