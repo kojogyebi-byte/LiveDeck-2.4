@@ -94,6 +94,7 @@ final class PresentModel: ObservableObject {
         selectedBibleID = UserDefaults.standard.string(forKey: "present.bible")
         refreshSongs()
         refreshBibles()
+        installBundledBibles()
         if !library.songs.damaged.isEmpty {
             status = "\(library.songs.damaged.count) unreadable song file(s) moved to Library/Damaged."
         }
@@ -219,6 +220,32 @@ final class PresentModel: ObservableObject {
     }
 
     // MARK: Bibles
+
+    /// Copies the Bibles that ship inside the app (Contents/Resources/Bibles) into the library once.
+    /// A Bible the user deletes later is not added again.
+    func installBundledBibles() {
+        guard let folder = Bundle.main.resourceURL?.appendingPathComponent("Bibles"),
+              let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
+        let packages = files.filter { $0.pathExtension == BibleLibrary.fileExtension }
+        var done = Set(UserDefaults.standard.stringArray(forKey: "bundledBibles.installed") ?? [])
+        let todo = packages.filter { !done.contains($0.lastPathComponent) }
+        guard !todo.isEmpty else { return }
+        let dir = library.bibles.directory
+        DispatchQueue.global(qos: .utility).async {
+            var added: [String] = []
+            for f in todo {
+                if (try? BibleLibrary.installPackage(f, into: dir)) != nil { added.append(f.lastPathComponent) }
+                done.insert(f.lastPathComponent)      // installed now, or already present
+            }
+            DispatchQueue.main.async {
+                UserDefaults.standard.set(Array(done), forKey: "bundledBibles.installed")
+                let hadNone = self.bibles.isEmpty
+                self.refreshBibles()
+                if hadNone, let kjv = self.bibles.first(where: { $0.abbreviation == "KJV" }) { self.selectedBibleID = kjv.id }
+                if !added.isEmpty { self.status = "Added \(added.count) English Bible\(added.count == 1 ? "" : "s") to the library." }
+            }
+        }
+    }
 
     func refreshBibles() {
         bibles = library.bibles.installed()
@@ -369,25 +396,44 @@ final class PresentModel: ObservableObject {
     func importBibleFiles() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.message = "Choose a Zefania XML, OSIS XML, CSV/TSV or Free Use Bible JSON file — or all the USFM book files of one translation"
+        panel.canChooseDirectories = true
+        panel.message = "Choose Bible files (JSON, Zefania/OSIS XML, USFM, CSV, .ldbible), a folder of them, or a .zip"
         panel.begin { [weak self] resp in
             guard resp == .OK, let self else { return }
-            let urls = panel.urls
-            let dir = self.library.bibles.directory
-            self.status = "Importing Bible…"
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = Result { try BibleImporter.importFiles(urls, into: dir) }
-                DispatchQueue.main.async {
-                    switch result {
-                    case .success(let info):
-                        self.refreshBibles()
-                        self.selectedBibleID = info.id
-                        self.status = "Imported \(info.name) — \(info.verseCount) verses."
-                    case .failure(let e):
-                        self.status = "Bible import failed: \(e.localizedDescription)"
-                    }
-                }
+            self.importBibles(panel.urls)
+        }
+    }
+
+    /// Imports any mix of Bible files, folders and zip archives (each translation becomes its own Bible).
+    func importBibles(_ urls: [URL]) {
+        let dir = library.bibles.directory
+        status = "Importing Bibles…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            var sources: [URL] = []
+            var temps: [URL] = []
+            for u in urls {
+                if u.pathExtension.lowercased() == "zip" {
+                    let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("bibles-\(UUID().uuidString)")
+                    try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+                    let p = Process()
+                    p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                    p.arguments = ["-x", "-k", u.path, tmp.path]
+                    try? p.run(); p.waitUntilExit()
+                    sources.append(tmp); temps.append(tmp)
+                } else { sources.append(u) }
+            }
+            let result = BibleImporter.importBatch(sources, into: dir) { msg in
+                DispatchQueue.main.async { self.status = msg }
+            }
+            for t in temps { try? FileManager.default.removeItem(at: t) }
+            DispatchQueue.main.async {
+                self.refreshBibles()
+                if let last = result.imported.last { self.selectedBibleID = last.id }
+                var parts: [String] = []
+                if !result.imported.isEmpty { parts.append("Imported \(result.imported.count): " + result.imported.map { $0.abbreviation }.joined(separator: ", ")) }
+                if !result.skipped.isEmpty { parts.append("already installed: \(result.skipped.count)") }
+                if !result.failed.isEmpty { parts.append("failed: " + result.failed.joined(separator: "; ")) }
+                self.status = parts.isEmpty ? "No Bible files found." : parts.joined(separator: " · ") + "."
             }
         }
     }
@@ -1210,6 +1256,30 @@ struct ScriptureArea: View {
     @EnvironmentObject var present: PresentModel
     @State private var showSearch = false
     var body: some View {
+        scripture
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                var urls: [URL] = []
+                let group = DispatchGroup()
+                for p in providers {
+                    group.enter()
+                    _ = p.loadObject(ofClass: URL.self) { u, _ in
+                        if let u { DispatchQueue.main.async { urls.append(u) } }
+                        group.leave()
+                    }
+                }
+                group.notify(queue: .main) {
+                    let bibleLike = urls.filter { u in
+                        var isDir: ObjCBool = false
+                        FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir)
+                        return isDir.boolValue || u.pathExtension.lowercased() == "zip" || BibleImporter.fileExtensions.contains(u.pathExtension.lowercased())
+                    }
+                    if !bibleLike.isEmpty { present.importBibles(bibleLike) }
+                }
+                return true
+            }
+    }
+
+    private var scripture: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Picker("", selection: $present.selectedBibleID) {
@@ -1251,6 +1321,10 @@ struct ScriptureArea: View {
             }
             if showSearch || !present.suggestions.isEmpty || !present.liveResults.isEmpty {
                 BibleAssistPanel(onClose: { showSearch = false; present.clearAssist() })
+            }
+            if present.bibles.isEmpty {
+                Text("No Bibles yet — use Get Bibles…, or drop Bible files, a folder or a .zip here.")
+                    .font(.system(size: 11)).foregroundColor(DS.text2).padding(8)
             }
             if let t = present.currentTarget() {
                 ScriptureSlideGrid(source: t)

@@ -9,18 +9,29 @@ public enum BibleFileFormat: String, Sendable, CaseIterable {
     case usfm = "USFM"
     case csv = "CSV / TSV"
     case freeUseJSON = "Free Use Bible JSON"
+    case superSearchJSON = "Bible SuperSearch JSON"
+    case ldbible = "LiveDeck Bible"
 }
 
 /// Importers for open Bible file formats. All importers stream into a `BibleWriter`
 /// so even large files are converted with modest memory use.
 public enum BibleImporter {
-    public static let fileExtensions = ["xml", "osis", "usfm", "sfm", "usx", "csv", "tsv", "txt", "json"]
+    public static let fileExtensions = ["xml", "osis", "usfm", "sfm", "usx", "csv", "tsv", "txt", "json", "ldbible"]
 
     public static func detect(url: URL) -> BibleFileFormat? {
         let ext = url.pathExtension.lowercased()
         if ["usfm", "sfm"].contains(ext) { return .usfm }
         if ext == "csv" || ext == "tsv" { return .csv }
-        if ext == "json" { return .freeUseJSON }
+        if ext == BibleLibrary.fileExtension { return .ldbible }
+        if ext == "json" {
+            // {"metadata":{…},"verses":[{"book_name","book","chapter","verse","text"}]} (Bible SuperSearch export)
+            if let h = try? FileHandle(forReadingFrom: url) {
+                defer { try? h.close() }
+                let head = String(decoding: h.readData(ofLength: 65536), as: UTF8.self)
+                if head.contains("\"verses\"") && (head.contains("\"metadata\"") || head.contains("\"book_name\"")) { return .superSearchJSON }
+            }
+            return .freeUseJSON
+        }
         guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? h.close() }
         let head = String(decoding: h.readData(ofLength: 8192), as: UTF8.self).lowercased()
@@ -67,7 +78,150 @@ public enum BibleImporter {
             return try w.finish()
         case .freeUseJSON:
             return try FreeUseBibleAPI.convertComplete(fileURL: first, into: directory, overrideInfo: info)
+        case .superSearchJSON:
+            return try SuperSearchJSONReader.importFile(first, into: directory, name: name, abbreviation: abbreviation)
+        case .ldbible:
+            return try BibleLibrary.installPackage(first, into: directory)
         }
+    }
+
+    /// Expands folders (and skips macOS metadata files) into the Bible files they contain.
+    public static func bibleFiles(in urls: [URL]) -> [URL] {
+        var out: [URL] = []
+        let fm = FileManager.default
+        for u in urls {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: u.path, isDirectory: &isDir) else { continue }
+            if isDir.boolValue {
+                guard u.lastPathComponent != "__MACOSX" else { continue }
+                let children = ((try? fm.contentsOfDirectory(at: u, includingPropertiesForKeys: nil)) ?? [])
+                    .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+                out += bibleFiles(in: children)
+            } else {
+                let name = u.lastPathComponent
+                guard !name.hasPrefix("."), !name.hasPrefix("._"), fileExtensions.contains(u.pathExtension.lowercased()) else { continue }
+                out.append(u)
+            }
+        }
+        return out
+    }
+
+    public struct BatchResult: Sendable {
+        public var imported: [BibleVersionInfo] = []
+        public var skipped: [String] = []        // already installed
+        public var failed: [String] = []         // "file: reason"
+    }
+
+    /// Imports many files: every single-file Bible separately, all USFM books together as one translation.
+    /// Versions already installed (same name and abbreviation) are skipped.
+    public static func importBatch(_ urls: [URL], into directory: URL, progress: ((String) -> Void)? = nil) -> BatchResult {
+        var result = BatchResult()
+        let files = bibleFiles(in: urls)
+        let usfm = files.filter { detect(url: $0) == .usfm }
+        let singles = files.filter { detect(url: $0) != .usfm }
+        let existing = BibleLibrary(directory: directory).installed()
+        func alreadyInstalled(_ name: String, _ abbr: String) -> Bool {
+            existing.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame && $0.abbreviation.caseInsensitiveCompare(abbr) == .orderedSame }
+        }
+        for (i, f) in singles.enumerated() {
+            progress?("Importing \(f.lastPathComponent) (\(i + 1) of \(singles.count))…")
+            if detect(url: f) == .superSearchJSON, let meta = SuperSearchJSONReader.peekMetadata(f),
+               alreadyInstalled(meta.name, meta.abbreviation) {
+                result.skipped.append("\(meta.abbreviation) — \(meta.name)")
+                continue
+            }
+            do { result.imported.append(try importFiles([f], into: directory)) }
+            catch { result.failed.append("\(f.lastPathComponent): \(error.localizedDescription)") }
+        }
+        if !usfm.isEmpty {
+            progress?("Importing \(usfm.count) USFM book files…")
+            do { result.imported.append(try importFiles(usfm, into: directory)) }
+            catch { result.failed.append("USFM: \(error.localizedDescription)") }
+        }
+        return result
+    }
+}
+
+// MARK: - Bible SuperSearch JSON ({"metadata":{…},"verses":[…]})
+
+public enum SuperSearchJSONReader {
+    struct File: Decodable {
+        struct Meta: Decodable {
+            var name: String?
+            var shortname: String?
+            var module: String?
+            var year: String?
+            var lang: String?
+            var lang_short: String?
+            var copyright_statement: String?
+            var rtl: Int?
+        }
+        struct Verse: Decodable {
+            var book_name: String?
+            var book: Int
+            var chapter: Int
+            var verse: Int
+            var text: String
+        }
+        var metadata: Meta?
+        var verses: [Verse]
+    }
+
+    /// Name and abbreviation without reading the whole file.
+    public static func peekMetadata(_ url: URL) -> (name: String, abbreviation: String)? {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? h.close() }
+        let head = String(decoding: h.readData(ofLength: 65536), as: UTF8.self)
+        func field(_ key: String) -> String? {
+            guard let r = head.range(of: "\"\(key)\":\"((?:[^\"\\\\]|\\\\.)*)\"", options: .regularExpression) else { return nil }
+            let raw = String(head[r]).dropFirst(key.count + 4).dropLast()
+            return (try? JSONDecoder().decode(String.self, from: Data(("\"" + raw + "\"").utf8))) ?? String(raw)
+        }
+        guard let name = field("name") else { return nil }
+        return (cleanName(name), abbreviation(field("shortname") ?? field("module") ?? name))
+    }
+
+    static func cleanName(_ s: String) -> String { s.replacingOccurrences(of: "®", with: "").trimmed }
+    static func abbreviation(_ s: String) -> String {
+        let t = s.replacingOccurrences(of: " Strongs", with: "+").replacingOccurrences(of: "Strongs", with: "+").trimmed
+        return String(t.prefix(12))
+    }
+
+    /// Screen-ready verse text: removes Strong's numbers {H1234} {(H8804)}, HTML/markup, pilcrows and
+    /// the square brackets some editions use for supplied words.
+    public static func cleanText(_ raw: String) -> String {
+        var t = raw
+        t = t.replacingOccurrences(of: "\\{\\(?[HGhg][0-9]+[a-zA-Z]?\\)?\\}", with: "", options: .regularExpression)   // Strong's / TVM codes
+        t = t.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        for mark in ["¶", "[", "]", "{", "}", "‹", "›"] { t = t.replacingOccurrences(of: mark, with: "") }   // pilcrows, supplied words, red-letter marks
+        t = t.replacingOccurrences(of: "([,;:!?.])([“‘])", with: "$1 $2", options: .regularExpression)                // "said,“Let" → "said, “Let"
+        t = t.replacingOccurrences(of: "&nbsp;", with: " ").replacingOccurrences(of: "&amp;", with: "&")
+        t = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        t = t.replacingOccurrences(of: " ([,.;:!?])", with: "$1", options: .regularExpression)
+        return t.trimmed
+    }
+
+    public static func importFile(_ url: URL, into directory: URL, name: String? = nil, abbreviation abbr: String? = nil) throws -> BibleVersionInfo {
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        let file: File
+        do { file = try JSONDecoder().decode(File.self, from: data) }
+        catch { throw PresentationKitError.badFormat("Bible JSON: \(error.localizedDescription)") }
+        let meta = file.metadata
+        let displayName = name?.trimmed.isEmpty == false ? name! : cleanName(meta?.name ?? url.deletingPathExtension().lastPathComponent)
+        let short = abbr?.trimmed.isEmpty == false ? abbr!.trimmed : abbreviation(meta?.shortname ?? meta?.module ?? url.deletingPathExtension().lastPathComponent)
+        let module = meta?.module ?? url.deletingPathExtension().lastPathComponent
+        var license = meta?.copyright_statement.map { WordLookup.stripHTML($0).trimmed } ?? ""
+        if license.isEmpty { license = "Imported by the user — ensure you are licensed to use this translation." }
+        let info = BibleVersionInfo(id: BibleLibrary.uniqueID(for: "user-" + module, in: directory), name: displayName, abbreviation: short,
+                                    language: meta?.lang_short ?? "", languageName: meta?.lang ?? "", license: license,
+                                    source: BibleFileFormat.superSearchJSON.rawValue + " file", rightToLeft: (meta?.rtl ?? 0) == 1)
+        let w = try BibleWriter(info: info, destination: BibleLibrary.fileURL(info.id, in: directory))
+        var named = Set<Int>()
+        for v in file.verses {
+            if !named.contains(v.book), let n = v.book_name { w.setBookName(v.book, n); named.insert(v.book) }
+            w.add(book: v.book, chapter: v.chapter, verse: v.verse, text: cleanText(v.text))
+        }
+        return try w.finish()
     }
 }
 

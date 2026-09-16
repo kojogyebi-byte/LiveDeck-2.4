@@ -139,6 +139,27 @@ public final class BibleLibrary {
         return id
     }
 
+    /// Copies a ready-made .ldbible file into the library (keeping its id unless it is taken).
+    public static func installPackage(_ url: URL, into directory: URL) throws -> BibleVersionInfo {
+        var info = try BibleStore(url: url).info
+        let fm = FileManager.default
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let installed = BibleLibrary(directory: directory).installed()
+        if installed.contains(where: { $0.name == info.name && $0.abbreviation == info.abbreviation && $0.verseCount == info.verseCount }) {
+            throw PresentationKitError.badFormat("\(info.abbreviation) is already installed")
+        }
+        let newID = fm.fileExists(atPath: fileURL(info.id, in: directory).path) ? uniqueID(for: info.id, in: directory) : sanitize(info.id)
+        let dest = fileURL(newID, in: directory)
+        try fm.copyItem(at: url, to: dest)
+        if newID != info.id {
+            let db = try SQLiteDB(path: dest.path)
+            try db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('id', ?)", [.text(newID)])
+            db.close()
+            info.id = newID
+        }
+        return info
+    }
+
     /// Installed versions (reads only the small meta table of each file).
     public func installed() -> [BibleVersionInfo] {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []

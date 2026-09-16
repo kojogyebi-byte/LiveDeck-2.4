@@ -1,4 +1,11 @@
-# LiveDeck Studio (macOS) — v4.9.0
+# LiveDeck Studio (macOS) — v4.9.1
+
+**4.9.1 — English Bibles included:**
+- Nine English Bibles now ship inside the app and are added to the Bible library on first launch: **KJV** (Authorized King James Version), **KJV+** (KJV with Strong's — numbers removed for display), **ASV**, **ASVs** (ASV with Strong's), **WEB** (World English Bible), **NET** (NET Bible®), **Geneva** (1587), **Coverdale** (1535) and **Tyndale** (1534; Pentateuch, Jonah and New Testament). Text is cleaned for the screen (Strong's codes, red-letter marks, pilcrows and supplied-word brackets removed) and fully searchable.
+- New importer for **Bible SuperSearch JSON** (`{"metadata":…,"verses":[…]}`), plus batch import: choose many files, a folder, or a **.zip** — or drop them on the Bible area. Already-installed versions are skipped; `.ldbible` files install directly.
+- Workflow copies `Resources/Bibles` into the app bundle. **80 automated tests.**
+- Licence note: the NET Bible text is free for non-commercial use with acknowledgement of Biblical Studies Press; the others are public domain.
+
 
 **New in 4.9:**
 - **Bible search assistant** — one box for references and words. Books and references complete as you type (“1 jo”, “ii cor”, “ps 23”), famous passages appear for a book or theme (love, healing, fear…), and words show matching verses best-first with highlights, phrase completion (“the lord is my” → “the lord is my shepherd”), book filter chips, ↑↓/Return/Tab/Esc, exact phrases in quotes, and right-click to open with the next verses or the whole chapter.
