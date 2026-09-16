@@ -1,4 +1,6 @@
-# LiveDeck Studio (macOS) — v4.8.0
+# LiveDeck Studio (macOS) — v4.8.1
+
+**4.8.1 (build fix):** `UI.swift` now imports `PresentationKit` (needed for the new keyboard-shortcut dispatcher: `KeyCombo`, `ShortcutCatalog`).
 
 **New in 4.8:**
 - **Playlist input** — one holder that plays videos, audio and images in order (Add Input → Playlist). Drop files/folders, Add files…, From library, or right-click a Media item → Add to playlist. Auto-advance, loop, shuffle, per-image duration, start when taken to Program, reorder, disable, play now / cue; tile transport ◀ ▶ ▶▶ with item number; audio routed through the mixer; save/open named playlists (`Library/playlists.json`); saved in presets.
