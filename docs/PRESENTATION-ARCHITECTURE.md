@@ -598,16 +598,16 @@ Songs and scripture data were moved ahead of the slide editor: a church service 
 |---|---|---|
 | 3.18 | No autoplay on add; TV-black blank holders | Visual check (done) |
 | **4.0-a** (app version 4.0.0) | `PresentationKit` library target + unit tests in CI; data model; document library (autosave, versions, trash, folders, tags, favourites, recents, search); **songs** (type/paste, import plain text · SongSelect .txt/.usr · ChordPro · OpenLyrics · OpenSong, arrangements, slide generation); **Bibles** (unlimited versions, 1000+ free translations downloadable in-app, import Zefania · OSIS · USFM · CSV/TSV · Free Use JSON, reference parser, passage lookup, word search, slide splitting); PRESENT workspace; input tiles always 16:9 | Add/import songs; install 2+ Bibles; look up passages; relaunch keeps everything |
-| 4.0-b | Slide renderer (Core Text), themes (Standard / Lower third key), **live control** (preview, go live, next/prev, clear layers, keyboard), **Presentation as an input** + fullscreen presentation output; send songs and scripture live | Lyrics and scripture on Program and on a display |
-| 4.1 | Service plans (running order, reorder/duplicate/rename/collapse/search, auto-advance) + LiveState crash recovery | Kill the app mid-service → relaunch restores live cue |
-| 4.2 | Render thread move (R2); key/DSK alpha; key/fill on two outputs; video & image backgrounds; media audio into the mixer | Transparent lyrics over camera on the stream; clip audio recorded |
-| 4.3 | Theme editor + slide editor (text/images/shapes, snapping, grid, safe areas, undo) for announcements & general presentations | Build an announcement loop by hand |
-| 4.4 | OutputManager (display-UUID outputs) + stage display layouts, timers, stage messages | LED + confidence + stream with different content |
-| 4.5 | Broadcast graphics (lower thirds, logos, social, speaker) as themeable presentations with build-in/out | Lower third + lyrics + logo together |
-| 4.6 | Remote control (WebSocket + HTTP triggers), phone web remote, network stage page | Phone drives slides and switcher |
-| 4.7 | Metal compositor (R3), performance HUD, soak-test mode | 1080p30 service config for 4 h without drops on the reference Mac |
-| 4.8 | NDI in/out with alpha — once the NDI SDK headers are supplied | NDI monitor receives presentation key |
-| 4.9 | Hardening: 8-hour soak, memory audit, GPU fallback | Production checklist signed off |
+| **4.1** (app version 4.1.0; absorbed 4.0-b) | **Single page:** Songs & Bible and Dictionary are tabs under Preview/Program; slide renderer (Core Text); **Presentation input** and **Dictionary input** as normal switcher inputs; **looks** (full formatting: colour/gradient/image/looping-video backgrounds + darken, font/size/B-I-U/colour/alignment/case/line & letter spacing/outline/shadow for text, title and reference; area presets + custom; margins; box/band; verse numbers; lines & characters per slide; fade) with saved looks; **live control** (click slide, ←/→, Page Up/Down clickers, clear text/background, Preview/Program/**Key over Program** downstream key with fade); **dictionary providers** (macOS, Free Dictionary API, Wiktionary, Datamuse thesaurus, Wikipedia, imported CSV/TSV/JSON dictionaries); professional control redesign (design system); 8 default inputs; outputs inline panel; borderless full-screen Program Out; hotkeys suspended while typing | Lyrics and scripture on Program and keyed over a camera; dictionary card to Program; relaunch keeps saved looks |
+| 4.2 | Render thread move (R2); key/alpha hardening; key/fill on two outputs; media audio into the mixer | Transparent lyrics over camera on the stream for 2 h; clip audio recorded |
+| 4.3 | Service plans (running order, reorder/duplicate/rename/collapse/search, auto-advance) + LiveState crash recovery | Kill the app mid-service → relaunch restores live cue |
+| 4.4 | Slide editor (text/images/shapes, snapping, grid, safe areas, undo) for announcements & general presentations | Build an announcement loop by hand |
+| 4.5 | OutputManager (display-UUID outputs) + stage display layouts, timers, stage messages | LED + confidence + stream with different content |
+| 4.6 | Broadcast graphics (lower thirds, logos, social, speaker) as themeable presentations with build-in/out | Lower third + lyrics + logo together |
+| 4.7 | Remote control (WebSocket + HTTP triggers), phone web remote, network stage page | Phone drives slides and switcher |
+| 4.8 | Metal compositor (R3), performance HUD, soak-test mode | 1080p30 service config for 4 h without drops on the reference Mac |
+| 4.9 | NDI in/out with alpha — once the NDI SDK headers are supplied | NDI monitor receives presentation key |
+| 5.0 | Hardening: 8-hour soak, memory audit, GPU fallback | Production checklist signed off |
 
 ## 13. Risk assessment
 
@@ -698,7 +698,9 @@ Based only on publicly observable behaviour common to professional presentation 
 ## 17. Decisions (answered)
 
 1. **Roadmap** — assistant's choice: the order in §12 (songs & scripture data first, then live control).
-2. **Workspace** — a separate **PRESENT** workspace, switched from the top bar (PRODUCTION · PRESENT). Production hotkeys are disabled while in PRESENT so typing lyrics can never trigger a cut.
+2. **Workspace** — *revised in 4.1 at the user's request:* Present and Production share **one page**. Songs & Bible and Dictionary are tabs in the lower deck beneath Preview/Program; their output is a **Presentation input** / **Dictionary input** on the switcher, so it can go to Preview, Program, or be keyed over Program. Hotkeys are handled by a key monitor that ignores keys while any text field has focus, so typing lyrics can never trigger a cut.
+6. **Dictionaries (4.1)** — user chooses the provider: macOS Dictionary (offline), Free Dictionary API (English), Wiktionary (many languages), Datamuse thesaurus, Wikipedia (encyclopedia), or dictionaries the church imports (CSV/TSV/JSON, e.g. a public-domain Bible dictionary). No bundled licensed dictionaries.
+7. **Looks (4.1)** — formatting lives in a `SlideLook` per slide input (`PresentationKit/Look.swift`), saved looks in `Library/looks.json`. Sizes are 1080p points scaled to the output resolution.
 3. **Bibles** — unlimited versions, future additions at any time. Chosen storage format: **one SQLite file per version (`*.ldbible`)** in `Library/Bibles/` — compact, opens instantly, only the verses on screen are loaded, full-text search via FTS5 (LIKE fallback). Sources:
    - **In-app download** of 1000+ translations from the **Free Use Bible API** (bible.helloao.org — no key, no usage restrictions; downloaded once, used offline).
    - **Import** of Zefania XML, OSIS XML, USFM (book files), CSV/TSV and Free Use Bible JSON — for any translation the church is licensed to use (e.g. commercial translations that are not freely distributable).

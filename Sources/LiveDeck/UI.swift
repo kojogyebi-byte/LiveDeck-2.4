@@ -4,61 +4,54 @@ import AppKit
 import UniformTypeIdentifiers
 
 // vMix-ish palette
-private let cBG = Color(red: 0.10, green: 0.10, blue: 0.12)
-private let cPanel = Color(red: 0.14, green: 0.14, blue: 0.17)
-private let cBar = Color(red: 0.17, green: 0.17, blue: 0.20)
-private let cPreview = Color(red: 0.88, green: 0.55, blue: 0.18)
-private let cProgram = Color(red: 0.18, green: 0.70, blue: 0.30)
-private let cBtn = Color(white: 0.20)
+private let cBG = DS.bg0
+private let cPanel = DS.bg1
+private let cBar = DS.bg2
+private let cPreview = DS.accent      // selection / active accent
+private let cProgram = DS.ok          // "on / OK" green (tally colours are DS.program / DS.preview)
+private let cBtn = DS.bg3
 
 private let pipNoneTag = UUID()
 
 struct MainView: View {
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var dict: DictionaryModel
     @State private var showStream = false
-    @State private var showOutputs = false
     @State private var dropTargeted = false
     var body: some View {
         VStack(spacing: 0) {
             TopBar(showStream: $showStream)
-            if present.workspace == .present {
-                PresentWorkspace()
-            } else {
             HSplitView {
                 GeometryReader { geo in
-                    // Monitors sized to a natural 16:9 fit (capped); the input region fills the rest.
-                    let monH = min(geo.size.height * 0.6, geo.size.width * 0.30)
+                    // Monitors keep 16:9; the lower deck (inputs / songs & Bible / dictionary) fills the rest.
+                    let monH = min(geo.size.height * 0.5, geo.size.width * 0.265)
                     VStack(spacing: 0) {
-                        HStack(spacing: 6) {
-                            MonitorPane(title: previewName, accent: cPreview, isProgram: false)
+                        HStack(spacing: 8) {
+                            MonitorPane(title: previewName, accent: DS.preview, isProgram: false)
                             TransitionColumn()
-                            MonitorPane(title: programName, accent: engine.isRecording ? .red : cProgram, isProgram: true)
+                            MonitorPane(title: programName, accent: DS.program, isProgram: true)
                         }
-                        .padding(6).frame(height: monH)
-                        InputBus().frame(maxHeight: .infinity)
+                        .padding(8).frame(height: monH)
+                        LowerDeck().frame(maxHeight: .infinity)
                     }
                 }
-                RightPanel().frame(minWidth: 240, idealWidth: 300, maxWidth: 480)
+                RightPanel().frame(minWidth: 280, idealWidth: 320, maxWidth: 480)
             }
-            StatusBar(showOutputs: $showOutputs)
-            }
+            StatusBar()
         }
-        .background(cBG).preferredColorScheme(.dark)
-        .overlay { if dropTargeted { Rectangle().stroke(cProgram, lineWidth: 3).allowsHitTesting(false) } }
-        .overlay(alignment: .topLeading) {
-            // Production hotkeys are single keys; they must not fire while typing lyrics in PRESENT.
-            if present.workspace == .production { HotKeys().frame(width: 0, height: 0) }
-        }
+        .background(DS.bg0).preferredColorScheme(.dark)
+        .background(WindowChrome())
+        .overlay { if dropTargeted { Rectangle().stroke(DS.accent, lineWidth: 3).allowsHitTesting(false) } }
+        .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
         .sheet(isPresented: $showStream) { StreamSettingsView() }
-        .sheet(isPresented: $showOutputs) { OutputsView() }
+        .onAppear { present.engine = engine; dict.engine = engine }
     }
     var previewName: String { engine.sources.first { $0.id == engine.previewID }?.name ?? "Preview" }
     var programName: String { engine.sources.first { $0.id == engine.programID }?.name ?? "Program" }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard present.workspace == .production else { return false }   // PRESENT uses Import… buttons
         var accepted = false
         for p in providers where p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             accepted = true
@@ -82,31 +75,78 @@ func keyEquivFromName(_ s: String) -> KeyEquivalent? {
     }
 }
 
-struct HotKeys: View {
+/// Single-key production shortcuts + slide stepping. Implemented with a local key monitor that
+/// ignores keys while any text field or editor has focus, so typing lyrics, song searches or
+/// references can never trigger a cut, recording or stream.
+struct HotKeys: NSViewRepresentable {
     @EnvironmentObject var engine: Engine
-    var body: some View {
-        ZStack {
-            ForEach(1...9, id: \.self) { n in
-                Button("") { stage(n - 1) }.keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: [])
+    @EnvironmentObject var present: PresentModel
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeNSView(context: Context) -> NSView {
+        context.coordinator.engine = engine
+        context.coordinator.present = present
+        context.coordinator.install()
+        return NSView(frame: .zero)
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.engine = engine
+        context.coordinator.present = present
+    }
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) { coordinator.remove() }
+
+    final class Coordinator {
+        weak var engine: Engine?
+        weak var present: PresentModel?
+        private var monitor: Any?
+
+        func install() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
+                (self?.handle(ev) ?? false) ? nil : ev
             }
-            hk("take") { engine.runTransition() }
-            hk("cut") { engine.cut() }
-            hk("ftb") { engine.toggleFTB() }
-            hk("record") { engine.toggleRecording() }
-            hk("snapshot") { engine.snapshot() }
-            hk("stream") { engine.toggleStream(nil) }
         }
-        .opacity(0).accessibilityHidden(true)
-    }
-    @ViewBuilder func hk(_ action: String, _ run: @escaping () -> Void) -> some View {
-        if let k = engine.hotkeys[action], let ke = keyEquivFromName(k) {
-            Button("", action: run).keyboardShortcut(ke, modifiers: [])
+        func remove() { if let m = monitor { NSEvent.removeMonitor(m) }; monitor = nil }
+
+        private func matches(_ name: String?, _ ev: NSEvent) -> Bool {
+            guard let name, name != "None", !name.isEmpty else { return false }
+            switch name {
+            case "Return": return ev.keyCode == 36 || ev.keyCode == 76
+            case "Space": return ev.keyCode == 49
+            default: return (ev.charactersIgnoringModifiers ?? "").uppercased() == name.uppercased()
+            }
         }
-    }
-    func stage(_ i: Int) {
-        guard engine.sources.indices.contains(i) else { return }
-        let s = engine.sources[i]
-        if !s.isPlaceholder { engine.setPreview(s.id); engine.selectedSourceID = s.id }
+
+        func handle(_ ev: NSEvent) -> Bool {
+            guard let engine, let window = NSApp.keyWindow, window === NSApp.mainWindow, window.attachedSheet == nil else { return false }
+            if !ev.modifierFlags.intersection([.command, .control, .option]).isEmpty { return false }
+            let responder = window.firstResponder
+            if responder is NSText || responder is NSTextView { return false }
+
+            // Slide clickers / arrows: Page Up/Down anywhere; ← → when the Songs & Bible tab is open.
+            if let present {
+                let arrowsOK = present.deck == DeckTab.present.rawValue && !(responder is NSTableView)
+                switch ev.keyCode {
+                case 121: present.step(1); return true                       // Page Down
+                case 116: present.step(-1); return true                      // Page Up
+                case 124 where arrowsOK: present.step(1); return true       // →
+                case 123 where arrowsOK: present.step(-1); return true      // ←
+                default: break
+                }
+            }
+            if let ch = ev.charactersIgnoringModifiers, let n = Int(ch), (1...9).contains(n) {
+                guard engine.sources.indices.contains(n - 1) else { return false }
+                let src = engine.sources[n - 1]
+                if !src.isPlaceholder { engine.setPreview(src.id); engine.selectedSourceID = src.id }
+                return true
+            }
+            let map: [(String, () -> Void)] = [
+                ("take", { engine.runTransition() }), ("cut", { engine.cut() }), ("ftb", { engine.toggleFTB() }),
+                ("record", { engine.toggleRecording() }), ("snapshot", { engine.snapshot() }), ("stream", { engine.toggleStream(nil) })
+            ]
+            for (action, run) in map where matches(engine.hotkeys[action], ev) { run(); return true }
+            return false
+        }
     }
 }
 
@@ -171,26 +211,44 @@ struct SystemStatsView: View {
 
 struct TopBar: View {
     @EnvironmentObject var engine: Engine
-    @EnvironmentObject var present: PresentModel
     @Binding var showStream: Bool
     var body: some View {
-        HStack(spacing: 8) {
-            Text("LIVE").font(.system(size: 16, weight: .heavy)) + Text("DECK").font(.system(size: 16, weight: .heavy)).foregroundColor(cPreview)
-            Picker("", selection: $present.workspace) {
-                ForEach(Workspace.allCases) { w in Text(w.rawValue).tag(w) }
+        HStack(spacing: 10) {
+            HStack(spacing: 0) {
+                Text("LIVE").font(.system(size: 15, weight: .black)).foregroundColor(DS.text)
+                Text("DECK").font(.system(size: 15, weight: .black)).foregroundColor(DS.program)
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 210)
-            .help("PRODUCTION = switcher, audio, outputs · PRESENT = songs, Bibles, slides")
-            Divider().frame(height: 18)
-            TBtn("Open") { engine.loadShow() }
-            TBtn("Save") { engine.saveShow() }
+            .kerning(0.5)
+            Text("STUDIO").font(.system(size: 8, weight: .bold)).kerning(2).foregroundColor(DS.text3)
+            Rectangle().fill(DS.line).frame(width: 1, height: 20)
+            DSIconButton(symbol: "folder", help: "Open show…") { engine.loadShow() }
+            DSIconButton(symbol: "square.and.arrow.down", help: "Save show…") { engine.saveShow() }
             Spacer()
-            TBtn("Fullscreen", tint: cProgram) { engine.openOutputWindow() }
-            TBtn("STREAM", tint: .red) { showStream = true }
-            TBtn(engine.isRecording ? "● REC" : "REC", tint: .red, filled: engine.isRecording) { engine.toggleRecording() }
+            Button { engine.openOutputWindow() } label: {
+                Label(engine.programWindowActive ? "PROGRAM OUT · ON" : "PROGRAM OUT", systemImage: "rectangle.inset.filled")
+            }
+            .buttonStyle(.ds(.normal, .regular, active: engine.programWindowActive))
+            .help("Full-screen Program on the second display (no title bar). Esc or double-click to close.")
+            Button { showStream = true } label: {
+                HStack(spacing: 6) {
+                    Circle().fill(engine.isStreaming ? Color.white : DS.program).frame(width: 7, height: 7)
+                    Text(engine.isStreaming ? "LIVE" : "STREAM")
+                }
+            }
+            .buttonStyle(.ds(.program, .regular, active: engine.isStreaming))
+            Button { engine.toggleRecording() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: engine.isRecording ? "stop.fill" : "record.circle")
+                    Text(engine.isRecording ? String(format: "REC %02d:%02d:%02d", engine.recordSeconds / 3600, (engine.recordSeconds % 3600) / 60, engine.recordSeconds % 60) : "REC")
+                        .font(DS.mono(11, .semibold))
+                }
+            }
+            .buttonStyle(.ds(.program, .regular, active: engine.isRecording))
             Spacer()
             SystemStatsView()
-            Text("\(engine.width)×\(engine.height)").font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+            Text("\(engine.height)p\(engine.fpsTarget)").font(DS.mono(11)).foregroundColor(DS.text2)
+                .padding(.horizontal, 7).frame(height: 22)
+                .background(RoundedRectangle(cornerRadius: 4).fill(DS.bg0))
             Menu {
                 Menu("Resolution") {
                     checkButton("720p", engine.height == 720) { engine.setResolution(width: 1280, height: 720) }
@@ -222,9 +280,12 @@ struct TopBar: View {
                 checkButton("Mix input faders into recording & stream", engine.mixInputsIntoRecording) { engine.mixInputsIntoRecording.toggle() }
                 Button("Choose recording folder…") { engine.chooseOutputFolder() }
                 Button("Reveal last recording") { engine.revealLastRecording() }
-            } label: { Image(systemName: "gearshape") }.frame(width: 34)
+            } label: { Image(systemName: "gearshape.fill").foregroundColor(DS.text2) }
+            .menuStyle(.borderlessButton).fixedSize().frame(width: 30)
         }
-        .padding(.horizontal, 12).frame(height: 44).background(cBar)
+        .padding(.horizontal, 12).frame(height: 46)
+        .background(DS.bg2)
+        .overlay(Rectangle().fill(DS.line).frame(height: 1), alignment: .bottom)
         .sheet(isPresented: Binding(get: { engine.showHotkeys }, set: { engine.showHotkeys = $0 })) { HotkeysView() }
     }
 }
@@ -252,13 +313,21 @@ struct MonitorPane: View {
     var title: String; var accent: Color; var isProgram: Bool
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(isProgram ? title : title).font(.system(size: 11, weight: .bold)).foregroundColor(.white)
+            HStack(spacing: 8) {
+                Text(isProgram ? "PROGRAM" : "PREVIEW")
+                    .font(.system(size: 10, weight: .heavy)).kerning(1.2).foregroundColor(.white)
+                    .padding(.horizontal, 7).frame(height: 18)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(accent))
+                Text(title).font(.system(size: 11, weight: .semibold)).foregroundColor(DS.text).lineLimit(1)
                 Spacer()
-                Text(isProgram ? (engine.isRecording ? "REC" : "PGM") : "PRV")
-                    .font(.system(size: 9, weight: .heavy)).foregroundColor(.white.opacity(0.9))
+                if isProgram && engine.isRecording {
+                    HStack(spacing: 4) { Circle().fill(DS.program).frame(width: 6, height: 6); Text("REC").font(DS.caption).foregroundColor(DS.program) }
+                }
+                if isProgram && engine.isStreaming {
+                    HStack(spacing: 4) { Circle().fill(DS.program).frame(width: 6, height: 6); Text("LIVE").font(DS.caption).foregroundColor(DS.program) }
+                }
             }
-            .padding(.horizontal, 8).frame(height: 22).background(accent)
+            .padding(.horizontal, 8).frame(height: 28).background(DS.bg2)
             ZStack {
                 if isProgram { ProgramMonitorView() } else { PreviewMonitorView() }
                 if isProgram && engine.showSafeGuides {
@@ -272,7 +341,9 @@ struct MonitorPane: View {
             .aspectRatio(16.0 / 9.0, contentMode: .fit)
             .background(Color.black)
         }
-        .background(cPanel).overlay(Rectangle().stroke(accent, lineWidth: 2))
+        .background(DS.bg1)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(accent.opacity(0.9), lineWidth: 2))
     }
 }
 
@@ -293,34 +364,33 @@ struct TransitionColumn: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         VStack(spacing: 6) {
-            XBtn("Cut", color: cProgram) { engine.cut() }
-            XBtn("Take", color: cPreview) { engine.runTransition() }
-            XBtn("Fade", color: engine.transition == .fade ? cPreview : cBtn) { engine.quickTransition(.fade) }
-            XBtn("Wipe", color: engine.transition == .wipe ? cPreview : cBtn) { engine.quickTransition(.wipe) }
-            XBtn("Slide", color: engine.transition == .slide ? cPreview : cBtn) { engine.quickTransition(.slide) }
-            XBtn("Zoom", color: engine.transition == .zoom ? cPreview : cBtn) { engine.quickTransition(.zoom) }
-            XBtn("FTB", color: engine.ftbOn ? .red : cBtn) { engine.toggleFTB() }
-            Divider()
-            VStack(spacing: 4) {
-                Text("T-BAR").font(.system(size: 8, weight: .bold)).foregroundColor(.secondary)
-                Slider(value: Binding(get: { engine.tbar }, set: { engine.setTBar($0) }), in: 0...1)
-                Text("SPEED \(String(format: "%.1fs", engine.transitionDuration))").font(.system(size: 8, weight: .bold)).foregroundColor(.secondary)
-                Slider(value: $engine.transitionDuration, in: 0.2...2.0)
+            Button("CUT") { engine.cut() }.buttonStyle(.ds(.normal, .large, fullWidth: true))
+                .help("Cut Preview to Program")
+            Button("AUTO") { engine.runTransition() }.buttonStyle(.ds(.program, .large, active: true, fullWidth: true))
+                .help("Run the selected transition")
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)], spacing: 4) {
+                trans("Fade", .fade); trans("Wipe", .wipe); trans("Slide", .slide); trans("Zoom", .zoom)
             }
+            TBarControl(value: engine.tbar) { engine.setTBar($0) }
+                .frame(minHeight: 50, maxHeight: .infinity)
+                .help("Drag down to transition manually")
+            ParamSlider(label: "Duration", value: $engine.transitionDuration, range: 0.2...2.0, defaultValue: 0.6, format: "%.1fs")
+            Button("FTB") { engine.toggleFTB() }.buttonStyle(.ds(.danger, .regular, active: engine.ftbOn, fullWidth: true))
+                .help("Fade to black")
             VStack(spacing: 1) {
                 ClockText()
                 Text(String(format: "%02d:%02d:%02d", engine.recordSeconds / 3600, (engine.recordSeconds % 3600) / 60, engine.recordSeconds % 60))
-                    .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+                    .font(DS.mono(10)).foregroundColor(DS.text3)
             }
-            .padding(6).frame(maxWidth: .infinity).background(Color.black).cornerRadius(4)
+            .padding(.vertical, 5).frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 4).fill(DS.bg0))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(DS.lineSoft, lineWidth: 1))
         }
-        .frame(width: 96).padding(.vertical, 22)
+        .frame(width: 112)
     }
-    func XBtn(_ t: String, color: Color = cBtn, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(t).font(.system(size: 11, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 7)
-                .background(color).foregroundColor(.white).cornerRadius(4)
-        }.buttonStyle(.plain)
+    func trans(_ t: String, _ kind: TransitionType) -> some View {
+        Button(t) { engine.quickTransition(kind) }
+            .buttonStyle(.ds(.normal, .small, active: engine.transition == kind, fullWidth: true))
     }
 }
 
@@ -352,21 +422,44 @@ func bestInputGrid(count: Int, area: CGSize, sizeMul: CGFloat) -> (cols: Int, ti
     return (best.cols, tileW, tileW * 9.0 / 16.0)
 }
 
+/// Lower half of the window: the input bus, the Songs & Bible operator and the Dictionary —
+/// all on the same page as Preview / Program.
+struct LowerDeck: View {
+    @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                DSTabBar(selection: $present.deck, items: [
+                    DSTabItem(id: DeckTab.inputs.rawValue, title: "Inputs", icon: "square.grid.2x2"),
+                    DSTabItem(id: DeckTab.present.rawValue, title: "Songs & Bible", icon: "music.note.list"),
+                    DSTabItem(id: DeckTab.dictionary.rawValue, title: "Dictionary", icon: "character.book.closed")
+                ])
+                .frame(width: 420)
+                Spacer()
+                if present.deck == DeckTab.inputs.rawValue {
+                    AddInputMenu()
+                    Button("Playlist") { engine.playlistEnabled.toggle() }
+                        .buttonStyle(.ds(.normal, .small, active: engine.playlistEnabled))
+                        .help("Auto-advance the Program through video/audio inputs as each clip ends")
+                    Image(systemName: "rectangle.grid.2x2").font(.system(size: 10)).foregroundColor(DS.text3)
+                    Slider(value: $engine.inputTileScale, in: 0.6...1.6).controlSize(.mini).frame(width: 110)
+                }
+            }
+            .padding(.horizontal, 8).frame(height: 40).background(DS.bg2)
+            .overlay(Rectangle().fill(DS.lineSoft).frame(height: 1), alignment: .bottom)
+            if present.deck == DeckTab.present.rawValue { PresentDeck() }
+            else if present.deck == DeckTab.dictionary.rawValue { DictionaryDeck() }
+            else { InputBus() }
+        }
+        .background(DS.bg1)
+    }
+}
+
 struct InputBus: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                AddInputMenu()
-                Text("INPUTS").font(.system(size: 9, weight: .heavy)).kerning(2).foregroundColor(.secondary)
-                Spacer()
-                Toggle("Playlist", isOn: $engine.playlistEnabled)
-                    .toggleStyle(.button).font(.system(size: 10))
-                    .help("Auto-advance the Program through video/audio inputs as each clip ends")
-                Text("SIZE").font(.system(size: 9, weight: .heavy)).foregroundColor(.secondary)
-                Slider(value: $engine.inputTileScale, in: 0.6...1.6).frame(width: 120)
-            }
-            .padding(.horizontal, 8).frame(height: 22).background(cBar)
             GeometryReader { geo in
                 let n = max(1, engine.sources.count)
                 let g = bestInputGrid(count: n, area: geo.size, sizeMul: CGFloat(engine.inputTileScale))
@@ -392,6 +485,8 @@ let videoFileTypes = ["public.movie", "public.video", "public.audiovisual-conten
 
 struct InputAssignMenu<Label: View>: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var dict: DictionaryModel
     var slotID: UUID
     @ViewBuilder var label: () -> Label
     @State private var devices: [AVCaptureDevice] = []
@@ -413,6 +508,15 @@ struct InputAssignMenu<Label: View>: View {
             Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
             Button("Colour") { engine.replaceSource(slotID, with: ColorSource()) }
             Button("Test Pattern (Bars)") { engine.replaceSource(slotID, with: BarsSource()) }
+            Divider()
+            Button("Songs & Bible (Presentation)") {
+                let s = PresentationSource(); engine.replaceSource(slotID, with: s)
+                present.targetID = s.id; present.deck = DeckTab.present.rawValue
+            }
+            Button("Dictionary") {
+                let s = DictionarySource(); engine.replaceSource(slotID, with: s)
+                dict.targetID = s.id; present.deck = DeckTab.dictionary.rawValue
+            }
         } label: { label() }
         .onAppear { if devices.isEmpty { devices = VideoDevices.all() } }
     }
@@ -421,13 +525,14 @@ struct InputAssignMenu<Label: View>: View {
 struct TileTransport<S: MediaPlayback>: View {
     @ObservedObject var source: S
     var body: some View {
-        HStack(spacing: 12) {
-            Button { source.restart() } label: { Image(systemName: "backward.end.fill").font(.system(size: 16)) }.buttonStyle(.plain)
+        HStack(spacing: 9) {
+            Button { source.restart() } label: { Image(systemName: "backward.end.fill").font(.system(size: 12)) }
+                .buttonStyle(.plain).foregroundColor(DS.text2)
             Button { source.togglePlay() } label: {
-                Image(systemName: source.paused ? "play.fill" : "pause.fill").font(.system(size: 20))
-            }.buttonStyle(.plain).foregroundColor(cPreview)
+                Image(systemName: source.paused ? "play.fill" : "pause.fill").font(.system(size: 15))
+            }.buttonStyle(.plain).foregroundColor(DS.text)
             Button { source.loop.toggle() } label: {
-                Image(systemName: "repeat").font(.system(size: 15)).foregroundColor(source.loop ? cProgram : .secondary)
+                Image(systemName: "repeat").font(.system(size: 12)).foregroundColor(source.loop ? DS.accent : DS.text3)
             }.buttonStyle(.plain)
         }
     }
@@ -435,31 +540,39 @@ struct TileTransport<S: MediaPlayback>: View {
 
 struct InputTile: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var dict: DictionaryModel
     var index: Int
     @ObservedObject var source: Source
     var tileW: CGFloat = 176
     var screenH: CGFloat? = nil
     var isProgram: Bool { engine.programID == source.id }
     var isPreview: Bool { engine.previewID == source.id }
-    var border: Color { source.isPlaceholder ? Color(white: 0.14) : (isProgram ? .red : isPreview ? cProgram : Color(white: 0.25)) }
+    var isKeyed: Bool { engine.isKeyed(source.id) }
+    var tally: Color { isProgram ? DS.program : (isPreview ? DS.preview : (isKeyed ? DS.amber : DS.line)) }
     var th: CGFloat { tileW * 9.0 / 16.0 }   // always 16:9, whatever the window size
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                Text("\(index)").font(.system(size: 9, weight: .heavy))
-                    .frame(width: 16, height: 16).background(border).cornerRadius(2)
-                Text(source.isPlaceholder ? "Empty" : source.name).font(.system(size: 10))
-                    .foregroundColor(source.isPlaceholder ? .secondary : .primary).lineLimit(1)
+            HStack(spacing: 5) {
+                Text("\(index)").font(DS.mono(9, .bold))
+                    .foregroundColor(isProgram || isPreview || isKeyed ? .white : DS.text2)
+                    .frame(minWidth: 16, minHeight: 16)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(isProgram || isPreview || isKeyed ? tally : DS.bg4))
+                Text(source.isPlaceholder ? "Empty" : source.name).font(.system(size: 10, weight: .medium))
+                    .foregroundColor(source.isPlaceholder ? DS.text3 : DS.text).lineLimit(1)
                 Spacer()
+                if !source.isPlaceholder {
+                    Text(source.kindLabel).font(.system(size: 8, weight: .bold)).kerning(0.6).foregroundColor(DS.text3)
+                }
                 if source.sourceURLString != nil {
                     Button { engine.openEditStream(source.id) } label: { Image(systemName: "pencil").font(.system(size: 9)) }
-                        .buttonStyle(.plain).foregroundColor(.secondary)
+                        .buttonStyle(.plain).foregroundColor(DS.text3)
                 }
-                Button { engine.removeSource(source.id) } label: { Image(systemName: "xmark").font(.system(size: 8)) }
-                    .buttonStyle(.plain).foregroundColor(.secondary)
+                Button { engine.removeSource(source.id) } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
+                    .buttonStyle(.plain).foregroundColor(DS.text3)
             }
-            .frame(width: tileW).padding(.horizontal, 5).frame(height: 20).background(cBar)
+            .padding(.horizontal, 5).frame(width: tileW, height: 20).background(DS.bg2)
 
             if source.isPlaceholder {
                 // Blank holder = a switched-off TV: a black 16:9 screen, with a discreet assign
@@ -474,36 +587,55 @@ struct InputTile: View {
                     .help("Assign an input to this slot (or drop a file on the window)")
                 }
                 .frame(width: tileW, height: th)
-                cBar.frame(width: tileW, height: inputTileChrome - 20)
+                DS.bg2.frame(width: tileW, height: inputTileChrome - 20)
             } else {
                 SourceThumb(source: source)
                     .frame(width: tileW, height: th).background(Color.black)
                     .onTapGesture(count: 2) { engine.setPreview(source.id); engine.cut() }
-                    .onTapGesture { engine.setPreview(source.id); engine.selectedSourceID = source.id }
+                    .onTapGesture { select() }
                     .contextMenu {
                         Button("Take to Program") { engine.setPreview(source.id); engine.cut() }
-                        Button("Set as Preview") { engine.setPreview(source.id); engine.selectedSourceID = source.id }
+                        Button("Set as Preview") { select() }
+                        if source is SlideSource {
+                            Button(isKeyed ? "Remove key from Program" : "Key over Program") { engine.toggleKey(source.id) }
+                        }
                         Divider()
                         Button("Remove", role: .destructive) { engine.removeSource(source.id) }
                     }
                 ChannelMeterBar(id: source.id, muted: source.muted, segments: 14)
-                    .frame(width: tileW, height: 6).padding(.vertical, 2)
-                HStack(spacing: 8) {
-                    Button("PGM") { engine.setPreview(source.id); engine.cut() }
-                        .font(.system(size: 13, weight: .bold)).buttonStyle(.plain)
-                        .padding(.horizontal, 12).padding(.vertical, 6).background(Color(white: 0.18)).cornerRadius(4)
+                    .frame(width: tileW, height: 6).padding(.vertical, 2).background(DS.bg1)
+                HStack(spacing: 6) {
+                    Button("PVW") { select() }.buttonStyle(.ds(.preview, .small, active: isPreview))
+                    Button("PGM") { engine.setPreview(source.id); engine.cut() }.buttonStyle(.ds(.program, .small, active: isProgram))
                     if let f = source as? FileSource { TileTransport(source: f) }
                     else if let a = source as? AudioFileSource { TileTransport(source: a) }
-                    Spacer()
+                    else if source is SlideSource {
+                        Button("KEY") { engine.toggleKey(source.id) }.buttonStyle(.ds(.amber, .small, active: isKeyed))
+                            .help("Overlay on Program")
+                        Button { openController() } label: { Image(systemName: "slider.horizontal.3") }
+                            .buttonStyle(.ds(.normal, .small)).help("Open its controls")
+                    }
+                    Spacer(minLength: 0)
                     Button { source.muted.toggle() } label: {
-                        Image(systemName: source.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 16))
-                            .foregroundColor(source.muted ? .red : cProgram)
+                        Image(systemName: source.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 12))
+                            .foregroundColor(source.muted ? DS.program : DS.text2)
                     }.buttonStyle(.plain)
                 }
-                .frame(width: tileW).padding(.horizontal, 8).frame(height: 40).background(cBar)
+                .padding(.horizontal, 6).frame(width: tileW, height: 40).background(DS.bg2)
             }
         }
-        .overlay(Rectangle().stroke(border, lineWidth: 2))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(tally, lineWidth: isProgram || isPreview || isKeyed ? 2 : 1))
+    }
+
+    private func select() {
+        engine.setPreview(source.id); engine.selectedSourceID = source.id
+        if source is PresentationSource { present.targetID = source.id }
+        if source is DictionarySource { dict.targetID = source.id }
+    }
+    private func openController() {
+        if source is DictionarySource { dict.targetID = source.id; present.deck = DeckTab.dictionary.rawValue }
+        else { present.targetID = source.id; present.deck = DeckTab.present.rawValue }
     }
 }
 
@@ -515,6 +647,8 @@ struct SourceThumb: NSViewRepresentable {
 
 struct AddInputMenu: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var dict: DictionaryModel
     @State private var devices: [AVCaptureDevice] = []
     var body: some View {
         Menu {
@@ -534,10 +668,19 @@ struct AddInputMenu: View {
             Button("Colour") { engine.addColor() }
             Button("Test Pattern (Bars)") { engine.addBars() }
             Divider()
+            Button("Songs & Bible (Presentation)") {
+                let s = engine.addPresentationInput(); present.targetID = s.id; present.deck = DeckTab.present.rawValue
+            }
+            Button("Dictionary") {
+                let s = engine.addDictionaryInput(); dict.targetID = s.id; present.deck = DeckTab.dictionary.rawValue
+            }
+            Divider()
             Button("Blank Input") { engine.addBlankInput() }
         } label: {
-            Text("Add Input").font(.system(size: 10, weight: .bold))
-                .padding(.horizontal, 8).padding(.vertical, 3).background(cProgram).foregroundColor(.white).cornerRadius(3)
+            Label("Add Input", systemImage: "plus").font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 10).frame(height: 24)
+                .background(RoundedRectangle(cornerRadius: 5).fill(DS.accent))
         }
         .menuStyle(.borderlessButton).fixedSize()
         .onAppear { if devices.isEmpty { devices = VideoDevices.all() } }
@@ -584,7 +727,7 @@ struct ScenesPanel: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                Text("PROGRAM LAYOUT").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                SectionLabel("PROGRAM LAYOUT")
                 HStack(spacing: 6) {
                     ForEach(ProgramLayout.allCases) { l in
                         Button { engine.setLayout(l) } label: {
@@ -603,7 +746,7 @@ struct ScenesPanel: View {
                 }
 
                 if engine.programLayout != .single {
-                    Text("SLOTS").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                    SectionLabel("SLOTS")
                     ForEach(Array(0..<engine.slotCount(engine.programLayout)), id: \.self) { i in
                         HStack {
                             Text("Slot \(i + 1)").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 48, alignment: .leading)
@@ -618,7 +761,7 @@ struct ScenesPanel: View {
                 }
 
                 Divider()
-                Text("SCENES").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                SectionLabel("SCENES")
                 HStack {
                     TextField("Scene name", text: $sceneName).textFieldStyle(.roundedBorder)
                     Button("Save") { engine.saveScene(sceneName); sceneName = "" }
@@ -648,16 +791,26 @@ struct RightPanel: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $engine.rightTab) {
-                Text("Audio").tag(0); Text("Input").tag(1); Text("Overlays").tag(2); Text("Scenes").tag(3)
-            }.pickerStyle(.segmented).padding(8)
-            Divider()
-            if engine.rightTab == 0 { AudioMixerPanel() }
-            else if engine.rightTab == 1 { InputSettingsPanel() }
-            else if engine.rightTab == 2 { OverlaysPanel() }
-            else { ScenesPanel() }
+            DSTabBar(selection: $engine.rightTab, items: [
+                DSTabItem(id: 0, title: "Audio", icon: "slider.vertical.3"),
+                DSTabItem(id: 1, title: "Input", icon: "dial.medium"),
+                DSTabItem(id: 2, title: "Overlays", icon: "square.stack.3d.up"),
+                DSTabItem(id: 3, title: "Scenes", icon: "rectangle.split.2x2"),
+                DSTabItem(id: 4, title: "Outputs", icon: "display.2")
+            ], compact: true)
+            .padding(8)
+            .background(DS.bg2)
+            .overlay(Rectangle().fill(DS.lineSoft).frame(height: 1), alignment: .bottom)
+            Group {
+                if engine.rightTab == 0 { AudioMixerPanel() }
+                else if engine.rightTab == 1 { InputSettingsPanel() }
+                else if engine.rightTab == 2 { OverlaysPanel() }
+                else if engine.rightTab == 3 { ScenesPanel() }
+                else { OutputsPanel() }
+            }
+            .frame(maxHeight: .infinity)
         }
-        .background(cPanel).overlay(Rectangle().frame(width: 1).foregroundColor(Color(white: 0.2)), alignment: .leading)
+        .background(DS.bg1).overlay(Rectangle().frame(width: 1).foregroundColor(DS.line), alignment: .leading)
     }
 }
 
@@ -668,17 +821,11 @@ func checkButton(_ title: String, _ on: Bool, _ action: @escaping () -> Void) ->
     }
 }
 
-// Shared labelled slider for adjustments
-@ViewBuilder
-func adjSlider(_ label: String, _ value: Binding<Double>, _ range: ClosedRange<Double>) -> some View {
-    VStack(alignment: .leading, spacing: 2) {
-        HStack {
-            Text(label).font(.system(size: 10)).foregroundColor(.secondary)
-            Spacer()
-            Text(String(format: "%.2f", value.wrappedValue)).font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary)
-        }
-        Slider(value: value, in: range)
-    }
+// Shared labelled slider for adjustments (professional compact slider; double-click resets)
+func adjSlider(_ label: String, _ value: Binding<Double>, _ range: ClosedRange<Double>, _ def: Double? = nil) -> some View {
+    let fallback: Double? = def ?? (range.contains(0) && range.lowerBound < 0 ? 0 : nil)
+    let fmt = (range.upperBound - range.lowerBound) >= 100 ? "%.0f" : "%.2f"
+    return ParamSlider(label: label, value: value, range: range, defaultValue: fallback, format: fmt)
 }
 
 struct InputSettingsPanel: View {
@@ -702,7 +849,7 @@ struct InputAdjust: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("INPUT NAME").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                SectionLabel("INPUT NAME")
                 Spacer()
                 Button("Reset") { source.resetAdjustments() }.font(.system(size: 10))
             }
@@ -711,24 +858,24 @@ struct InputAdjust: View {
             if let f = source as? FileSource { PlaybackTransport(source: f) }
             if let a = source as? AudioFileSource { PlaybackTransport(source: a) }
 
-            Text("GEOMETRY").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
-            adjSlider("Zoom", $source.zoom, 0.2...4)
+            SectionLabel("GEOMETRY")
+            adjSlider("Zoom", $source.zoom, 0.2...4, 1)
             adjSlider("Pan X", $source.panX, -1...1)
             adjSlider("Pan Y", $source.panY, -1...1)
             adjSlider("Rotate", $source.rotation, -180...180)
             Divider()
-            Text("CROP").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            SectionLabel("CROP")
             adjSlider("Left", $source.cropL, 0...0.45)
             adjSlider("Right", $source.cropR, 0...0.45)
             adjSlider("Top", $source.cropT, 0...0.45)
             adjSlider("Bottom", $source.cropB, 0...0.45)
             Divider()
-            Text("COLOUR").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            SectionLabel("COLOUR")
             adjSlider("Brightness", $source.brightness, -0.5...0.5)
-            adjSlider("Contrast", $source.contrast, 0...2)
-            adjSlider("Saturation", $source.saturation, 0...2)
+            adjSlider("Contrast", $source.contrast, 0...2, 1)
+            adjSlider("Saturation", $source.saturation, 0...2, 1)
             Divider()
-            Text("AUDIO").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            SectionLabel("AUDIO")
             Picker("Audio device", selection: Binding(
                 get: { source.audioDeviceID ?? "" },
                 set: { source.audioDeviceID = $0.isEmpty ? nil : $0 })) {
@@ -736,7 +883,7 @@ struct InputAdjust: View {
                 ForEach(audioDevices) { d in Text(d.name).tag(d.id) }
             }
             ChannelMeterBar(id: source.id, muted: source.muted).frame(height: 10)
-            adjSlider("Gain", $source.gain, 0...1.5)
+            adjSlider("Gain", $source.gain, 0...1.5, 1)
             Toggle("Mute", isOn: $source.muted).font(.system(size: 11))
             Button(showFX ? "Hide Effects" : "Audio Effects (EQ · Comp · Gate)") { showFX.toggle() }
                 .font(.system(size: 11))
@@ -1148,7 +1295,7 @@ struct DictionaryLookup: View {
     @State private var notFound = false
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("DICTIONARY").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            SectionLabel("DICTIONARY")
             HStack {
                 TextField("Search a word", text: $word, onCommit: lookup).textFieldStyle(.roundedBorder)
                 Button("Look up", action: lookup)
@@ -1175,8 +1322,6 @@ struct OverlaysPanel: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            DictionaryLookup()
-            Divider()
             HStack {
                 Text("OVERLAY CHANNELS / LAYERS").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(.secondary)
                 Spacer()
@@ -1250,35 +1395,26 @@ struct DiskReadout: View {
 
 struct StatusBar: View {
     @EnvironmentObject var engine: Engine
-    @Binding var showOutputs: Bool
     var body: some View {
-        HStack(spacing: 12) {
-            Text("\(engine.height)p\(engine.fpsTarget)").font(.system(size: 10, design: .monospaced))
+        HStack(spacing: 10) {
+            Text("\(engine.width)×\(engine.height) · \(engine.fpsTarget)p").font(DS.mono(10)).foregroundColor(DS.text2)
             FPSText()
             DiskReadout()
             Spacer()
+            Text("OVERLAYS").font(DS.caption).kerning(1).foregroundColor(DS.text3)
             ForEach(0..<4) { i in
-                Button { engine.toggleOverlay(i) } label: {
-                    Text("\(i + 1)").font(.system(size: 10, weight: .bold))
-                        .frame(width: 22, height: 18)
-                        .background(engine.layers.indices.contains(i) && engine.layers[i].isLive ? cPreview : Color(white: 0.18))
-                        .cornerRadius(3)
-                }.buttonStyle(.plain).help("Toggle overlay channel \(i + 1)")
+                Button("\(i + 1)") { engine.toggleOverlay(i) }
+                    .buttonStyle(.ds(.amber, .small, active: engine.layers.indices.contains(i) && engine.layers[i].isLive))
+                    .help("Toggle overlay channel \(i + 1)")
             }
-            SBtn("Record", color: engine.isRecording ? .red : cBtn) { engine.toggleRecording() }
-            SBtn("Stream", color: engine.isStreaming ? cProgram : cBtn) { engine.toggleStream(nil) }
-            SBtn("Snapshot") { engine.snapshot() }
-            SBtn("Outputs", color: engine.activeScreens.isEmpty ? cBtn : cProgram) { showOutputs = true }
-            SBtn("Multiview") { engine.openMultiviewWindow() }
-            Toggle("Guides", isOn: $engine.showSafeGuides).toggleStyle(.button).font(.system(size: 10))
+            Rectangle().fill(DS.line).frame(width: 1, height: 16)
+            Button("Snapshot") { engine.snapshot() }.buttonStyle(.ds(.normal, .small))
+            Button("Outputs") { engine.rightTab = 4 }.buttonStyle(.ds(.normal, .small, active: !engine.activeScreens.isEmpty))
+            Button("Multiview") { engine.openMultiviewWindow() }.buttonStyle(.ds(.normal, .small))
+            Button("Guides") { engine.showSafeGuides.toggle() }.buttonStyle(.ds(.normal, .small, active: engine.showSafeGuides))
         }
-        .padding(.horizontal, 12).frame(height: 30).background(cBar)
-    }
-    func SBtn(_ t: String, color: Color = cBtn, _ action: @escaping () -> Void = {}) -> some View {
-        Button(action: action) {
-            Text(t).font(.system(size: 10, weight: .semibold)).padding(.horizontal, 9).padding(.vertical, 3)
-                .background(color).foregroundColor(.white).cornerRadius(3)
-        }.buttonStyle(.plain)
+        .padding(.horizontal, 12).frame(height: 32).background(DS.bg2)
+        .overlay(Rectangle().fill(DS.line).frame(height: 1), alignment: .top)
     }
 }
 
@@ -1289,12 +1425,12 @@ struct OverlayStyleControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
-            Text("STYLING").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            SectionLabel("STYLING")
             ColorPicker("Accent", selection: $layer.accent)
             ColorPicker("Text colour", selection: $layer.textColor)
             ColorPicker("Background", selection: $layer.bgColor)
-            HStack { Text("BG opacity").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.bgOpacity, in: 0...1) }
-            HStack { Text("Font size").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.fontScale, in: 0.6...2.0) }
+            adjSlider("BG opacity", $layer.bgOpacity, 0...1)
+            adjSlider("Font size", $layer.fontScale, 0.6...2.0)
         }
     }
 }
@@ -1324,7 +1460,7 @@ struct LayerInspector: View {
                 OverlayStyleControls(layer: layer)
             case .ticker:
                 TextField("Ticker text", text: $layer.text1)
-                HStack { Text("Speed").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 20...300) }
+                adjSlider("Speed", $layer.number1, 20...300)
             case .countdown:
                 TextField("Label", text: $layer.text1)
                 HStack { Text("Minutes").font(.system(size: 11)).foregroundColor(.secondary); TextField("", value: $layer.number1, formatter: NumberFormatter()).frame(width: 60) }
@@ -1347,7 +1483,7 @@ struct LayerInspector: View {
                 TextField("Title text", text: $layer.text1)
                 TextField("Subtitle (optional)", text: $layer.text2)
                 Picker("Align", selection: $layer.align) { Text("Left").tag(0); Text("Centre").tag(1); Text("Right").tag(2) }
-                HStack { Text("Size").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 3...20) }
+                adjSlider("Size", $layer.number1, 3...20)
                 ColorPicker("Title colour", selection: $layer.accent)
                 ColorPicker("Subtitle colour", selection: $layer.textColor)
                 Divider()
@@ -1355,7 +1491,7 @@ struct LayerInspector: View {
                     .font(.system(size: 11))
                 if layer.bgOpacity > 0.01 {
                     ColorPicker("Box colour", selection: $layer.bgColor)
-                    HStack { Text("Box opacity").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.bgOpacity, in: 0.05...1) }
+                    adjSlider("Box opacity", $layer.bgOpacity, 0.05...1)
                 }
             case .logo:
                 Button("Choose image…") {
@@ -1367,25 +1503,25 @@ struct LayerInspector: View {
                     }
                 }
                 Picker("Position", selection: $layer.position) { Text("Top left").tag(0); Text("Top right").tag(1); Text("Bottom left").tag(2); Text("Bottom right").tag(3) }
-                HStack { Text("Scale").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 4...50) }
+                adjSlider("Scale", $layer.number1, 4...50)
             case .qrcode:
                 TextField("URL", text: $layer.text1)
-                HStack { Text("Size").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 80...360) }
+                adjSlider("Size", $layer.number1, 80...360)
             case .pip:
                 Picker("Source", selection: Binding(get: { layer.sourceRef ?? pipNoneTag }, set: { layer.sourceRef = ($0 == pipNoneTag ? nil : $0) })) {
                     Text("— none —").tag(pipNoneTag)
                     ForEach(engine.sources) { s in Text(s.name).tag(s.id) }
                 }
                 Picker("Corner", selection: $layer.position) { Text("Top left").tag(0); Text("Top right").tag(1); Text("Bottom left").tag(2); Text("Bottom right").tag(3) }
-                HStack { Text("Size").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 8...100) }
+                adjSlider("Size", $layer.number1, 8...100)
                 ColorPicker("Border", selection: $layer.accent)
                 Divider()
-                Text("CHROMA KEY").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                SectionLabel("CHROMA KEY")
                 Toggle("Enable chroma key", isOn: $layer.keyEnabled)
                 if layer.keyEnabled {
                     ColorPicker("Key colour", selection: $layer.keyColor)
-                    HStack { Text("Similarity").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.keySimilarity, in: 0.02...0.5) }
-                    HStack { Text("Smoothness").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.keySmoothness, in: 0.005...0.3) }
+                    adjSlider("Similarity", $layer.keySimilarity, 0.02...0.5)
+                    adjSlider("Smoothness", $layer.keySmoothness, 0.005...0.3)
                     Text("Tip: set the source full-size (Size ≈ 100) to place keyed talent over the whole program.")
                         .font(.system(size: 9)).foregroundColor(.secondary)
                 }
@@ -1393,10 +1529,10 @@ struct LayerInspector: View {
                 TextField("Word", text: $layer.text1)
                 Text("Definition").font(.system(size: 10)).foregroundColor(.secondary)
                 TextField("Definition", text: $layer.text2, axis: .vertical).lineLimit(2...6)
-                HStack { Text("Panel height").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.number1, in: 4...12) }
+                adjSlider("Panel height", $layer.number1, 4...12)
                 ColorPicker("Word colour", selection: $layer.accent)
                 ColorPicker("Panel colour", selection: $layer.bgColor)
-                HStack { Text("Panel opacity").font(.system(size: 11)).foregroundColor(.secondary); Slider(value: $layer.bgOpacity, in: 0.3...1) }
+                adjSlider("Panel opacity", $layer.bgOpacity, 0.3...1)
                 Text("Tip: use the Dictionary search at the top of this tab to fill this automatically.")
                     .font(.system(size: 9)).foregroundColor(.secondary)
             }
@@ -1410,7 +1546,7 @@ struct VariantsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("VARIANTS").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                SectionLabel("VARIANTS")
                 Spacer()
                 Button { layer.captureVariant() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).help("Save current as variant")
                 Button { layer.cycleVariant(-1) } label: { Image(systemName: "chevron.left") }.buttonStyle(.borderless)
@@ -1443,7 +1579,7 @@ struct LayerTransformView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("TRANSFORM").font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+                SectionLabel("TRANSFORM")
                 Spacer()
                 Button("Reset") { layer.resetTransform() }.font(.system(size: 10))
             }
@@ -1566,7 +1702,7 @@ struct StreamRow: View {
             Text(dest.composedURL).font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary).lineLimit(1)
         }
         .textFieldStyle(.roundedBorder)
-        .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+        .padding(10).background(DS.bg2).cornerRadius(6)
     }
 }
 
@@ -1655,24 +1791,23 @@ struct AddStreamView: View {
 
 // MARK: - Outputs (simultaneous / external displays)
 
-struct OutputsView: View {
+struct OutputsPanel: View {
     @EnvironmentObject var engine: Engine
-    @Environment(\.dismiss) private var dismiss
     @State private var screens: [(index: Int, name: String)] = []
     @State private var ndiAvailable = false
     @State private var ndiVersion = ""
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("SIMULTANEOUS OUTPUTS").font(.system(size: 13, weight: .heavy)).kerning(1)
-                Spacer()
+                SectionLabel("Simultaneous outputs")
                 Button("Refresh") { screens = engine.availableScreens(); NDIBridge.shared.detect(); ndiAvailable = NDIBridge.shared.isAvailable; ndiVersion = NDIBridge.shared.versionString }
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                    .buttonStyle(.ds(.normal, .small))
             }
             Text("Every output below runs at the same time — and alongside Record and Stream. Send the clean Program feed to a projector or LED wall by enabling its display.")
                 .font(.system(size: 11)).foregroundColor(.secondary)
 
-            Text("EXTERNAL DISPLAYS").font(.system(size: 10, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            SectionLabel("EXTERNAL DISPLAYS")
             if screens.count <= 1 {
                 Text("No additional displays detected. Connect a projector, monitor or LED processor and click Refresh.")
                     .font(.system(size: 11)).foregroundColor(.secondary)
@@ -1699,18 +1834,19 @@ struct OutputsView: View {
                         }
                     }
                 }
-                .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+                .padding(10).background(DS.bg2).cornerRadius(6)
             }
 
             Divider()
-            Text("WINDOWS").font(.system(size: 10, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            SectionLabel("WINDOWS")
             HStack {
-                Button("Open Program Window") { engine.openOutputWindow() }
-                Button("Open Multiview") { engine.openMultiviewWindow() }
+                Button(engine.programWindowActive ? "Close Program Full Screen" : "Program Full Screen") { engine.openOutputWindow() }
+                    .buttonStyle(.ds(.normal, .small, active: engine.programWindowActive))
+                Button("Open Multiview") { engine.openMultiviewWindow() }.buttonStyle(.ds(.normal, .small))
             }
 
             Divider()
-            Text("NDI OUTPUT (NETWORK)").font(.system(size: 10, weight: .heavy)).kerning(1.5).foregroundColor(.secondary)
+            SectionLabel("NDI OUTPUT (NETWORK)")
             HStack(spacing: 8) {
                 Image(systemName: ndiAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundColor(ndiAvailable ? cProgram : .orange)
@@ -1727,13 +1863,12 @@ struct OutputsView: View {
                 }
                 Spacer()
             }
-            .padding(10).background(Color(white: 0.12)).cornerRadius(6)
+            .padding(10).background(DS.bg2).cornerRadius(6)
             Toggle("Enable NDI output", isOn: .constant(false)).disabled(true)
                 .font(.system(size: 11)).foregroundColor(.secondary)
-            Spacer()
         }
-        .padding(16).frame(width: 480, height: 460)
-        .preferredColorScheme(.dark)
+        .padding(12)
+        }
         .onAppear { screens = engine.availableScreens(); ndiAvailable = NDIBridge.shared.isAvailable; ndiVersion = NDIBridge.shared.versionString }
     }
 }

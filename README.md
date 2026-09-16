@@ -1,3 +1,22 @@
+# LiveDeck Studio (macOS) — v4.1.0
+
+**New in 4.1 — Songs, Bible and Dictionary on the production page:**
+- **One page.** The separate PRESENT screen is gone. Under Preview / Program there are three tabs: **Inputs**, **Songs & Bible** and **Dictionary** — the switcher, monitors and audio stay in view while you run lyrics and scripture.
+- **Songs & Bible as an input.** Add Input (or a blank holder's **+**) → **Songs & Bible (Presentation)**. Click a song or scripture slide and it appears on that input; send it to **Preview**, **Program**, or **Key over Program** (text over your cameras, 0.3 s fade). Next/previous with ← / → or a presentation clicker (Page Up / Page Down). **Clear text** and **Hide BG** buttons. You can have several presentation inputs (e.g. full-screen scripture and lower-third lyrics).
+- **Backgrounds.** Transparent (for keying), solid colour, gradient, **image** or **looping video** (muted), with fill/fit/stretch and a *Darken background* control for readability.
+- **Comprehensive formatting ("looks").** Font, size, bold/italic/underline, colour, alignment, UPPERCASE/Title case, line and letter spacing, outline, shadow — separately for the main text, the title/headword and the reference/credit line. Text area (full screen, lower third, upper third, centre band, left/right half, custom position), margins, vertical alignment, shrink-to-fit, text box or full-width band (colour, opacity, padding, corners), verse numbers, characters per scripture slide, lines per song slide, fade between slides. Five built-in looks; **Save look…** keeps your own.
+- **Dictionary with its own input.** Search a word first, preview the card, then **Load into input**, **Preview**, **Program**, **Key over Program**, or add it as an overlay layer. Background and formatting are chosen the same way as for songs.
+- **Choice of dictionaries:** macOS Dictionary (offline), English Dictionary (Free Dictionary API), Wiktionary (many languages — choose the language code), Thesaurus (synonyms & antonyms), Wikipedia (people, places, topics — any language), and **My Dictionaries** — import your own CSV/TSV/JSON dictionaries such as a Bible dictionary or glossary.
+- **Professional control redesign.** New graphite broadcast look: tally colours used only for meaning (red = on air, green = preview, amber = keyed/armed, blue = selection); compact sliders (drag anywhere, double-click to reset); CUT / AUTO, transition grid and a vertical **T-bar**; tabbed right panel with icons; restyled input tiles with PVW / PGM / KEY buttons; cleaner top and status bars.
+- **8 empty inputs** by default (was 5).
+- **No title bar in full screen.** The main window hides the macOS title bar and window buttons in full screen. **PROGRAM OUT** opens a borderless full-screen Program on the second display (or covers the main display, hiding the menu bar and Dock); Esc or double-click closes it.
+- **Outputs are no longer a pop-up** — they are the **Outputs** tab of the right panel (the status-bar *Outputs* button opens it).
+- **Safer hotkeys.** Single-key shortcuts (C cut, R record, S snapshot, L stream…) are ignored while you type in any text field.
+- Under the hood: `PresentationKit` gains `Look.swift` and `WordLookup.swift`; **32 automated tests** (was 24). Looks are saved in `Library/looks.json`, imported dictionaries in `Library/Dictionaries/`.
+- **Not yet:** presentation/dictionary inputs are not stored in `.livedeck` show files (no inputs are); service plans, slide editor, media audio in the mix (next builds).
+
+---
+
 # LiveDeck Studio (macOS) — v4.0.0 (build 4.0-a)
 
 **New in 4.0 — PRESENT workspace, part 1 (songs & Bibles):**

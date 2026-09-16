@@ -173,7 +173,10 @@ final class Engine: ObservableObject {
     static let streamBitrates = [2500, 3500, 4500, 6000, 8000, 12000]
     @Published var fileOutputActive = false
     @Published var programWindowActive = false
-    @Published var rightTab = 0   // 0 = Audio Mixer, 1 = Overlays
+    @Published var rightTab = 0   // 0 Audio · 1 Input · 2 Overlays · 3 Scenes · 4 Outputs
+    /// Slide / dictionary inputs keyed (transparent overlay) over Program, independent of the switcher.
+    @Published var keyedSources: Set<UUID> = []
+    private var keyAlpha: [UUID: Double] = [:]
 
     @Published var streamDestinations: [StreamDestination] = [] { didSet { persistStreams() } }
 
@@ -327,7 +330,7 @@ final class Engine: ObservableObject {
         mt.tolerance = 0.02
         RunLoop.main.add(mt, forMode: .common)
         meterTimer = mt
-        if sources.isEmpty { for _ in 0..<5 { sources.append(EmptySource()) } }
+        if sources.isEmpty { for _ in 0..<8 { sources.append(EmptySource()) } }
         loadStreams()
     }
 
@@ -408,6 +411,32 @@ final class Engine: ObservableObject {
     }
 
     func addBlankInput() { sources.append(EmptySource()) }
+
+    // MARK: slide inputs (presentation / dictionary)
+
+    /// Places a source in the first empty holder (or appends) — public entry for panels.
+    func placeInput(_ src: Source) { placeSource(src) }
+
+    @discardableResult
+    func addPresentationInput(name: String = "Presentation") -> PresentationSource {
+        let n = sources.filter { $0 is PresentationSource }.count
+        let s = PresentationSource(name: n == 0 ? name : "\(name) \(n + 1)")
+        placeSource(s)
+        return s
+    }
+
+    @discardableResult
+    func addDictionaryInput() -> DictionarySource {
+        let n = sources.filter { $0 is DictionarySource }.count
+        let s = DictionarySource(name: n == 0 ? "Dictionary" : "Dictionary \(n + 1)")
+        placeSource(s)
+        return s
+    }
+
+    func isKeyed(_ id: UUID) -> Bool { keyedSources.contains(id) }
+    func toggleKey(_ id: UUID) {
+        if keyedSources.contains(id) { keyedSources.remove(id) } else { keyedSources.insert(id) }
+    }
 
     func setAudioDevice(_ id: String?) { selectedAudioDeviceID = id; audioCapture.start(deviceID: id) }
     func addConsumer(_ v: FrameNSView) { consumers.add(v) }
@@ -551,6 +580,7 @@ final class Engine: ObservableObject {
     }
 
     func removeSource(_ id: UUID) {
+        keyedSources.remove(id); keyAlpha[id] = nil
         if let s = sources.first(where: { $0.id == id }) { s.stop() }
         sources.removeAll { $0.id == id }
         if programID == id { programID = nil }
@@ -719,6 +749,22 @@ final class Engine: ObservableObject {
             drawTransition(ctx, from: from, to: previewID, t: transT, rect: full)
         } else if let p = programID, let s = sources.first(where: { $0.id == p }) {
             s.draw(in: ctx, rect: full)
+        }
+
+        // downstream keys: slide inputs over Program (fade 0.3 s)
+        if !keyedSources.isEmpty || !keyAlpha.isEmpty {
+            for s in sources where keyedSources.contains(s.id) || (keyAlpha[s.id] ?? 0) > 0 {
+                var a = (keyAlpha[s.id] ?? 0) + (keyedSources.contains(s.id) ? 1 : -1) * dt / 0.3
+                a = max(0, min(1, a))
+                if a <= 0 { keyAlpha[s.id] = nil; continue }
+                keyAlpha[s.id] = a
+                ctx.saveGState()
+                ctx.setAlpha(CGFloat(a))
+                ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+                s.draw(in: ctx, rect: full)
+                ctx.endTransparencyLayer()
+                ctx.restoreGState()
+            }
         }
 
         // overlays / layers on top of program
@@ -933,14 +979,32 @@ final class Engine: ObservableObject {
 
     // MARK: windows
 
+    /// Full-screen Program Out: a borderless window with no title bar, on an external display when one
+    /// is connected (otherwise the main display, where it also hides the menu bar and Dock).
+    /// Press Esc or double-click to close. Calling again toggles it off.
     func openOutputWindow() {
-        if let w = outputWindow { w.makeKeyAndOrderFront(nil); return }
-        let view = FrameNSView(frame: NSRect(x: 0, y: 0, width: 960, height: 540)); addConsumer(view)
-        let win = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 960, height: 540),
-                           styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        win.title = "LiveDeck — Program Out  (⌘⌃F for full screen)"; win.contentView = view
-        win.collectionBehavior = [.fullScreenPrimary]; win.isReleasedWhenClosed = false
-        win.makeKeyAndOrderFront(nil); outputWindow = win; programWindowActive = true
+        if let w = outputWindow { w.close(); return }
+        let screens = NSScreen.screens
+        let mainWindowScreen = NSApp.mainWindow?.screen ?? NSScreen.main
+        let target = screens.first(where: { $0 != mainWindowScreen }) ?? mainWindowScreen ?? screens.first
+        guard let screen = target else { return }
+        let view = FrameNSView(frame: NSRect(origin: .zero, size: screen.frame.size)); addConsumer(view)
+        let win = FullscreenOutputWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
+        win.contentView = view
+        win.backgroundColor = .black
+        win.isReleasedWhenClosed = false
+        win.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
+        let sameScreenAsControls = screen == mainWindowScreen
+        win.level = sameScreenAsControls ? NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 1) : .normal
+        win.setFrame(screen.frame, display: true)
+        if sameScreenAsControls { NSApp.presentationOptions = [.hideDock, .hideMenuBar] }
+        win.onClose = { [weak self] in
+            if sameScreenAsControls { NSApp.presentationOptions = [] }
+            self?.outputWindow = nil
+            self?.programWindowActive = false
+        }
+        win.makeKeyAndOrderFront(nil)
+        outputWindow = win; programWindowActive = true
     }
 
     func openMultiviewWindow() {
@@ -994,6 +1058,27 @@ final class Engine: ObservableObject {
         win.makeKeyAndOrderFront(nil)
         screenWindows[index] = win
         activeScreens.insert(index)
+    }
+}
+
+// MARK: - Full-screen output window (no title bar)
+
+final class FullscreenOutputWindow: NSWindow {
+    var onClose: (() -> Void)?
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+    override func cancelOperation(_ sender: Any?) { close() }
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { close() } else { super.keyDown(with: event) }   // Esc
+    }
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { close() } else { super.mouseDown(with: event) }
+    }
+    override func close() {
+        let cb = onClose
+        onClose = nil
+        super.close()
+        cb?()
     }
 }
 

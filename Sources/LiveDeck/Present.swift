@@ -3,13 +3,9 @@ import AppKit
 import UniformTypeIdentifiers
 import PresentationKit
 
-// MARK: - Workspace switch
+// MARK: - Lower deck tabs (same page as the switcher)
 
-enum Workspace: String, CaseIterable, Identifiable {
-    case production = "PRODUCTION"
-    case present = "PRESENT"
-    var id: String { rawValue }
-}
+enum DeckTab: Int { case inputs = 0, present = 1, dictionary = 2 }
 
 enum PresentLibraryTab: String, CaseIterable, Identifiable {
     case songs = "Songs"
@@ -17,11 +13,11 @@ enum PresentLibraryTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-private let pPanel = Color(red: 0.14, green: 0.14, blue: 0.17)
-private let pBar = Color(red: 0.17, green: 0.17, blue: 0.20)
-private let pBG = Color(red: 0.10, green: 0.10, blue: 0.12)
-private let pAccent = Color(red: 0.88, green: 0.55, blue: 0.18)
-private let pGreen = Color(red: 0.18, green: 0.70, blue: 0.30)
+private let pPanel = DS.bg1
+private let pBar = DS.bg2
+private let pBG = DS.bg0
+private let pAccent = DS.amber
+private let pGreen = DS.ok
 
 extension RGBAColor {
     var swiftUI: Color { Color(red: r, green: g, blue: b, opacity: a) }
@@ -29,13 +25,25 @@ extension RGBAColor {
 
 // MARK: - Model
 
-/// State for the PRESENT workspace. 4.0-a: song library + Bible library & lookup.
-/// Nothing here touches the video engine, so presentation work can never stall Program.
+/// Songs & Bible operator state. Slides are sent to a Presentation input (a normal input on the
+/// switcher), so lyrics and scripture can go to Preview, Program, or be keyed over Program.
 final class PresentModel: ObservableObject {
-    @Published var workspace: Workspace = .production
+    @Published var deck: Int = DeckTab.inputs.rawValue
     @Published var tab: PresentLibraryTab = .songs
+    @Published var editingSong = false
 
     let library: PresentationLibrary
+    let looks: LookLibrary
+    @Published var looksRevision = 0
+    weak var engine: Engine?
+
+    // Live control
+    @Published var targetID: UUID?
+    @Published var liveKey: String?
+    private var liveList: [SlideContent] = []
+    private var livePrefix = ""
+    private var liveIndex = -1
+    let thumbs = NSCache<NSString, CGImageBox>()
 
     // Songs
     @Published var songs: [Song] = []
@@ -69,6 +77,8 @@ final class PresentModel: ObservableObject {
 
     init() {
         library = PresentationLibrary(root: PresentationLibrary.defaultRoot)
+        looks = LookLibrary(libraryRoot: PresentationLibrary.defaultRoot)
+        thumbs.countLimit = 400
         selectedBibleID = UserDefaults.standard.string(forKey: "present.bible")
         refreshSongs()
         refreshBibles()
@@ -305,52 +315,99 @@ final class PresentModel: ObservableObject {
             }
         }
     }
-}
 
-// MARK: - Workspace root
+    // MARK: Live control
 
-struct PresentWorkspace: View {
-    @EnvironmentObject var present: PresentModel
-    var body: some View {
-        VStack(spacing: 0) {
-            HSplitView {
-                PresentSidebar()
-                    .frame(minWidth: 240, idealWidth: 290, maxWidth: 420)
-                Group {
-                    if present.tab == .songs { SongWorkArea() } else { ScriptureWorkArea() }
-                }
-                .frame(minWidth: 600, maxWidth: .infinity, maxHeight: .infinity)
-            }
-            HStack(spacing: 10) {
-                Text("PRESENT").font(.system(size: 9, weight: .heavy)).kerning(2).foregroundColor(pAccent)
-                Text(present.status).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
-                Spacer()
-                Text("Library: \(present.library.root.path)").font(.system(size: 9)).foregroundColor(Color(white: 0.4)).lineLimit(1)
-                    .textSelection(.enabled)
-            }
-            .padding(.horizontal, 10).frame(height: 22).background(pBar)
-        }
-        .background(pBG)
-        .sheet(isPresented: $present.showCatalog) { BibleCatalogView().environmentObject(present) }
+    /// The Presentation input slides are sent to (no side effects — safe inside views).
+    func currentTarget() -> PresentationSource? {
+        guard let engine else { return nil }
+        if let id = targetID, let s = engine.sources.first(where: { $0.id == id }) as? PresentationSource { return s }
+        return engine.sources.compactMap { $0 as? PresentationSource }.first
     }
-}
 
-// MARK: - Sidebar
-
-struct PresentSidebar: View {
-    @EnvironmentObject var present: PresentModel
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $present.tab) {
-                ForEach(PresentLibraryTab.allCases) { t in Text(t.rawValue).tag(t) }
-            }
-            .pickerStyle(.segmented).labelsHidden().padding(8)
-            Divider()
-            if present.tab == .songs { SongListPane() } else { BibleListPane() }
-        }
-        .background(pPanel)
+    @discardableResult
+    func ensureTarget() -> PresentationSource? {
+        if let t = currentTarget() { targetID = t.id; return t }
+        guard let engine else { return nil }
+        let s = engine.addPresentationInput()
+        targetID = s.id
+        return s
     }
+
+    func goLive(_ list: [SlideContent], index: Int, prefix: String) {
+        guard list.indices.contains(index), let t = ensureTarget() else { return }
+        liveList = list; livePrefix = prefix; liveIndex = index
+        t.show(list[index])
+        liveKey = "\(prefix)#\(index)"
+    }
+
+    func step(_ delta: Int) {
+        guard !liveList.isEmpty else { return }
+        let i = liveIndex + delta
+        guard liveList.indices.contains(i) else { return }
+        goLive(liveList, index: i, prefix: livePrefix)
+    }
+
+    func clearText() { currentTarget()?.textCleared = true; liveKey = nil }
+    func toggleBackground() { if let t = currentTarget() { t.backgroundCleared.toggle() } }
+
+    func sendToPreview() {
+        guard let t = ensureTarget(), let engine else { return }
+        engine.setPreview(t.id); engine.selectedSourceID = t.id
+    }
+    func cutToProgram() {
+        guard let t = ensureTarget(), let engine else { return }
+        engine.keyedSources.remove(t.id)
+        engine.setPreview(t.id); engine.cut()
+    }
+    func toggleKey() {
+        guard let t = ensureTarget(), let engine else { return }
+        engine.toggleKey(t.id)
+    }
+
+    func songSlides(_ song: Song, look: SlideLook) -> [SlideContent] {
+        let credit = [song.author, song.copyright, song.ccliNumber.isEmpty ? "" : "CCLI Song #\(song.ccliNumber)"]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+        let gen = song.generatedSlides(linesPerSlide: look.linesPerSlide > 0 ? look.linesPerSlide : nil)
+        return gen.enumerated().map { i, g in
+            SlideContent(title: song.title, body: g.lines.joined(separator: "\n"),
+                         footer: i == 0 ? credit : "", label: g.label)
+        }
+    }
+
+    func scriptureSlides(look: SlideLook) -> [SlideContent] {
+        guard let store = currentStore, !passage.isEmpty else { return [] }
+        let abbr = store.info.abbreviation
+        return BibleStore.slideTexts(passage, maxChars: look.maxCharsPerSlide, verseNumbers: look.showVerseNumbers).map { p in
+            let r = ScriptureReference(book: p.first.book, startChapter: p.first.chapter, startVerse: p.first.verse,
+                                       endChapter: p.last.chapter, endVerse: p.last.verse)
+            let ref = r.display(bookName: store.bookName(p.first.book)) + (abbr.isEmpty ? "" : " (\(abbr))")
+            return SlideContent(title: "", body: p.text, footer: ref, label: ref)
+        }
+    }
+
+    /// Cached slide thumbnail rendered with the target's look.
+    func thumbnail(_ c: SlideContent, source: SlideSource, width: Int = 384) -> CGImage? {
+        let key = "\(source.look.hashValue)|\(c.hashValue)|\(width)" as NSString
+        if let b = thumbs.object(forKey: key) { return b.image }
+        guard let img = source.still(c, size: CGSize(width: width, height: width * 9 / 16)) else { return nil }
+        thumbs.setObject(CGImageBox(img), forKey: key)
+        return img
+    }
+
+    func saveLook(_ look: SlideLook, as name: String) {
+        do { try looks.save(look, as: name); looksRevision += 1; status = "Saved look “\(name)”." }
+        catch { status = "Could not save look: \(error.localizedDescription)" }
+    }
+    func deleteLook(_ id: UUID) { try? looks.delete(id); looksRevision += 1 }
 }
+
+final class CGImageBox {
+    let image: CGImage
+    init(_ i: CGImage) { image = i }
+}
+
+// MARK: - Library lists & song editor
 
 struct SongListPane: View {
     @EnvironmentObject var present: PresentModel
@@ -413,27 +470,6 @@ struct SongRow: View {
             }
             Spacer()
             if song.meta.favorite { Image(systemName: "star.fill").font(.system(size: 9)).foregroundColor(pAccent) }
-        }
-    }
-}
-
-// MARK: - Song editor
-
-struct SongWorkArea: View {
-    @EnvironmentObject var present: PresentModel
-    var body: some View {
-        if let id = present.selectedSongID, let song = present.song(id) {
-            SongEditor(initial: song).id(id)
-        } else {
-            VStack(spacing: 10) {
-                Image(systemName: "music.note.list").font(.system(size: 40)).foregroundColor(Color(white: 0.3))
-                Text("Select a song, create a new one, or import song files.").foregroundColor(.secondary)
-                HStack {
-                    Button("New Song") { present.newSong() }
-                    Button("Import…") { present.importSongs() }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -524,36 +560,6 @@ struct SongEditor: View {
     }
 }
 
-/// Lightweight slide preview (text only). Real rendered thumbnails arrive with the slide renderer in 4.0-b.
-struct SlidePreviewGrid: View {
-    let song: Song
-    var body: some View {
-        let slides = song.generatedSlides()
-        VStack(spacing: 0) {
-            HStack {
-                Text("SLIDES").font(.system(size: 9, weight: .heavy)).kerning(2).foregroundColor(.secondary)
-                Spacer()
-                Text("\(slides.count)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 10).frame(height: 24).background(pBar)
-            GeometryReader { geo in
-                let cols = max(1, Int(geo.size.width / 230))
-                let w = (geo.size.width - CGFloat(cols + 1) * 8) / CGFloat(cols)
-                ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(max(80, w)), spacing: 8), count: cols), spacing: 8) {
-                        ForEach(Array(slides.enumerated()), id: \.offset) { idx, s in
-                            SlideTextCard(index: idx + 1, label: s.label, color: s.kind.color.swiftUI,
-                                          text: s.lines.joined(separator: "\n"), width: max(80, w))
-                        }
-                    }
-                    .padding(8)
-                }
-            }
-        }
-        .background(pPanel)
-    }
-}
-
 struct SlideTextCard: View {
     let index: Int
     let label: String
@@ -582,8 +588,6 @@ struct SlideTextCard: View {
         .overlay(Rectangle().stroke(Color(white: 0.25), lineWidth: 1))
     }
 }
-
-// MARK: - Bibles
 
 struct BibleListPane: View {
     @EnvironmentObject var present: PresentModel
@@ -641,99 +645,6 @@ struct BibleListPane: View {
             }
             .textFieldStyle(.roundedBorder).padding(16).frame(width: 360)
         }
-    }
-}
-
-struct ScriptureWorkArea: View {
-    @EnvironmentObject var present: PresentModel
-    var body: some View {
-        HSplitView {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Picker("", selection: $present.selectedBibleID) {
-                        ForEach(present.bibles) { b in Text(b.abbreviation).tag(Optional(b.id)) }
-                    }
-                    .labelsHidden().frame(width: 110)
-                    TextField("Reference, e.g. John 3:16-18", text: $present.reference)
-                        .textFieldStyle(.roundedBorder).font(.system(size: 14))
-                        .onSubmit { present.lookUp() }
-                    Button("Go") { present.lookUp() }.keyboardShortcut(.defaultAction)
-                }
-                if !present.passageError.isEmpty {
-                    Text(present.passageError).font(.system(size: 11)).foregroundColor(.orange)
-                }
-                Text(present.passageTitle).font(.system(size: 13, weight: .heavy)).foregroundColor(pAccent)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(present.passage, id: \.self) { v in
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                Text("\(v.chapter):\(v.verse)").font(.system(size: 10, weight: .bold, design: .monospaced))
-                                    .foregroundColor(.secondary).frame(width: 46, alignment: .trailing)
-                                Text(v.text).font(.system(size: 13)).textSelection(.enabled)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                Divider()
-                HStack(spacing: 6) {
-                    Image(systemName: "text.magnifyingglass").foregroundColor(.secondary)
-                    TextField("Search words in this Bible", text: $present.searchText)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { present.runSearch() }
-                    Text("\(present.searchResults.count)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-                }
-                List(present.searchResults, id: \.self) { v in
-                    Button {
-                        let name = present.currentStore?.bookName(v.book) ?? ""
-                        present.reference = "\(name) \(v.chapter):\(v.verse)"
-                        present.lookUp()
-                    } label: {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("\(present.currentStore?.bookName(v.book) ?? "") \(v.chapter):\(v.verse)")
-                                .font(.system(size: 10, weight: .bold)).foregroundColor(pAccent)
-                            Text(v.text).font(.system(size: 11)).lineLimit(2)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-                .frame(minHeight: 120, maxHeight: 220)
-            }
-            .padding(12)
-            .frame(minWidth: 360, idealWidth: 480)
-
-            ScriptureSlidePreview().frame(minWidth: 260)
-        }
-    }
-}
-
-struct ScriptureSlidePreview: View {
-    @EnvironmentObject var present: PresentModel
-    var body: some View {
-        let parts = BibleStore.slideTexts(present.passage, maxChars: present.maxCharsPerSlide)
-        VStack(spacing: 0) {
-            HStack {
-                Text("SLIDES").font(.system(size: 9, weight: .heavy)).kerning(2).foregroundColor(.secondary)
-                Spacer()
-                Stepper("≤ \(present.maxCharsPerSlide) chars", value: $present.maxCharsPerSlide, in: 80...600, step: 20)
-                    .font(.system(size: 10))
-            }
-            .padding(.horizontal, 10).frame(height: 26).background(pBar)
-            GeometryReader { geo in
-                let cols = max(1, Int(geo.size.width / 230))
-                let w = (geo.size.width - CGFloat(cols + 1) * 8) / CGFloat(cols)
-                ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(max(80, w)), spacing: 8), count: cols), spacing: 8) {
-                        ForEach(Array(parts.enumerated()), id: \.offset) { idx, p in
-                            SlideTextCard(index: idx + 1, label: "\(p.first.chapter):\(p.first.verse)–\(p.last.chapter):\(p.last.verse)",
-                                          color: Color(red: 0.2, green: 0.45, blue: 0.85), text: p.text, width: max(80, w))
-                        }
-                    }
-                    .padding(8)
-                }
-            }
-        }
-        .background(pPanel)
     }
 }
 
@@ -824,5 +735,801 @@ struct CatalogRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Dictionary model
+
+final class DictionaryModel: ObservableObject {
+    weak var engine: Engine?
+    let custom: CustomDictionaryStore
+
+    @Published var kind: DictionaryKind { didSet { UserDefaults.standard.set(kind.rawValue, forKey: "dict.kind") } }
+    @Published var language: String { didSet { UserDefaults.standard.set(language, forKey: "dict.lang") } }
+    @Published var query = ""
+    @Published var results: [WordEntry] = []
+    @Published var selectedID: UUID?
+    @Published var loading = false
+    @Published var message = ""
+    @Published var targetID: UUID?
+    @Published var customList: [CustomDictionary] = []
+
+    init() {
+        custom = CustomDictionaryStore(libraryRoot: PresentationLibrary.defaultRoot)
+        kind = DictionaryKind(rawValue: UserDefaults.standard.string(forKey: "dict.kind") ?? "") ?? .macOS
+        language = UserDefaults.standard.string(forKey: "dict.lang") ?? "en"
+        customList = custom.dictionaries
+    }
+
+    var selected: WordEntry? { results.first { $0.id == selectedID } ?? results.first }
+
+    func search() {
+        let word = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !word.isEmpty else { return }
+        message = ""; results = []; selectedID = nil
+        switch kind {
+        case .macOS:
+            if let text = engine?.defineWord(word) {
+                results = [WordLookup.entryFromPlainDefinition(word: word, text: text, source: "macOS Dictionary")]
+            } else { message = "No definition in the dictionaries enabled in the macOS Dictionary app." }
+            selectedID = results.first?.id
+        case .custom:
+            results = custom.lookup(word)
+            if results.isEmpty { message = customList.isEmpty ? "No dictionaries imported yet — use Import." : "Not found in your dictionaries." }
+            selectedID = results.first?.id
+        default:
+            loading = true
+            let k = kind
+            WordLookup.fetch(k, word: word, language: language) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self, self.kind == k else { return }
+                    self.loading = false
+                    switch result {
+                    case .success(let list):
+                        self.results = list
+                        self.selectedID = list.first?.id
+                        if list.isEmpty { self.message = "No results for “\(word)” in \(k.rawValue)." }
+                    case .failure(let e):
+                        self.message = "Lookup failed: \(e.localizedDescription) (check the internet connection)"
+                    }
+                }
+            }
+        }
+    }
+
+    func currentTarget() -> DictionarySource? {
+        guard let engine else { return nil }
+        if let id = targetID, let s = engine.sources.first(where: { $0.id == id }) as? DictionarySource { return s }
+        return engine.sources.compactMap { $0 as? DictionarySource }.first
+    }
+
+    @discardableResult
+    func ensureTarget() -> DictionarySource? {
+        if let t = currentTarget() { targetID = t.id; return t }
+        guard let engine else { return nil }
+        let s = engine.addDictionaryInput()
+        targetID = s.id
+        return s
+    }
+
+    func loadIntoInput() {
+        guard let e = selected, let t = ensureTarget() else { return }
+        t.showEntry(e)
+    }
+    func preview() { loadIntoInput(); if let t = currentTarget(), let engine { engine.setPreview(t.id); engine.selectedSourceID = t.id } }
+    func program() { loadIntoInput(); if let t = currentTarget(), let engine { engine.keyedSources.remove(t.id); engine.setPreview(t.id); engine.cut() } }
+    func key() { loadIntoInput(); if let t = currentTarget(), let engine { engine.toggleKey(t.id) } }
+    func overlayLayer() {
+        guard let e = selected, let engine else { return }
+        engine.showDefinition(word: e.word, definition: e.bodyText(maxSenses: currentTarget()?.look.maxSenses ?? 2, examples: false))
+    }
+    func clear() { currentTarget()?.showEntry(nil) }
+
+    func importCustom() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.message = "Choose dictionary files: CSV or TSV (word, definition) or JSON"
+        panel.begin { [weak self] resp in
+            guard resp == .OK, let self else { return }
+            var n = 0
+            var failed: [String] = []
+            for u in panel.urls {
+                if (try? self.custom.importFile(u)) != nil { n += 1 } else { failed.append(u.lastPathComponent) }
+            }
+            self.customList = self.custom.dictionaries
+            self.message = "Imported \(n) dictionar\(n == 1 ? "y" : "ies")" + (failed.isEmpty ? "." : ". Not recognised: " + failed.joined(separator: ", "))
+        }
+    }
+    func toggleCustom(_ id: UUID, _ on: Bool) { custom.setEnabled(id, on); customList = custom.dictionaries }
+    func removeCustom(_ id: UUID) { custom.remove(id); customList = custom.dictionaries }
+}
+
+// MARK: - Helpers
+
+func colorBinding(_ b: Binding<RGBAColor>) -> Binding<Color> {
+    Binding(get: { b.wrappedValue.swiftUI }, set: { c in
+        let ns = NSColor(c).usingColorSpace(.sRGB) ?? NSColor.white
+        b.wrappedValue = RGBAColor(Double(ns.redComponent), Double(ns.greenComponent), Double(ns.blueComponent), Double(ns.alphaComponent))
+    })
+}
+
+func intBinding(_ b: Binding<Int>) -> Binding<Double> {
+    Binding(get: { Double(b.wrappedValue) }, set: { b.wrappedValue = Int($0.rounded()) })
+}
+
+// MARK: - Songs & Bible deck
+
+struct PresentDeck: View {
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var engine: Engine
+    var body: some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                HStack {
+                    DSSegmented(selection: $present.tab, options: [(PresentLibraryTab.songs, "Songs"), (PresentLibraryTab.bibles, "Bible")])
+                }
+                .padding(8).background(DS.bg2)
+                if present.tab == .songs { SongListPane() } else { BibleListPane() }
+            }
+            .background(DS.bg1)
+            .frame(minWidth: 220, idealWidth: 260, maxWidth: 380)
+
+            PresentCenter()
+                .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+
+            LookColumn(dictionary: false)
+                .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
+        }
+        .sheet(isPresented: $present.showCatalog) { BibleCatalogView().environmentObject(present) }
+    }
+}
+
+struct PresentOperatorBar: View {
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var engine: Engine
+    var body: some View {
+        let target = present.currentTarget()
+        let keyed = target.map { engine.isKeyed($0.id) } ?? false
+        let onAir = target.map { engine.programID == $0.id } ?? false
+        HStack(spacing: 6) {
+            Menu {
+                ForEach(engine.sources.compactMap { $0 as? PresentationSource }, id: \.id) { s in
+                    Button(s.name) { present.targetID = s.id }
+                }
+                Divider()
+                Button("New Presentation input") { let s = engine.addPresentationInput(); present.targetID = s.id }
+            } label: {
+                HStack(spacing: 4) {
+                    Circle().fill(onAir ? DS.program : (keyed ? DS.amber : DS.text3)).frame(width: 7, height: 7)
+                    Text(target?.name ?? "No presentation input").font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+            .help("Which input receives the slides you click")
+
+            Divider().frame(height: 18)
+            Button { present.step(-1) } label: { Image(systemName: "chevron.left") }.buttonStyle(.ds(.normal, .small)).help("Previous slide (←, Page Up)")
+            Button { present.step(1) } label: { Image(systemName: "chevron.right") }.buttonStyle(.ds(.normal, .small)).help("Next slide (→, Page Down)")
+            Button("Clear text") { present.clearText() }.buttonStyle(.ds(.normal, .small))
+            Button(target?.backgroundCleared == true ? "Show BG" : "Hide BG") { present.toggleBackground() }
+                .buttonStyle(.ds(.normal, .small, active: target?.backgroundCleared == true))
+            Spacer(minLength: 6)
+            Button("Preview") { present.sendToPreview() }.buttonStyle(.ds(.preview, .small, active: target.map { engine.previewID == $0.id } ?? false))
+            Button("Program") { present.cutToProgram() }.buttonStyle(.ds(.program, .small, active: onAir))
+            Button("Key over Program") { present.toggleKey() }.buttonStyle(.ds(.amber, .small, active: keyed))
+                .help("Show the slides on top of whatever is on Program (use a transparent background)")
+        }
+        .padding(.horizontal, 8).frame(height: 38).background(DS.bg2)
+        .overlay(Rectangle().fill(DS.lineSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+struct PresentCenter: View {
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var engine: Engine
+    var body: some View {
+        VStack(spacing: 0) {
+            PresentOperatorBar()
+            if present.tab == .songs { songArea } else { ScriptureArea() }
+            if !present.status.isEmpty {
+                Text(present.status).font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(height: 20).background(DS.bg2)
+            }
+        }
+        .background(DS.bg1)
+    }
+
+    @ViewBuilder private var songArea: some View {
+        if let id = present.selectedSongID, let song = present.song(id) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(song.title).font(.system(size: 13, weight: .bold)).foregroundColor(DS.text).lineLimit(1)
+                    Text([song.author, song.arrangement].filter { !$0.isEmpty }.joined(separator: "  ·  "))
+                        .font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(1)
+                }
+                Spacer()
+                Button(present.editingSong ? "Done editing" : "Edit lyrics") { present.editingSong.toggle() }
+                    .buttonStyle(.ds(.normal, .small, active: present.editingSong))
+            }
+            .padding(.horizontal, 10).frame(height: 40)
+            if present.editingSong {
+                SongEditor(initial: song).id(id)
+            } else if let t = present.currentTarget() {
+                SongSlideGrid(song: song, source: t)
+            } else {
+                NoTargetView()
+            }
+        } else {
+            VStack(spacing: 10) {
+                Image(systemName: "music.note.list").font(.system(size: 34)).foregroundColor(DS.text3)
+                Text("Choose a song on the left, create a new one, or import song files.").font(DS.label).foregroundColor(DS.text2)
+                HStack {
+                    Button("New Song") { present.newSong(); present.editingSong = true }.buttonStyle(.ds(.primary))
+                    Button("Import…") { present.importSongs() }.buttonStyle(.ds())
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+struct NoTargetView: View {
+    @EnvironmentObject var present: PresentModel
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "rectangle.dashed.badge.record").font(.system(size: 30)).foregroundColor(DS.text3)
+            Text("Slides are shown through a Presentation input.").font(DS.label).foregroundColor(DS.text2)
+            Button("Add Presentation input") { present.ensureTarget() }.buttonStyle(.ds(.primary))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct SongSlideGrid: View {
+    @EnvironmentObject var present: PresentModel
+    let song: Song
+    @ObservedObject var source: SlideSource
+    var body: some View {
+        SlideGrid(slides: present.songSlides(song, look: source.look), prefix: "song:\(song.id.uuidString)", source: source)
+    }
+}
+
+struct SlideGrid: View {
+    @EnvironmentObject var present: PresentModel
+    let slides: [SlideContent]
+    let prefix: String
+    @ObservedObject var source: SlideSource
+    var body: some View {
+        GeometryReader { geo in
+            let cols = max(1, Int((geo.size.width - 8) / 210))
+            let w = floor((geo.size.width - CGFloat(cols + 1) * 8) / CGFloat(cols))
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(max(100, w)), spacing: 8), count: cols), spacing: 8) {
+                    ForEach(Array(slides.enumerated()), id: \.offset) { idx, c in
+                        SlideCard(index: idx + 1, content: c, source: source, width: max(100, w),
+                                  live: present.liveKey == "\(prefix)#\(idx)")
+                            .onTapGesture { present.goLive(slides, index: idx, prefix: prefix) }
+                    }
+                }
+                .padding(8)
+            }
+        }
+    }
+}
+
+struct SlideCard: View {
+    @EnvironmentObject var present: PresentModel
+    let index: Int
+    let content: SlideContent
+    @ObservedObject var source: SlideSource
+    let width: CGFloat
+    let live: Bool
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Color.black
+                if let img = present.thumbnail(content, source: source) {
+                    Image(decorative: img, scale: 1).resizable().aspectRatio(16.0 / 9.0, contentMode: .fit)
+                }
+            }
+            .frame(width: width, height: width * 9 / 16)
+            HStack(spacing: 5) {
+                Text("\(index)").font(DS.mono(9, .bold)).foregroundColor(live ? .white : DS.text3)
+                Text(content.label).font(.system(size: 10, weight: .semibold)).foregroundColor(live ? .white : DS.text2).lineLimit(1)
+                Spacer()
+                if live { Text("LIVE").font(.system(size: 8, weight: .heavy)).foregroundColor(.white) }
+            }
+            .padding(.horizontal, 6).frame(width: width, height: 20)
+            .background(live ? DS.program : DS.bg2)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(live ? DS.program : DS.line, lineWidth: live ? 2 : 1))
+        .contentShape(Rectangle())
+    }
+}
+
+struct ScriptureArea: View {
+    @EnvironmentObject var present: PresentModel
+    @State private var showSearch = false
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Picker("", selection: $present.selectedBibleID) {
+                    ForEach(present.bibles) { b in Text(b.abbreviation).tag(Optional(b.id)) }
+                }
+                .labelsHidden().frame(width: 100)
+                TextField("Reference — e.g. John 3:16-18, Ps 23, 1 Cor 13:4-7", text: $present.reference)
+                    .dsField()
+                    .onSubmit { present.lookUp() }
+                Button("Go") { present.lookUp() }.buttonStyle(.ds(.primary, .regular))
+                DSIconButton(symbol: "text.magnifyingglass", help: "Search words", active: showSearch) { showSearch.toggle() }
+            }
+            .padding(8)
+            if !present.passageError.isEmpty {
+                Text(present.passageError).font(.system(size: 11)).foregroundColor(DS.amber)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10)
+            }
+            if showSearch {
+                VStack(spacing: 4) {
+                    TextField("Search words in this Bible", text: $present.searchText).dsField()
+                        .onSubmit { present.runSearch() }
+                    List(present.searchResults, id: \.self) { v in
+                        Button {
+                            present.reference = "\(present.currentStore?.bookName(v.book) ?? "") \(v.chapter):\(v.verse)"
+                            present.lookUp()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("\(present.currentStore?.bookName(v.book) ?? "") \(v.chapter):\(v.verse)")
+                                    .font(.system(size: 10, weight: .bold)).foregroundColor(DS.amber)
+                                Text(v.text).font(.system(size: 11)).lineLimit(2)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .frame(height: 150)
+                }
+                .padding(.horizontal, 8)
+            }
+            if let t = present.currentTarget() {
+                ScriptureSlideGrid(source: t)
+            } else {
+                NoTargetView()
+            }
+        }
+    }
+}
+
+struct ScriptureSlideGrid: View {
+    @EnvironmentObject var present: PresentModel
+    @ObservedObject var source: SlideSource
+    var body: some View {
+        if present.bibles.isEmpty {
+            VStack(spacing: 8) {
+                Text("No Bibles installed.").font(DS.label).foregroundColor(DS.text2)
+                Button("Get Bibles…") { present.showCatalog = true; present.loadCatalog() }.buttonStyle(.ds(.primary))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            SlideGrid(slides: present.scriptureSlides(look: source.look), prefix: "bible:\(present.passageTitle)", source: source)
+        }
+    }
+}
+
+/// Text-only slide preview used next to the lyric editor.
+struct SlidePreviewGrid: View {
+    let song: Song
+    var body: some View {
+        let slides = song.generatedSlides()
+        VStack(spacing: 0) {
+            PanelHeader(title: "Slides", icon: "rectangle.grid.2x2") {
+                Text("\(slides.count)").font(DS.mono(10)).foregroundColor(DS.text2)
+            }
+            GeometryReader { geo in
+                let cols = max(1, Int(geo.size.width / 200))
+                let w = (geo.size.width - CGFloat(cols + 1) * 8) / CGFloat(cols)
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(max(80, w)), spacing: 8), count: cols), spacing: 8) {
+                        ForEach(Array(slides.enumerated()), id: \.offset) { idx, s in
+                            SlideTextCard(index: idx + 1, label: s.label, color: s.kind.color.swiftUI,
+                                          text: s.lines.joined(separator: "\n"), width: max(80, w))
+                        }
+                    }
+                    .padding(8)
+                }
+            }
+        }
+        .background(DS.bg1)
+    }
+}
+
+// MARK: - Format (look) editor
+
+struct LookColumn: View {
+    let dictionary: Bool
+    @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var dict: DictionaryModel
+    var body: some View {
+        VStack(spacing: 0) {
+            let target: SlideSource? = dictionary ? (dict.currentTarget() as SlideSource?) : (present.currentTarget() as SlideSource?)
+            PanelHeader(title: "Format", icon: "paintbrush.pointed") {
+                if let t = target { Text(t.name).font(.system(size: 10)).foregroundColor(DS.text3).lineLimit(1) }
+            }
+            if let t = target {
+                LookEditor(source: t)
+            } else {
+                VStack(spacing: 8) {
+                    Text("Add a \(dictionary ? "Dictionary" : "Presentation") input to format its display.")
+                        .font(DS.small).foregroundColor(DS.text2).multilineTextAlignment(.center)
+                    Button("Add input") { if dictionary { _ = dict.ensureTarget() } else { _ = present.ensureTarget() } }.buttonStyle(.ds(.primary))
+                }
+                .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(DS.bg1)
+    }
+}
+
+struct LookEditor: View {
+    @ObservedObject var source: SlideSource
+    @EnvironmentObject var present: PresentModel
+    @State private var families: [String] = []
+    @State private var showSave = false
+    @State private var saveName = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                presetRow
+                backgroundSection
+                SectionLabel("Layout")
+                layoutSection
+                SectionLabel("Main text")
+                TextStyleEditor(style: $source.look.body, families: families)
+                if source is DictionarySource || source.look.showTitle {
+                    SectionLabel(source is DictionarySource ? "Headword" : "Title")
+                    TextStyleEditor(style: $source.look.title, families: families)
+                }
+                SectionLabel(source is DictionarySource ? "Source line" : "Reference / credits")
+                FieldRow(label: "Position") {
+                    Picker("", selection: $source.look.footerPosition) {
+                        ForEach(FooterPosition.allCases) { p in Text(p.rawValue).tag(p) }
+                    }.labelsHidden()
+                }
+                if source.look.footerPosition != .hidden {
+                    TextStyleEditor(style: $source.look.footer, families: families)
+                }
+                SectionLabel("Text box")
+                boxSection
+                SectionLabel("Content")
+                contentSection
+            }
+            .padding(10)
+        }
+        .onAppear { if families.isEmpty { families = NSFontManager.shared.availableFontFamilies.sorted() } }
+    }
+
+    private var presetRow: some View {
+        HStack(spacing: 6) {
+            Menu {
+                let _ = present.looksRevision
+                ForEach(present.looks.all) { l in
+                    Button(l.name) { var n = l; n.id = source.look.id; source.look = n }
+                }
+                if !present.looks.looks.isEmpty {
+                    Divider()
+                    Menu("Delete saved look") {
+                        ForEach(present.looks.looks) { l in Button(l.name) { present.deleteLook(l.id) } }
+                    }
+                }
+            } label: { Label("Looks", systemImage: "square.stack") }
+            .menuStyle(.borderlessButton).fixedSize()
+            Spacer()
+            Button("Save look…") { saveName = source.look.name; showSave = true }.buttonStyle(.ds(.normal, .small))
+                .popover(isPresented: $showSave) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Save this look").font(.system(size: 12, weight: .bold))
+                        TextField("Name", text: $saveName).textFieldStyle(.roundedBorder).frame(width: 220)
+                        HStack {
+                            Spacer()
+                            Button("Save") { present.saveLook(source.look, as: saveName); showSave = false }.keyboardShortcut(.defaultAction)
+                        }
+                    }
+                    .padding(12)
+                }
+        }
+    }
+
+    private var backgroundSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Background")
+            FieldRow(label: "Type") {
+                Picker("", selection: $source.look.background.kind) {
+                    Text("Transparent (for key)").tag(BackgroundKind.transparent)
+                    Text("Solid colour").tag(BackgroundKind.color)
+                    Text("Gradient").tag(BackgroundKind.gradient)
+                    Text("Image").tag(BackgroundKind.image)
+                    Text("Video (loops)").tag(BackgroundKind.video)
+                }.labelsHidden()
+            }
+            switch source.look.background.kind {
+            case .color:
+                DSColorWell(label: "Colour", color: colorBinding($source.look.background.color))
+            case .gradient:
+                DSColorWell(label: "From", color: colorBinding($source.look.background.color))
+                DSColorWell(label: "To", color: colorBinding($source.look.background.color2))
+                ParamSlider(label: "Angle", value: $source.look.background.angle, range: 0...360, defaultValue: 90, format: "%.0f°")
+            case .image, .video:
+                HStack(spacing: 6) {
+                    Text(source.look.background.media.map { URL(fileURLWithPath: $0.path).lastPathComponent } ?? "No file chosen")
+                        .font(DS.small).foregroundColor(DS.text2).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button("Choose…") { chooseMedia(video: source.look.background.kind == .video) }.buttonStyle(.ds(.normal, .small))
+                }
+                if let p = source.backgroundProblem { Text(p).font(.system(size: 10)).foregroundColor(DS.amber) }
+                FieldRow(label: "Fit") {
+                    DSSegmented(selection: $source.look.background.fit, options: [(FitMode.fill, "Fill"), (FitMode.fit, "Fit"), (FitMode.stretch, "Stretch")])
+                }
+            default:
+                Text("Only the text is drawn — key it over Program, or put it in a layout above a camera.")
+                    .font(.system(size: 10)).foregroundColor(DS.text3)
+            }
+            if source.look.background.kind != .transparent && source.look.background.kind != .none {
+                ParamSlider(label: "Darken background", value: $source.look.dim, range: 0...0.9, defaultValue: 0, format: "%.2f")
+            }
+        }
+    }
+
+    private var layoutSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldRow(label: "Area") {
+                Picker("", selection: $source.look.region) {
+                    ForEach(LookRegion.allCases) { r in Text(r.rawValue).tag(r) }
+                }.labelsHidden()
+            }
+            if source.look.region == .custom {
+                ParamSlider(label: "Left", value: $source.look.custom.x, range: 0...0.95, format: "%.2f")
+                ParamSlider(label: "Top", value: $source.look.custom.y, range: 0...0.95, format: "%.2f")
+                ParamSlider(label: "Width", value: $source.look.custom.width, range: 0.05...1, format: "%.2f")
+                ParamSlider(label: "Height", value: $source.look.custom.height, range: 0.05...1, format: "%.2f")
+            }
+            FieldRow(label: "Vertical") {
+                DSSegmented(selection: $source.look.verticalAlign, options: [(VerticalAlign.top, "Top"), (VerticalAlign.middle, "Middle"), (VerticalAlign.bottom, "Bottom")])
+            }
+            ParamSlider(label: "Side margin", value: $source.look.marginX, range: 0...0.3, defaultValue: 0.06, format: "%.2f")
+            ParamSlider(label: "Top/bottom margin", value: $source.look.marginY, range: 0...0.3, defaultValue: 0.08, format: "%.2f")
+            Toggle("Shrink text to fit", isOn: $source.look.shrinkToFit).font(DS.small)
+            ParamSlider(label: "Fade between slides", value: $source.look.fadeDuration, range: 0...1.5, defaultValue: 0.35, format: "%.2fs")
+        }
+    }
+
+    private var boxSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            DSColorWell(label: "Box colour (set opacity for none)", color: colorBinding($source.look.boxColor))
+            if source.look.boxColor.a > 0.001 {
+                Toggle("Full-width band", isOn: $source.look.boxFullWidth).font(DS.small)
+                ParamSlider(label: "Padding", value: $source.look.boxPadding, range: 0...120, defaultValue: 28, format: "%.0f")
+                ParamSlider(label: "Corner radius", value: $source.look.boxRadius, range: 0...80, defaultValue: 10, format: "%.0f")
+            }
+        }
+    }
+
+    @ViewBuilder private var contentSection: some View {
+        if source is DictionarySource {
+            ParamSlider(label: "Definitions shown", value: intBinding($source.look.maxSenses), range: 1...8, defaultValue: 3, format: "%.0f")
+            Toggle("Show examples", isOn: $source.look.showExamples).font(DS.small)
+            Toggle("Show headword", isOn: $source.look.showTitle).font(DS.small)
+        } else {
+            Toggle("Verse numbers", isOn: $source.look.showVerseNumbers).font(DS.small)
+            ParamSlider(label: "Scripture: max characters per slide", value: intBinding($source.look.maxCharsPerSlide), range: 60...700, defaultValue: 280, format: "%.0f")
+            ParamSlider(label: "Songs: lines per slide (0 = as written)", value: intBinding($source.look.linesPerSlide), range: 0...8, defaultValue: 0, format: "%.0f")
+            Toggle("Show song title", isOn: $source.look.showTitle).font(DS.small)
+        }
+    }
+
+    private func chooseMedia(video: Bool) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = video ? [.movie, .video, .mpeg4Movie, .quickTimeMovie] : [.image]
+        panel.begin { resp in
+            guard resp == .OK, let url = panel.url else { return }
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+            source.look.background.media = MediaRef(path: url.path, bytes: size)
+        }
+    }
+}
+
+struct TextStyleEditor: View {
+    @Binding var style: TextStyle
+    let families: [String]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldRow(label: "Font") {
+                Picker("", selection: $style.fontName) {
+                    if !families.contains(style.fontName) { Text(style.fontName).tag(style.fontName) }
+                    ForEach(families, id: \.self) { f in Text(f).tag(f) }
+                }.labelsHidden()
+            }
+            HStack(spacing: 4) {
+                Toggle(isOn: $style.bold) { Image(systemName: "bold") }.toggleStyle(.button)
+                Toggle(isOn: $style.italic) { Image(systemName: "italic") }.toggleStyle(.button)
+                Toggle(isOn: $style.underline) { Image(systemName: "underline") }.toggleStyle(.button)
+                Spacer()
+                ColorPicker("", selection: colorBinding($style.color), supportsOpacity: true).labelsHidden()
+            }
+            DSSegmented(selection: $style.align, options: [(TextAlign.left, "Left"), (TextAlign.center, "Centre"), (TextAlign.right, "Right"), (TextAlign.justified, "Justify")])
+            ParamSlider(label: "Size", value: $style.size, range: 12...240, defaultValue: 80, format: "%.0f pt")
+            ParamSlider(label: "Line spacing", value: $style.lineSpacing, range: 0.7...2.2, defaultValue: 1.05, format: "%.2f×")
+            ParamSlider(label: "Letter spacing", value: $style.letterSpacing, range: -5...30, defaultValue: 0, format: "%.1f")
+            FieldRow(label: "Letters") {
+                Picker("", selection: $style.textCase) {
+                    Text("As typed").tag(TextCase.asTyped); Text("UPPERCASE").tag(TextCase.upper)
+                    Text("lowercase").tag(TextCase.lower); Text("Title Case").tag(TextCase.title)
+                }.labelsHidden()
+            }
+            HStack {
+                Text("Outline").font(DS.small).foregroundColor(DS.text2)
+                Spacer()
+                ColorPicker("", selection: colorBinding($style.outlineColor), supportsOpacity: true).labelsHidden()
+            }
+            ParamSlider(label: "Outline width", value: $style.outlineWidth, range: 0...12, defaultValue: 0, format: "%.1f")
+            HStack {
+                Toggle("Shadow", isOn: $style.shadow).font(DS.small)
+                Spacer()
+                if style.shadow { ColorPicker("", selection: colorBinding($style.shadowColor), supportsOpacity: true).labelsHidden() }
+            }
+            if style.shadow {
+                ParamSlider(label: "Shadow softness", value: $style.shadowBlur, range: 0...40, defaultValue: 8, format: "%.0f")
+            }
+        }
+    }
+}
+
+// MARK: - Dictionary deck
+
+struct DictionaryDeck: View {
+    @EnvironmentObject var dict: DictionaryModel
+    @EnvironmentObject var engine: Engine
+    var body: some View {
+        HSplitView {
+            DictionarySearchColumn()
+                .frame(minWidth: 260, idealWidth: 320, maxWidth: 440)
+            DictionaryPreviewColumn()
+                .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
+            LookColumn(dictionary: true)
+                .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
+        }
+    }
+}
+
+struct DictionarySearchColumn: View {
+    @EnvironmentObject var dict: DictionaryModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldRow(label: "Dictionary", labelWidth: 70) {
+                Picker("", selection: $dict.kind) {
+                    ForEach(DictionaryKind.allCases) { k in Text(k.rawValue).tag(k) }
+                }.labelsHidden()
+            }
+            Text(dict.kind.detail).font(.system(size: 10)).foregroundColor(DS.text3).fixedSize(horizontal: false, vertical: true)
+            if dict.kind.usesLanguage {
+                FieldRow(label: "Language", labelWidth: 70) {
+                    TextField("en", text: $dict.language).dsField().frame(width: 70)
+                    Text("code: en, fr, es, pt, de, sw, ak…").font(.system(size: 9)).foregroundColor(DS.text3)
+                }
+            }
+            if dict.kind == .custom {
+                HStack {
+                    Button("Import…") { dict.importCustom() }.buttonStyle(.ds(.normal, .small))
+                    Spacer()
+                }
+                ForEach(dict.customList) { d in
+                    HStack {
+                        Toggle(d.name, isOn: Binding(get: { d.enabled }, set: { dict.toggleCustom(d.id, $0) })).font(DS.small)
+                        Spacer()
+                        Text("\(d.entries.count)").font(DS.mono(9)).foregroundColor(DS.text3)
+                        Button { dict.removeCustom(d.id) } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundColor(DS.text3)
+                    }
+                }
+            }
+            HStack(spacing: 6) {
+                TextField("Type a word or name", text: $dict.query).dsField().onSubmit { dict.search() }
+                Button("Search") { dict.search() }.buttonStyle(.ds(.primary))
+            }
+            if dict.loading { HStack { ProgressView().controlSize(.small); Text("Looking up…").font(DS.small).foregroundColor(DS.text2) } }
+            if !dict.message.isEmpty { Text(dict.message).font(.system(size: 10)).foregroundColor(DS.amber) }
+            List(selection: $dict.selectedID) {
+                ForEach(dict.results) { e in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(e.word).font(.system(size: 12, weight: .bold))
+                            Text(e.phonetic).font(.system(size: 10)).foregroundColor(DS.text3)
+                        }
+                        Text(e.senses.first?.definition ?? e.synonyms.joined(separator: ", "))
+                            .font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(2)
+                        Text(e.source).font(.system(size: 9)).foregroundColor(DS.text3)
+                    }
+                    .tag(e.id)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .padding(10)
+        .background(DS.bg1)
+    }
+}
+
+struct DictionaryPreviewColumn: View {
+    @EnvironmentObject var dict: DictionaryModel
+    @EnvironmentObject var engine: Engine
+    var body: some View {
+        let target = dict.currentTarget()
+        let keyed = target.map { engine.isKeyed($0.id) } ?? false
+        let onAir = target.map { engine.programID == $0.id } ?? false
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Menu {
+                    ForEach(engine.sources.compactMap { $0 as? DictionarySource }, id: \.id) { s in
+                        Button(s.name) { dict.targetID = s.id }
+                    }
+                    Divider()
+                    Button("New Dictionary input") { let s = engine.addDictionaryInput(); dict.targetID = s.id }
+                } label: {
+                    HStack(spacing: 4) {
+                        Circle().fill(onAir ? DS.program : (keyed ? DS.amber : DS.text3)).frame(width: 7, height: 7)
+                        Text(target?.name ?? "No dictionary input").font(.system(size: 11, weight: .semibold))
+                    }
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                Spacer()
+                Button("Load into input") { dict.loadIntoInput() }.buttonStyle(.ds(.normal, .small)).disabled(dict.selected == nil)
+                Button("Preview") { dict.preview() }.buttonStyle(.ds(.preview, .small)).disabled(dict.selected == nil)
+                Button("Program") { dict.program() }.buttonStyle(.ds(.program, .small, active: onAir)).disabled(dict.selected == nil)
+                Button("Key over Program") { dict.key() }.buttonStyle(.ds(.amber, .small, active: keyed)).disabled(dict.selected == nil && !keyed)
+                Button("As overlay layer") { dict.overlayLayer() }.buttonStyle(.ds(.normal, .small)).disabled(dict.selected == nil)
+                Button("Clear") { dict.clear() }.buttonStyle(.ds(.ghost, .small))
+            }
+            .padding(.horizontal, 8).frame(height: 38).background(DS.bg2)
+            .overlay(Rectangle().fill(DS.lineSoft).frame(height: 1), alignment: .bottom)
+
+            GeometryReader { geo in
+                let w = min(geo.size.width - 24, (geo.size.height - 44) * 16 / 9)
+                VStack(spacing: 8) {
+                    if let t = target, let e = dict.selected {
+                        DictionaryCandidate(source: t, entry: e, width: max(120, w))
+                        Text("Preview of the search result — not on air until you load it or press Preview / Program / Key.")
+                            .font(.system(size: 10)).foregroundColor(DS.text3)
+                    } else if target == nil {
+                        VStack(spacing: 8) {
+                            Image(systemName: "character.book.closed").font(.system(size: 30)).foregroundColor(DS.text3)
+                            Text("Search a word, then show it on its own Dictionary input.").font(DS.label).foregroundColor(DS.text2)
+                            Button("Add Dictionary input") { dict.ensureTarget() }.buttonStyle(.ds(.primary))
+                        }
+                    } else {
+                        Text("Search for a word to preview its card here.").font(DS.label).foregroundColor(DS.text2)
+                    }
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+            }
+        }
+        .background(DS.bg1)
+    }
+}
+
+struct DictionaryCandidate: View {
+    @EnvironmentObject var present: PresentModel
+    @ObservedObject var source: SlideSource
+    let entry: WordEntry
+    let width: CGFloat
+    var body: some View {
+        let content = DictionarySource.content(for: entry, look: source.look)
+        ZStack {
+            Color.black
+            if let img = present.thumbnail(content, source: source, width: 960) {
+                Image(decorative: img, scale: 1).resizable().aspectRatio(16.0 / 9.0, contentMode: .fit)
+            }
+        }
+        .frame(width: width, height: width * 9 / 16)
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(DS.line, lineWidth: 1))
     }
 }
