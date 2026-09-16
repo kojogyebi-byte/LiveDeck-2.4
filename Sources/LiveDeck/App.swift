@@ -7,6 +7,9 @@ struct LiveDeckApp: App {
     @StateObject private var dictionary = DictionaryModel()
     @StateObject private var images = ImageSearchModel()
     @StateObject private var presets = PresetStore()
+    @StateObject private var backgrounds = BackgroundsModel()
+    @StateObject private var generator = GeneratorModel()
+    @StateObject private var automation = AutomationModel()
 
     var body: some Scene {
         WindowGroup("LiveDeck Studio") {
@@ -18,11 +21,17 @@ struct LiveDeckApp: App {
                 .environmentObject(dictionary)
                 .environmentObject(images)
                 .environmentObject(presets)
+                .environmentObject(backgrounds)
+                .environmentObject(generator)
+                .environmentObject(automation)
                 .frame(minWidth: 1280, minHeight: 760)
                 .onAppear {
                     present.engine = engine
                     dictionary.engine = engine
                     images.engine = engine
+                    backgrounds.engine = engine
+                    generator.engine = engine
+                    automation.engine = engine
                     engine.start()
                 }
         }

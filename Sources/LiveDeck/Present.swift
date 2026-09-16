@@ -6,7 +6,7 @@ import PresentationKit
 
 // MARK: - Lower deck tabs (same page as the switcher)
 
-enum DeckTab: Int { case inputs = 0, present = 1, dictionary = 2, images = 3, audio = 4 }
+enum DeckTab: Int { case inputs = 0, present = 1, dictionary = 2, images = 3, audio = 4, automation = 5 }
 
 enum PresentLibraryTab: String, CaseIterable, Identifiable {
     case songs = "Songs"
@@ -30,6 +30,8 @@ extension RGBAColor {
 /// switcher), so lyrics and scripture can go to Preview, Program, or be keyed over Program.
 final class PresentModel: ObservableObject {
     @Published var deck: Int = DeckTab.inputs.rawValue
+    /// Media tab section: 0 web images · 1 backgrounds library · 2 generator
+    @Published var mediaSection = 0
     @Published var tab: PresentLibraryTab = .songs
     @Published var editingSong = false
     @Published var findingLyrics = false
@@ -74,6 +76,10 @@ final class PresentModel: ObservableObject {
     @Published var passageTitle = ""
     @Published var passageError = ""
     @Published var searchText = ""
+    /// Extra Bible versions shown with the selected one (max 3).
+    @Published var parallelBibleIDs: [String] = UserDefaults.standard.stringArray(forKey: "present.parallel") ?? [] {
+        didSet { UserDefaults.standard.set(parallelBibleIDs, forKey: "present.parallel") }
+    }
     @Published var searchResults: [BibleVerse] = []
     @Published var maxCharsPerSlide = 280
     private var installTasks: [String: URLSessionDownloadTask] = [:]
@@ -378,9 +384,33 @@ final class PresentModel: ObservableObject {
         }
     }
 
+    func toggleParallel(_ id: String) {
+        if let i = parallelBibleIDs.firstIndex(of: id) { parallelBibleIDs.remove(at: i) }
+        else if parallelBibleIDs.count < 3 { parallelBibleIDs.append(id) }
+        else { status = "Up to 4 versions can be shown together." }
+    }
+
+    var activeParallelStores: [BibleStore] {
+        parallelBibleIDs.filter { $0 != selectedBibleID }.compactMap { library.bibles.store($0) }
+    }
+
     func scriptureSlides(look: SlideLook) -> [SlideContent] {
         guard let store = currentStore, !passage.isEmpty else { return [] }
         let abbr = store.info.abbreviation
+        let extras = activeParallelStores
+        if !extras.isEmpty, let ref = store.parseReference(reference) {
+            let others = extras.map { (label: $0.info.abbreviation, verses: $0.verses(ref)) }
+            let slides = ParallelScripture.slides(primaryLabel: abbr, primary: passage, others: others,
+                                                  maxChars: look.maxCharsPerSlide, verseNumbers: look.showVerseNumbers)
+            let labels = ([abbr] + others.map { $0.label }).joined(separator: " · ")
+            return slides.map { p in
+                let r = ScriptureReference(book: p.first.book, startChapter: p.first.chapter, startVerse: p.first.verse,
+                                           endChapter: p.last.chapter, endVerse: p.last.verse)
+                let refText = r.display(bookName: store.bookName(p.first.book))
+                return SlideContent(title: "", body: p.columns.first?.text ?? "", footer: refText + "  (" + labels + ")",
+                                    label: refText, columns: p.columns.map { SlideColumn(label: $0.label, text: $0.text) })
+            }
+        }
         return BibleStore.slideTexts(passage, maxChars: look.maxCharsPerSlide, verseNumbers: look.showVerseNumbers).map { p in
             let r = ScriptureReference(book: p.first.book, startChapter: p.first.chapter, startVerse: p.first.verse,
                                        endChapter: p.last.chapter, endVerse: p.last.verse)
@@ -1089,6 +1119,27 @@ struct ScriptureArea: View {
                     .dsField()
                     .onSubmit { present.lookUp() }
                 Button("Go") { present.lookUp() }.buttonStyle(.ds(.primary, .regular))
+                Menu {
+                    Text("Show together with \(present.currentStore?.info.abbreviation ?? "the selected version")")
+                    ForEach(present.bibles.filter { $0.id != present.selectedBibleID }) { b in
+                        Button { present.toggleParallel(b.id) } label: {
+                            if present.parallelBibleIDs.contains(b.id) { Label(b.abbreviation + " — " + b.name, systemImage: "checkmark") }
+                            else { Text(b.abbreviation + " — " + b.name) }
+                        }
+                    }
+                    if !present.parallelBibleIDs.isEmpty {
+                        Divider()
+                        Button("Show one version only") { present.parallelBibleIDs = [] }
+                    }
+                } label: {
+                    Label(present.activeParallelStores.isEmpty ? "Versions" : "\(present.activeParallelStores.count + 1) versions",
+                          systemImage: "rectangle.split.3x1")
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                .help("Show several Bible versions on the same screen")
+                if !present.activeParallelStores.isEmpty, let t = present.currentTarget() {
+                    ParallelLayoutToggle(source: t)
+                }
                 DSIconButton(symbol: "text.magnifyingglass", help: "Search words", active: showSearch) { showSearch.toggle() }
             }
             .padding(8)
@@ -1123,6 +1174,14 @@ struct ScriptureArea: View {
                 NoTargetView()
             }
         }
+    }
+}
+
+struct ParallelLayoutToggle: View {
+    @ObservedObject var source: SlideSource
+    var body: some View {
+        DSSegmented(selection: $source.look.parallelLayout, options: [(ParallelLayout.sideBySide, "Side by side"), (ParallelLayout.stacked, "Stacked")])
+            .frame(width: 170)
     }
 }
 
@@ -1366,6 +1425,11 @@ struct LookEditor: View {
             Toggle("Show headword", isOn: $source.look.showTitle).font(DS.small)
         } else {
             Toggle("Verse numbers", isOn: $source.look.showVerseNumbers).font(DS.small)
+            FieldRow(label: "Versions") {
+                DSSegmented(selection: $source.look.parallelLayout, options: [(ParallelLayout.sideBySide, "Side by side"), (ParallelLayout.stacked, "Stacked")])
+            }
+            Toggle("Show version names", isOn: $source.look.showVersionLabels).font(DS.small)
+            ParamSlider(label: "Gap between versions", value: $source.look.columnGap, range: 0...160, defaultValue: 48, format: "%.0f")
             ParamSlider(label: "Scripture: max characters per slide", value: intBinding($source.look.maxCharsPerSlide), range: 60...700, defaultValue: 280, format: "%.0f")
             ParamSlider(label: "Songs: lines per slide (0 = as written)", value: intBinding($source.look.linesPerSlide), range: 0...8, defaultValue: 0, format: "%.0f")
             Toggle("Show song title", isOn: $source.look.showTitle).font(DS.small)

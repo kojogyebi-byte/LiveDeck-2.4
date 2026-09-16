@@ -1,4 +1,22 @@
-# LiveDeck Studio (macOS) — v4.3.0
+# LiveDeck Studio (macOS) — v4.4.0
+
+**New in 4.4:**
+- **Real program audio engine.** Video files, audio files and microphones now all go through one mixer (AVAudioEngine). File audio is taken out of AVPlayer with an MTAudioProcessingTap, so **mute, faders, trim, ON/AFV, pan, solo, effects and the Master fader/mute really change what you hear, record and stream**. Meters read the real samples (left and right). Recording and stream audio are now the stereo Program mix (AAC 192 k). The old "Mix input faders into recording & stream" switch is gone — the console mix is always what goes out.
+- **Monitoring:** MONITOR knob on the Master strip; microphones stay out of the Mac's speakers unless "hear mics" is on (no feedback), but are always recorded/streamed; headphones button = solo to the speakers only.
+- **Input tab audio redesigned in the console style:** fader with L/R meters and dB readout, INPUT and PAN knobs, AFV/ON, MUTE, solo; **Audio Effects** card with EQ and dynamics graphs and knob grids (same look as the Audio Mixer).
+- **Media tab** (was Images) with three sections:
+  - *Web images* — as before.
+  - *Backgrounds library* — free videos and images from **NASA (public domain, no key)**, **Pixabay** and **Pexels** (free API keys); download into your library, favourites, import your own; use as input/Preview/Program or as the Songs & Bible / Dictionary background. **First launch offers a starter pack** (NASA space & sky media + generated backgrounds).
+  - *Generator* — **abstract backgrounds** (gradient flow, aurora, bokeh, light rays, starfield, waves, pulse rings, neon grid) and **transparent effects** to key over Program (rising particles, snow, confetti, sparkles, light leak, vignette); 14 presets, 3 colours, speed/amount/size/softness, shuffle; add as a live input, save a still or export a **seamless loop video**.
+- **Automation tab:** cues that Show / Hide / Toggle overlays (lower thirds, logos) and keyed inputs, or Cut/Preview inputs — at a time of day, after a delay, repeating, when an input goes on Program, or when recording/streaming starts; hold time, undo when the condition ends, run limits, countdowns, Run now, activity log. Saved to `Library/automation.json`.
+- **Several Bible versions on one screen:** Versions menu (up to 4 translations), side by side or stacked, version names, shared text size, same verses on every version (the longest version decides where slides split).
+- Presets now save generator inputs. Help has new topics (automation, backgrounds, generator, parallel versions, monitoring).
+- `PresentationKit` gains `Automation.swift`, `Backgrounds.swift`, `ParallelScripture.swift`; **53 automated tests**.
+- Known limits: online stream inputs (HLS .m3u8) and web pages still play their sound directly (not through the mixer); file audio reaches the speakers ~30–60 ms later than before because it now passes through the mixer.
+
+---
+
+# Previous — v4.3.0
 
 **New in 4.3:**
 - **Help & Find a tool.** Press **⌘K**, the *Find a tool* box in the top bar, or **?** (also Help menu → LiveDeck Help, ⌘?). Type what you want to do — *blend*, *projector*, *lyrics*, *stream*, *preset* — and results appear instantly. Each topic has step-by-step instructions, related topics and a **Show me** button that opens the right tab. The guide covers every part of the app in 12 categories, from *Run your first service* to keyboard shortcuts.

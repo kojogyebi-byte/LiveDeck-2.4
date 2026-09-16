@@ -79,8 +79,7 @@ class Source: NSObject, ObservableObject, Identifiable {
     var onReachedEnd: (() -> Void)?
 
     // Per-input audio device + live level
-    @Published var audioDeviceID: String? { didSet { meter.start(deviceID: audioDeviceID) } }
-    let meter = InputAudioMeter()
+    @Published var audioDeviceID: String?
 
     // Per-input audio effects (parameters; metering is live)
     // Per-input audio effects (applied to the recorded mix when fxEnabled)
@@ -273,6 +272,9 @@ final class ScreenSource: Source, SCStreamOutput {
 // MARK: - Video file (loops)
 
 final class FileSource: Source, MediaPlayback {
+    /// True once the file's audio is routed through the program audio engine.
+    var audioRouted = false
+    var audioItem: AVPlayerItem? { player.currentItem }
     private let player: AVPlayer
     private let output: AVPlayerItemVideoOutput
     private var loopObserver: NSObjectProtocol?
@@ -310,7 +312,7 @@ final class FileSource: Source, MediaPlayback {
         }
         let vt = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.player.volume = self.muted ? 0 : Float(min(1, self.channelGain))
+            self.player.volume = self.audioRouted ? 1 : (self.muted ? 0 : Float(min(1, self.channelGain)))
         }
         RunLoop.main.add(vt, forMode: .common); volTimer = vt
         if autoplay {
@@ -457,6 +459,8 @@ final class BarsSource: Source {
 // MARK: - Audio-only file (plays + loops; no video)
 
 final class AudioFileSource: Source, MediaPlayback {
+    var audioRouted = false
+    var audioItem: AVPlayerItem? { player.currentItem }
     private let player: AVPlayer
     private var loopObserver: NSObjectProtocol?
     private var volTimer: Timer?
@@ -483,7 +487,7 @@ final class AudioFileSource: Source, MediaPlayback {
         }
         let vt = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.player.volume = self.muted ? 0 : Float(min(1, self.channelGain))
+            self.player.volume = self.audioRouted ? 1 : (self.muted ? 0 : Float(min(1, self.channelGain)))
         }
         RunLoop.main.add(vt, forMode: .common); volTimer = vt
         if autoplay { player.play() } else { paused = true }
@@ -528,36 +532,6 @@ final class EmptySource: Source {
 }
 
 // MARK: - Per-input audio meter
-
-final class InputAudioMeter: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
-    private var session: AVCaptureSession?
-    private let queue = DispatchQueue(label: "input.audio.meter")
-    private(set) var currentLevel: Float = 0   // read on main by the engine's meter timer
-    private var smoothed: Float = 0
-
-    func start(deviceID: String?) {
-        stop()
-        guard let id = deviceID, let dev = AVCaptureDevice(uniqueID: id),
-              let input = try? AVCaptureDeviceInput(device: dev) else { currentLevel = 0; return }
-        let s = AVCaptureSession()
-        if s.canAddInput(input) { s.addInput(input) }
-        let out = AVCaptureAudioDataOutput()
-        out.setSampleBufferDelegate(self, queue: queue)
-        if s.canAddOutput(out) { s.addOutput(out) }
-        queue.async { s.startRunning() }
-        session = s
-    }
-
-    func stop() { session?.stopRunning(); session = nil; currentLevel = 0 }
-
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        if let ch = connection.audioChannels.first {
-            let lin = Float(pow(10.0, Double(ch.averagePowerLevel) / 20.0))
-            smoothed = max(lin, smoothed * 0.82)
-            currentLevel = min(1, max(0, smoothed))
-        }
-    }
-}
 
 // MARK: - Audio capture (selectable device → feeds the recorder)
 
@@ -654,131 +628,6 @@ final class NDIBridge {
     /// Placeholder until the NDI SDK headers are wired in. Intentionally does nothing
     /// so it can never crash the live app. Returns false to indicate "not yet active".
     func sendFrame(_ buffer: CVPixelBuffer) -> Bool { false }
-}
-
-// MARK: - Recording audio mixer (sums input faders/mutes/solos into one bus)
-//
-// Design for reliability: every assigned input device is captured in a uniform
-// Float32 / 48 kHz / mono format. The FIRST input is the "reference" and provides
-// the clock; each other input's samples are summed *into the reference buffer in
-// place* (scaled by that input's fader), and the reference buffer — which already
-// carries a valid format description and presentation timestamp — is written to the
-// file. No from-scratch CMSampleBuffer or timestamp generation, so it can't desync
-// or produce silent takes the way a hand-rolled mixer might.
-
-final class AudioMixRecorder {
-    final class Tap: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
-        let id: UUID
-        var isReference = false
-        weak var owner: AudioMixRecorder?
-        let dsp = AudioDSP()
-        private var session: AVCaptureSession?
-        private let q: DispatchQueue
-        private var ring = [Float]()
-        private let lock = NSLock()
-
-        init(id: UUID) { self.id = id; q = DispatchQueue(label: "mixtap") }
-
-        func start(deviceID: String) {
-            guard let dev = AVCaptureDevice(uniqueID: deviceID),
-                  let input = try? AVCaptureDeviceInput(device: dev) else { return }
-            let s = AVCaptureSession()
-            if s.canAddInput(input) { s.addInput(input) }
-            let out = AVCaptureAudioDataOutput()
-            out.audioSettings = [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVSampleRateKey: 48000,
-                AVNumberOfChannelsKey: 1,
-                AVLinearPCMBitDepthKey: 32,
-                AVLinearPCMIsFloatKey: true,
-                AVLinearPCMIsNonInterleaved: false,
-                AVLinearPCMIsBigEndianKey: false
-            ]
-            out.setSampleBufferDelegate(self, queue: q)
-            if s.canAddOutput(out) { s.addOutput(out) }
-            q.async { s.startRunning() }
-            session = s
-        }
-        func stop() { session?.stopRunning(); session = nil; lock.lock(); ring.removeAll(); lock.unlock() }
-
-        func appendSamples(_ p: UnsafePointer<Float>, _ n: Int) {
-            lock.lock()
-            for i in 0..<n { ring.append(p[i]) }
-            if ring.count > 96000 { ring.removeFirst(ring.count - 96000) }   // cap ~2s
-            lock.unlock()
-        }
-        func pull(_ n: Int) -> [Float] {
-            lock.lock(); defer { lock.unlock() }
-            if ring.count >= n { let out = Array(ring.prefix(n)); ring.removeFirst(n); return out }
-            var out = Array(ring); ring.removeAll()
-            if out.count < n { out.append(contentsOf: [Float](repeating: 0, count: n - out.count)) }
-            return out
-        }
-
-        func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-            if isReference { owner?.mixReference(sampleBuffer); return }
-            guard let bb = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
-            var len = 0, total = 0; var dp: UnsafeMutablePointer<Int8>? = nil
-            guard CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: &len,
-                                              totalLengthOut: &total, dataPointerOut: &dp) == kCMBlockBufferNoErr,
-                  let dp else { return }
-            let n = total / MemoryLayout<Float>.size
-            dp.withMemoryRebound(to: Float.self, capacity: n) { fp in appendSamples(fp, n) }
-        }
-    }
-
-    private(set) var taps: [Tap] = []
-    var gainFor: ((UUID) -> Float)?
-    var snapshotFor: ((UUID) -> EffectSnapshot?)?
-    var masterSnapshot: (() -> EffectSnapshot?)?
-    var masterGain: () -> Float = { 1 }
-    var onMixed: ((CMSampleBuffer) -> Void)?
-    private let masterDSP = AudioDSP()
-
-    func start(_ inputs: [(id: UUID, deviceID: String)]) {
-        stop()
-        for (i, inp) in inputs.enumerated() {
-            let t = Tap(id: inp.id); t.owner = self; t.isReference = (i == 0)
-            taps.append(t); t.start(deviceID: inp.deviceID)
-        }
-    }
-    func stop() { for t in taps { t.stop() }; taps.removeAll() }
-
-    fileprivate func mixReference(_ sb: CMSampleBuffer) {
-        guard let bb = CMSampleBufferGetDataBuffer(sb), let ref = taps.first else { return }
-        var len = 0, total = 0; var dp: UnsafeMutablePointer<Int8>? = nil
-        guard CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: &len,
-                                          totalLengthOut: &total, dataPointerOut: &dp) == kCMBlockBufferNoErr,
-              let dp else { return }
-        let n = total / MemoryLayout<Float>.size
-        guard n > 0 else { return }
-        let mg = masterGain()
-        dp.withMemoryRebound(to: Float.self, capacity: n) { fp in
-            var refBuf = [Float](repeating: 0, count: n)
-            for i in 0..<n { refBuf[i] = fp[i] }
-            if let snap = snapshotFor?(ref.id), snap.enabled { ref.dsp.update(snap); ref.dsp.process(&refBuf) }
-            let refGain = gainFor?(ref.id) ?? 1
-            for i in 0..<n { fp[i] = refBuf[i] * refGain }
-            for t in taps.dropFirst() {
-                let g = gainFor?(t.id) ?? 0
-                if g <= 0 { continue }
-                var s = t.pull(n)
-                if let snap = snapshotFor?(t.id), snap.enabled { t.dsp.update(snap); t.dsp.process(&s) }
-                let c = min(n, s.count)
-                for i in 0..<c { fp[i] += s[i] * g }
-            }
-            for i in 0..<n { fp[i] *= mg }
-            if let ms = masterSnapshot?(), ms.enabled {
-                var mbuf = [Float](repeating: 0, count: n)
-                for i in 0..<n { mbuf[i] = fp[i] }
-                masterDSP.update(ms); masterDSP.process(&mbuf)   // process() clamps
-                for i in 0..<n { fp[i] = mbuf[i] }
-            } else {
-                for i in 0..<n { let v = fp[i]; fp[i] = v > 1 ? 1 : (v < -1 ? -1 : v) }
-            }
-        }
-        onMixed?(sb)
-    }
 }
 
 // MARK: - Audio DSP (biquad EQ + gate + compressor) for the recorded mix
@@ -1115,7 +964,7 @@ final class StreamOutput {
             unlink(path)
             if mkfifo(path, 0o600) == 0 {
                 fifoPath = path; useAudio = true
-                args += ["-thread_queue_size", "1024", "-f", "f32le", "-ar", "48000", "-ac", "1", "-i", path]
+                args += ["-thread_queue_size", "1024", "-f", "f32le", "-ar", "48000", "-ac", "2", "-i", path]
             }
         }
         if !useAudio {
@@ -1206,22 +1055,15 @@ final class StreamOutput {
         lock.lock(); latestFrame = data; lock.unlock()
     }
 
-    /// Mixed program audio (Float32 / 48 kHz / mono sample buffers from AudioMixRecorder).
-    func pushAudio(_ sb: CMSampleBuffer) {
-        guard let bb = CMSampleBufferGetDataBuffer(sb) else { return }
-        var len = 0, total = 0; var dp: UnsafeMutablePointer<Int8>? = nil
-        guard CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: &len,
-                                          totalLengthOut: &total, dataPointerOut: &dp) == kCMBlockBufferNoErr,
-              let dp else { return }
-        let n = min(len, total) / MemoryLayout<Float>.size
+    /// Program mix from the audio engine (48 kHz stereo). Stored interleaved.
+    func pushStereo(_ l: UnsafePointer<Float>, _ r: UnsafePointer<Float>, _ n: Int) {
         guard n > 0 else { return }
         lock.lock(); defer { lock.unlock() }
         guard running && withAudio else { return }
-        dp.withMemoryRebound(to: Float.self, capacity: n) { fp in
-            audioRing.append(contentsOf: UnsafeBufferPointer(start: fp, count: n))
-        }
-        // Device clock faster than host clock → never let latency build past 0.5 s.
-        if audioRing.count > 24000 { audioRing.removeFirst(audioRing.count - 4800) }
+        audioRing.reserveCapacity(audioRing.count + n * 2)
+        for i in 0..<n { audioRing.append(l[i]); audioRing.append(r[i]) }
+        // Output clock faster than wall clock → never let latency build past 0.5 s.
+        if audioRing.count > 48000 { audioRing.removeFirst(audioRing.count - 9600) }
     }
 
     private func videoLoop(_ h: FileHandle) {
@@ -1261,14 +1103,13 @@ final class StreamOutput {
             if need < 480 { Thread.sleep(forTimeInterval: 0.004); continue }
 
             lock.lock()
-            let take = min(need, audioRing.count)
-            // Only write real samples; insert silence only when we're >100 ms short
-            // (no device / capture stalled), keeping a 50 ms cushion to avoid clicks.
+            let take = min(need, audioRing.count / 2)                 // frames (stereo interleaved)
+            // Only write real samples; insert silence only when we're >100 ms short, keeping a 50 ms cushion.
             let pad = (take < need && need > 4800) ? max(0, need - take - 2400) : 0
-            var buf = [Float](repeating: 0, count: take + pad)
+            var buf = [Float](repeating: 0, count: (take + pad) * 2)
             if take > 0 {
-                for i in 0..<take { buf[i] = audioRing[i] }
-                audioRing.removeFirst(take)
+                for i in 0..<(take * 2) { buf[i] = audioRing[i] }
+                audioRing.removeFirst(take * 2)
             }
             lock.unlock()
             if buf.isEmpty { Thread.sleep(forTimeInterval: 0.004); continue }
@@ -1285,7 +1126,7 @@ final class StreamOutput {
                 return true
             }
             if !ok { break }
-            written += Int64(buf.count)
+            written += Int64(buf.count / 2)
         }
     }
 

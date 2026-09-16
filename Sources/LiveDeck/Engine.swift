@@ -84,7 +84,11 @@ final class Telemetry: ObservableObject {
     @Published var fps: Int = 0
     @Published var clock: String = "--:--:--"
     @Published var master: Float = 0
+    @Published var masterL: Float = 0
+    @Published var masterR: Float = 0
     @Published var levels: [UUID: Float] = [:]
+    @Published var levelsL: [UUID: Float] = [:]
+    @Published var levelsR: [UUID: Float] = [:]
 }
 
 final class Engine: ObservableObject {
@@ -138,8 +142,16 @@ final class Engine: ObservableObject {
         if let d = UserDefaults.standard.dictionary(forKey: "hotkeys") as? [String: String] { for (k, v) in d { m[k] = v } }
         return m
     }
-    private var usingMixRecorder = false
-    let mixRecorder = AudioMixRecorder()
+    /// The real program audio engine (mixing, monitoring, meters, recording & stream audio).
+    let audio = ProgramAudioEngine()
+    @Published var monitorLevelDB: Double = 0 { didSet { UserDefaults.standard.set(monitorLevelDB, forKey: "audio.monitorDB") } }
+    /// Microphones are kept out of the Mac's speakers unless this is on (prevents feedback). Recording/stream always include them.
+    @Published var hearLiveInputs = false { didSet { UserDefaults.standard.set(hearLiveInputs, forKey: "audio.hearLive") } }
+    @Published var audioStatus = ""
+    private let audioWriterLock = NSLock()
+    private var liveAudioWriterInput: AVAssetWriterInput?
+    private let audioWriteQueue = DispatchQueue(label: "livedeck.audio.write", qos: .userInitiated)
+    private var audioSyncTimer: Timer?
     let masterBus = Source(name: "Master Bus", kindLabel: "MASTER")
     let masterInputID = UUID()
 
@@ -218,43 +230,13 @@ final class Engine: ObservableObject {
             guard let self else { return }
             self.streamError = msg
             self.isStreaming = false
-            self.releaseAudioBus()
         }
         let ok = streamer.start(urls: targets.map { $0.composedURL }, width: width, height: height,
                                 fps: fpsTarget, bitrateKbps: streamBitrateKbps, audio: streamAudio)
         streamError = ok ? "" : streamer.lastError
         isStreaming = streamer.isStreaming
-        if ok && streamer.withAudio { ensureAudioBus() }
     }
-    func stopStream() { streamer.stop(); isStreaming = false; releaseAudioBus() }
-
-    // MARK: shared program-audio bus (feeds recording and/or stream)
-
-    private var audioBusRunning = false
-    private func audioBusInputs() -> [(id: UUID, deviceID: String)] {
-        let inputDevices: [(id: UUID, deviceID: String)] = sources.compactMap {
-            guard let d = $0.audioDeviceID else { return nil }; return (id: $0.id, deviceID: d)
-        }
-        if mixInputsIntoRecording && !inputDevices.isEmpty { return inputDevices }
-        if let md = selectedAudioDeviceID ?? AVCaptureDevice.default(for: .audio)?.uniqueID {
-            return [(id: masterInputID, deviceID: md)]
-        }
-        return []
-    }
-    /// Starts the mixer if nothing is using it yet. Returns false if there is no audio device at all.
-    @discardableResult private func ensureAudioBus() -> Bool {
-        if audioBusRunning { return true }
-        let inputs = audioBusInputs()
-        guard !inputs.isEmpty else { return false }
-        mixRecorder.start(inputs)
-        audioBusRunning = true
-        return true
-    }
-    private func releaseAudioBus() {
-        guard audioBusRunning, !isRecording, !streamer.isStreaming else { return }
-        mixRecorder.stop()
-        audioBusRunning = false
-    }
+    func stopStream() { streamer.stop(); isStreaming = false }
 
     private var transFrom: UUID?
     private var transitioning = false
@@ -281,7 +263,6 @@ final class Engine: ObservableObject {
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
-    private let audioCapture = AudioCapture()
     private var recordTimer: Timer?
     private var meterTimer: Timer?
     private var outputWindow: NSWindow?
@@ -298,42 +279,9 @@ final class Engine: ObservableObject {
         t.tolerance = 0.005
         RunLoop.main.add(t, forMode: .common)
         timer = t
-        audioCapture.onSampleBuffer = { [weak self] sb in
-            guard let self, self.isRecording, !self.usingMixRecorder,
-                  let input = self.audioInput, input.isReadyForMoreMediaData else { return }
-            input.append(sb)
-        }
-        audioCapture.start(deviceID: selectedAudioDeviceID)
-        mixRecorder.gainFor = { [weak self] id in
-            if id == self?.masterInputID { return 1 }
-            guard let self, let s = self.sources.first(where: { $0.id == id }) else { return 0 }
-            if s.muted || !s.sendToMain { return 0 }
-            if s.audioFollowsVideo && !self.isOnAir(s.id) { return 0 }
-            if self.sources.contains(where: { $0.solo }) && !s.solo { return 0 }
-            return Float(min(4, s.channelGain))
-        }
-        mixRecorder.masterGain = { [weak self] in
-            guard let self else { return 1 }
-            return self.masterBus.muted ? 0 : Float(min(4, self.masterBus.channelGain))
-        }
-        mixRecorder.snapshotFor = { [weak self] id in
-            guard let self, id != self.masterInputID,
-                  let s = self.sources.first(where: { $0.id == id }) else { return nil }
-            return self.effectSnapshot(s)
-        }
-        mixRecorder.masterSnapshot = { [weak self] in
-            guard let self else { return nil }
-            return self.effectSnapshot(self.masterBus)
-        }
-        mixRecorder.onMixed = { [weak self] sb in
-            guard let self else { return }
-            if self.streamer.acceptsAudio { self.streamer.pushAudio(sb) }
-            guard self.isRecording, self.usingMixRecorder,
-                  let input = self.audioInput, input.isReadyForMoreMediaData else { return }
-            input.append(sb)
-        }
+        startAudio()
         // Publish meter levels at a steady ~12 Hz (NOT per audio buffer) to keep the UI responsive.
-        let mt = Timer(timeInterval: 1.0 / 12.0, repeats: true) { [weak self] _ in self?.publishMeters() }
+        let mt = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in self?.publishMeters() }
         mt.tolerance = 0.02
         RunLoop.main.add(mt, forMode: .common)
         meterTimer = mt
@@ -341,25 +289,113 @@ final class Engine: ObservableObject {
         loadStreams()
     }
 
+    // MARK: program audio
+
+    private func startAudio() {
+        if let v = UserDefaults.standard.object(forKey: "audio.monitorDB") as? Double { monitorLevelDB = v }
+        hearLiveInputs = UserDefaults.standard.bool(forKey: "audio.hearLive")
+        audio.programSink = { [weak self] l, r, n, time in self?.consumeProgramAudio(l, r, n, time) }
+        audio.start()
+        audioStatus = audio.lastError
+        syncAudio()
+        let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.syncAudio() }
+        t.tolerance = 0.03
+        RunLoop.main.add(t, forMode: .common)
+        audioSyncTimer = t
+    }
+
+    /// Keeps the mixer's channels in step with the inputs (devices, media taps, faders, mute, AFV, pan, solo, FX).
+    private func syncAudio() {
+        var keep = Set<UUID>()
+        let anyOnAir = { (id: UUID) -> Bool in self.isOnAir(id) }
+        for s in sources where !s.isPlaceholder {
+            let file = s as? FileSource
+            let audioFile = s as? AudioFileSource
+            guard file != nil || audioFile != nil || s.audioDeviceID != nil else { continue }
+            keep.insert(s.id)
+            let c = audio.channel(s.id)
+            audio.setDevice(s.audioDeviceID, for: c)
+            if let f = file, let item = f.audioItem {
+                audio.attachMedia(item, to: c) { [weak f] ok in f?.audioRouted = ok }
+            }
+            if let a = audioFile, let item = a.audioItem {
+                audio.attachMedia(item, to: c) { [weak a] ok in a?.audioRouted = ok }
+            }
+            var p = ChannelParams()
+            p.fader = Float(min(4, s.channelGain))
+            let off = s.muted || !s.sendToMain || (s.audioFollowsVideo && !anyOnAir(s.id))
+            p.on = off ? 0 : 1
+            let pg = AudioMath.panGains(s.pan)
+            p.panL = Float(pg.left); p.panR = Float(pg.right)
+            p.solo = s.solo
+            p.fx = effectSnapshot(s)
+            audio.update(c, p)
+        }
+        if let md = selectedAudioDeviceID {
+            keep.insert(masterInputID)
+            let c = audio.channel(masterInputID)
+            audio.setDevice(md, for: c)
+            audio.update(c, ChannelParams())
+        }
+        audio.removeChannels(notIn: keep)
+        audio.masterGain = masterBus.muted ? 0 : Float(min(4, masterBus.channelGain))
+        audio.masterFX = effectSnapshot(masterBus)
+        audio.monitorGain = Float(AudioMath.dbToGain(monitorLevelDB))
+        audio.hearLiveInputs = hearLiveInputs
+        if audioStatus != audio.lastError { audioStatus = audio.lastError }
+    }
+
+    /// Render thread: program mix → stream FIFO and recording file.
+    private func consumeProgramAudio(_ l: UnsafePointer<Float>, _ r: UnsafePointer<Float>, _ n: Int, _ time: CMTime) {
+        streamer.pushStereo(l, r, n)
+        audioWriterLock.lock()
+        let input = liveAudioWriterInput
+        audioWriterLock.unlock()
+        guard let input else { return }
+        var data = Data(count: n * 2 * MemoryLayout<Float>.size)
+        data.withUnsafeMutableBytes { raw in
+            guard let p = raw.baseAddress?.assumingMemoryBound(to: Float.self) else { return }
+            for i in 0..<n { p[i * 2] = l[i]; p[i * 2 + 1] = r[i] }
+        }
+        audioWriteQueue.async {
+            guard input.isReadyForMoreMediaData, let sb = PCMSampleBuffer.make(interleaved: data, frames: n, time: time) else { return }
+            input.append(sb)
+        }
+    }
+
+    private var meterL: [UUID: Float] = [:]
+    private var meterR: [UUID: Float] = [:]
+    private var meterML: Float = 0
+    private var meterMR: Float = 0
+
     private func publishMeters() {
         if isStreaming != streamer.isStreaming { isStreaming = streamer.isStreaming }
-        // Master = energy sum of inputs sent to the main mix (falls back to master device).
-        var energy: Float = 0
-        var contributing = false
-        for s in sources where s.sendToMain && !s.muted && s.audioDeviceID != nil {
-            if sources.contains(where: { $0.solo }) && !s.solo { continue }
-            let l = s.meter.currentLevel * Float(min(1.5, max(0, s.gain)))
-            energy += l * l; contributing = true
-        }
-        let m = contributing ? min(1, sqrtf(energy)) : audioCapture.currentLevel
-        if abs(m - telemetry.master) > 0.01 { telemetry.master = m }
-        var newLevels = telemetry.levels
-        var changed = false
+        let m = audio.takeMeters()
+        let decay: Float = 0.82
+        var newL: [UUID: Float] = [:], newR: [UUID: Float] = [:], newMax: [UUID: Float] = [:]
         for s in sources {
-            let lvl = s.audioDeviceID == nil ? 0 : s.meter.currentLevel
-            if abs(lvl - (newLevels[s.id] ?? 0)) > 0.01 { newLevels[s.id] = lvl; changed = true }
+            let peak = m.channels[s.id] ?? (0, 0)
+            let l = max(min(1, peak.0), (meterL[s.id] ?? 0) * decay)
+            let r = max(min(1, peak.1), (meterR[s.id] ?? 0) * decay)
+            newL[s.id] = l < 0.0005 ? 0 : l
+            newR[s.id] = r < 0.0005 ? 0 : r
+            newMax[s.id] = max(newL[s.id] ?? 0, newR[s.id] ?? 0)
         }
-        if changed { telemetry.levels = newLevels }
+        meterL = newL; meterR = newR
+        meterML = max(min(1, m.master.0), meterML * decay)
+        meterMR = max(min(1, m.master.1), meterMR * decay)
+        if meterML < 0.0005 { meterML = 0 }
+        if meterMR < 0.0005 { meterMR = 0 }
+        let mm = max(meterML, meterMR)
+        if abs(mm - telemetry.master) > 0.002 || (mm == 0 && telemetry.master != 0) {
+            telemetry.master = mm; telemetry.masterL = meterML; telemetry.masterR = meterMR
+        }
+        func differs(_ a: [UUID: Float], _ b: [UUID: Float]) -> Bool {
+            if a.count != b.count { return true }
+            for (k, v) in a where abs(v - (b[k] ?? -1)) > 0.002 { return true }
+            return false
+        }
+        if differs(newMax, telemetry.levels) { telemetry.levels = newMax; telemetry.levelsL = newL; telemetry.levelsR = newR }
     }
 
     @Published var playlistEnabled = false { didSet { applyPlaylistMode() } }
@@ -471,7 +507,7 @@ final class Engine: ObservableObject {
         if keyedSources.contains(id) { keyedSources.remove(id) } else { keyedSources.insert(id) }
     }
 
-    func setAudioDevice(_ id: String?) { selectedAudioDeviceID = id; audioCapture.start(deviceID: id) }
+    func setAudioDevice(_ id: String?) { selectedAudioDeviceID = id }
     func addConsumer(_ v: FrameNSView) { consumers.add(v) }
     func addPreviewConsumer(_ v: FrameNSView) { previewConsumers.add(v) }
 
@@ -933,28 +969,22 @@ final class Engine: ObservableObject {
                 sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
             if w.canAdd(vIn) { w.add(vIn) }
             let aSettings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000,
-                                            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 128_000]
+                                            AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 192_000]
             let aIn = AVAssetWriterInput(mediaType: .audio, outputSettings: aSettings)
             aIn.expectsMediaDataInRealTime = true
             if w.canAdd(aIn) { w.add(aIn) }
             w.startWriting(); w.startSession(atSourceTime: CMClockGetTime(CMClockGetHostTimeClock()))
             writer = w; videoInput = vIn; audioInput = aIn; adaptor = ad
             recordSeconds = 0; isRecording = true; fileOutputActive = true
-            let hasInputDevices = sources.contains { $0.audioDeviceID != nil }
-            // Use the shared mixer when mixing inputs, when master FX is on, or when the stream
-            // already runs it (so record + stream carry the same mix). Otherwise the direct path.
-            if (mixInputsIntoRecording && hasInputDevices) || masterBus.fxEnabled || audioBusRunning {
-                usingMixRecorder = ensureAudioBus()
-            } else {
-                usingMixRecorder = false
-            }
+            // The program mix from the audio engine is written as it is rendered.
+            audioWriterLock.lock(); liveAudioWriterInput = aIn; audioWriterLock.unlock()
             recordTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.recordSeconds += 1 }
         } catch { NSLog("Recording failed: \(error.localizedDescription)") }
     }
 
     private func stopRecording() {
         isRecording = false; fileOutputActive = false
-        usingMixRecorder = false; releaseAudioBus()
+        audioWriterLock.lock(); liveAudioWriterInput = nil; audioWriterLock.unlock()
         recordTimer?.invalidate(); recordTimer = nil
         guard let w = writer else { return }
         videoInput?.markAsFinished(); audioInput?.markAsFinished()

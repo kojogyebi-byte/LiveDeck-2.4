@@ -14,6 +14,7 @@ private let cBtn = DS.bg3
 private let pipNoneTag = UUID()
 
 struct MainView: View {
+    @EnvironmentObject var backgrounds: BackgroundsModel
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
@@ -46,6 +47,9 @@ struct MainView: View {
         .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
         .sheet(isPresented: $showStream) { StreamSettingsView() }
+        .sheet(isPresented: $backgrounds.showFirstRun) {
+            StarterPackSheet().environmentObject(backgrounds)
+        }
         .sheet(isPresented: $engine.showHelp) {
             HelpCenter().environmentObject(engine).environmentObject(present)
         }
@@ -300,7 +304,7 @@ struct TopBar: View {
                 }
                 Divider()
                 Button("Keyboard shortcuts…") { engine.showHotkeys = true }
-                checkButton("Mix input faders into recording & stream", engine.mixInputsIntoRecording) { engine.mixInputsIntoRecording.toggle() }
+                checkButton("Hear microphones in the Mac's speakers", engine.hearLiveInputs) { engine.hearLiveInputs.toggle() }
                 Button("Choose recording folder…") { engine.chooseOutputFolder() }
                 Button("Reveal last recording") { engine.revealLastRecording() }
             } label: { Image(systemName: "gearshape.fill").foregroundColor(DS.text2) }
@@ -457,10 +461,11 @@ struct LowerDeck: View {
                     DSTabItem(id: DeckTab.inputs.rawValue, title: "Inputs", icon: "square.grid.2x2"),
                     DSTabItem(id: DeckTab.present.rawValue, title: "Songs & Bible", icon: "music.note.list"),
                     DSTabItem(id: DeckTab.dictionary.rawValue, title: "Dictionary", icon: "character.book.closed"),
-                    DSTabItem(id: DeckTab.images.rawValue, title: "Images", icon: "photo.on.rectangle.angled"),
-                    DSTabItem(id: DeckTab.audio.rawValue, title: "Audio Mixer", icon: "slider.vertical.3")
+                    DSTabItem(id: DeckTab.images.rawValue, title: "Media", icon: "photo.on.rectangle.angled"),
+                    DSTabItem(id: DeckTab.audio.rawValue, title: "Audio Mixer", icon: "slider.vertical.3"),
+                    DSTabItem(id: DeckTab.automation.rawValue, title: "Automation", icon: "timer")
                 ])
-                .frame(width: 640)
+                .frame(width: 760)
                 Spacer()
                 if present.deck == DeckTab.inputs.rawValue {
                     AddInputMenu()
@@ -475,8 +480,9 @@ struct LowerDeck: View {
             .overlay(Rectangle().fill(DS.lineSoft).frame(height: 1), alignment: .bottom)
             if present.deck == DeckTab.present.rawValue { PresentDeck() }
             else if present.deck == DeckTab.dictionary.rawValue { DictionaryDeck() }
-            else if present.deck == DeckTab.images.rawValue { ImageSearchDeck() }
+            else if present.deck == DeckTab.images.rawValue { MediaDeck() }
             else if present.deck == DeckTab.audio.rawValue { MixerConsole() }
+            else if present.deck == DeckTab.automation.rawValue { AutomationDeck() }
             else { InputBus() }
         }
         .background(DS.bg1)
@@ -580,6 +586,7 @@ struct InputTile: View {
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
+    @EnvironmentObject var gen: GeneratorModel
     var index: Int
     @ObservedObject var source: Source
     var tileW: CGFloat = 176
@@ -639,7 +646,7 @@ struct InputTile: View {
                     Button("PGM") { engine.setPreview(source.id); engine.cut() }.buttonStyle(.ds(.program, .small, active: isProgram))
                     if let f = source as? FileSource { TileTransport(source: f) }
                     else if let a = source as? AudioFileSource { TileTransport(source: a) }
-                    else if source is SlideSource {
+                    else if source is SlideSource || source is GeneratorSource {
                         Button("KEY") { engine.toggleKey(source.id) }.buttonStyle(.ds(.amber, .small, active: isKeyed))
                             .help("Overlay on Program")
                         Button { openController() } label: { Image(systemName: "slider.horizontal.3") }
@@ -665,7 +672,7 @@ struct InputTile: View {
             } else {
                 Button("Take to Program") { engine.setPreview(source.id); engine.cut() }
                 Button("Set as Preview") { select() }
-                if source is SlideSource {
+                if source is SlideSource || source is GeneratorSource {
                     Button(isKeyed ? "Remove key from Program" : "Key over Program") { engine.toggleKey(source.id) }
                     Button("Open controls") { openController() }
                 }
@@ -687,7 +694,11 @@ struct InputTile: View {
         if source is DictionarySource { dict.targetID = source.id }
     }
     private func openController() {
-        if source is DictionarySource { dict.targetID = source.id; present.deck = DeckTab.dictionary.rawValue }
+        if let g = source as? GeneratorSource {
+            gen.liveUpdate = false; gen.targetID = g.id; gen.settings = g.settings; gen.liveUpdate = true
+            present.mediaSection = 2; present.deck = DeckTab.images.rawValue
+        }
+        else if source is DictionarySource { dict.targetID = source.id; present.deck = DeckTab.dictionary.rawValue }
         else { present.targetID = source.id; present.deck = DeckTab.present.rawValue }
     }
 }
@@ -1011,53 +1022,8 @@ struct InputAdjust: View {
                 }
             }
 
-            CPCard(title: "Audio", subtitle: "Audio monitoring and control", icon: "speaker.wave.2.fill",
-                   onReset: { source.gain = 1; source.muted = false }) {
-                CPRow(icon: "headphones", label: "Device") {
-                    Picker("", selection: Binding(
-                        get: { source.audioDeviceID ?? "" },
-                        set: { source.audioDeviceID = $0.isEmpty ? nil : $0 })) {
-                        Text("None").tag("")
-                        ForEach(audioDevices) { d in Text(d.name).tag(d.id) }
-                    }
-                    .cpPickerChrome()
-                    .frame(maxWidth: 170)
-                    Button { audioDevices = AudioCapture.availableDevices() } label: {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold)).foregroundColor(CP.text)
-                            .frame(width: 30, height: 30)
-                            .background(RoundedRectangle(cornerRadius: 7).fill(CP.field))
-                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(CP.border, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain).help("Refresh audio devices")
-                }
-                VStack(spacing: 2) {
-                    CPSliderRow(icon: "dial.low", label: "Trim dB", value: $source.trimDB, range: -60...6, defaultValue: 0, format: "%.1f")
-                    CPSliderRow(icon: "dial.medium", label: "Fader", value: $source.gain, range: 0...3.16, defaultValue: 1, showDivider: false)
-                    HStack(spacing: 8) {
-                        Color.clear.frame(width: 18 + 64 + 8, height: 1)
-                        ChannelMeterBar(id: source.id, muted: source.muted, segments: 24).frame(height: 11)
-                        Color.clear.frame(width: 52 + 22 + 8, height: 1)
-                    }
-                    .padding(.bottom, 8)
-                    CPDivider()
-                }
-                CPRow(icon: source.muted ? "speaker.slash.fill" : "speaker.wave.1", label: "Mute") {
-                    Toggle("", isOn: $source.muted).toggleStyle(.switch).tint(DS.program).labelsHidden()
-                }
-                HStack {
-                    CPPillButton(icon: "slider.vertical.3", title: "Audio Effects (EQ · Compressor · Gate)", expanded: showFX) {
-                        withAnimation(.easeInOut(duration: 0.18)) { showFX.toggle() }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.vertical, 10)
-            }
-
-            if showFX {
-                CPCard(title: "Audio Effects", subtitle: "EQ · Noise gate · Compressor", icon: "waveform") {
-                    AudioEffectsBody(source: source).padding(.vertical, 6)
-                }
-            }
+            CompactChannelConsole(source: source, audioDevices: $audioDevices)
+            CompactEffectsConsole(source: source)
         }
         .onAppear { audioDevices = AudioCapture.availableDevices() }
     }
@@ -1221,7 +1187,7 @@ struct AudioEffectsBody: View {
                     Menu("Preset") { ForEach(FXPreset.all) { p in Button(p.name) { source.applyFXPreset(p) } } }
                         .frame(width: 110)
                 }
-                Text("Effects process the recorded & streamed mix when “Mix input faders into recording & stream” is on.")
+                Text("Effects change what you hear, record and stream.")
                     .font(.system(size: 9)).foregroundColor(.secondary)
                 Divider()
                 Text("PARAMETRIC EQ").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(.secondary)
@@ -1768,10 +1734,7 @@ struct StreamSettingsView: View {
     }
     private var streamAudioNote: String {
         guard engine.streamAudio else { return "Audio: silent track." }
-        let mixing = engine.mixInputsIntoRecording && engine.sources.contains { $0.audioDeviceID != nil }
-        return mixing
-            ? "Audio: the input-fader mix (MAIN / mute / solo / FX apply). Video/audio-file inputs play to speakers only and are not in the mix yet."
-            : "Audio: the master audio device (+ master FX). Turn on \u{201C}Mix input faders into recording & stream\u{201D} (gear menu) to stream the per-input mix instead."
+        return "Audio: the Program mix from the Audio Mixer — video/audio files and microphones with their faders, ON/AFV, mute, pan, effects and the Master fader (stereo)."
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

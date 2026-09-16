@@ -240,10 +240,9 @@ struct ChannelStereoMeter: View {
     let id: UUID
     let active: Bool
     var body: some View {
-        let lv: Float = active ? (tele.levels[id] ?? 0) : 0
         HStack(spacing: 2) {
-            VerticalMeter(level: lv).frame(width: 5)
-            VerticalMeter(level: lv).frame(width: 5)
+            VerticalMeter(level: active ? (tele.levelsL[id] ?? 0) : 0).frame(width: 5)
+            VerticalMeter(level: active ? (tele.levelsR[id] ?? 0) : 0).frame(width: 5)
         }
     }
 }
@@ -265,8 +264,8 @@ struct MasterStereoMeter: View {
     @EnvironmentObject var tele: Telemetry
     var body: some View {
         HStack(spacing: 2) {
-            VerticalMeter(level: tele.master).frame(width: 6)
-            VerticalMeter(level: tele.master).frame(width: 6)
+            VerticalMeter(level: tele.masterL).frame(width: 6)
+            VerticalMeter(level: tele.masterR).frame(width: 6)
         }
     }
 }
@@ -460,14 +459,14 @@ struct MixerChannelStrip: View {
 
             ConsoleBox(height: dbH) {
                 VStack(spacing: 6) {
-                    ChannelPeakLabel(id: source.id, active: source.audioDeviceID != nil && !source.muted)
+                    ChannelPeakLabel(id: source.id, active: true)
                         .padding(.top, 6)
                     HStack(spacing: 3) {
                         ConsoleFader(db: faderDB)
                             .frame(width: 36)
                         FaderScale().frame(width: 20)
                         VStack(spacing: 2) {
-                            ChannelStereoMeter(id: source.id, active: source.audioDeviceID != nil && !source.muted)
+                            ChannelStereoMeter(id: source.id, active: true)
                             HStack(spacing: 5) {
                                 Text("L").font(.system(size: 7)).foregroundColor(MX.label)
                                 Text("R").font(.system(size: 7)).foregroundColor(MX.label)
@@ -554,15 +553,20 @@ struct MixerMasterStrip: View {
             .frame(height: MX.header)
 
             ConsoleBox(height: MX.input) {
-                VStack(spacing: 6) {
-                    Text("MIX → REC / STREAM").font(.system(size: 8, weight: .bold)).foregroundColor(MX.label)
-                    Toggle("", isOn: $engine.mixInputsIntoRecording).toggleStyle(.switch).tint(MX.orange).labelsHidden()
-                    Text(engine.mixInputsIntoRecording ? "Faders are recorded" : "Master device only")
-                        .font(.system(size: 8)).foregroundColor(MX.dim).multilineTextAlignment(.center)
+                HStack(spacing: 4) {
+                    VStack(spacing: 2) {
+                        Text("MONITOR").font(.system(size: 8, weight: .bold)).foregroundColor(MX.label)
+                        RotaryKnob(value: $engine.monitorLevelDB, range: -60...6, defaultValue: 0, arcColor: MX.cyan, size: 38)
+                        Text(AudioMath.dbText(engine.monitorLevelDB, decimals: 1)).font(.system(size: 9, weight: .semibold)).foregroundColor(MX.text)
+                    }
+                    VStack(spacing: 3) {
+                        Image(systemName: "mic").font(.system(size: 10)).foregroundColor(MX.label)
+                        Toggle("", isOn: $engine.hearLiveInputs).toggleStyle(.switch).tint(MX.orange).labelsHidden().controlSize(.mini)
+                        Text("hear mics").font(.system(size: 7)).foregroundColor(MX.dim)
+                    }
                 }
-                .padding(.horizontal, 4)
             }
-            .help("When on, the recording and the stream carry this console's mix")
+            .help("Monitor = what the Mac's speakers/headphones play. Microphones stay out of the speakers unless 'hear mics' is on (prevents feedback); they are always in the recording and stream.")
 
             MasterEQBox(fxTab: $fxTab, showFX: $showFX)
             MasterDynamicsBox(fxTab: $fxTab, showFX: $showFX)
@@ -665,7 +669,7 @@ struct AudioEffects: View {
 
             if tab == 0 { equalizer } else { dynamics }
 
-            Text("Effects process the recorded & streamed mix when “Mix input faders into recording & stream” is on.")
+            Text("Effects change what you hear, record and stream. Double-click a knob to reset it.")
                 .font(.system(size: 10)).foregroundColor(MX.dim)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14).padding(.vertical, 8)
@@ -861,5 +865,285 @@ struct ConsoleDynamicsGraph: View {
                 .stroke(source.fxEnabled ? MX.dyn : MX.dyn.opacity(0.4), lineWidth: 2)
             }
         }
+    }
+}
+
+
+// MARK: - Compact console (Input tab)
+
+struct EffectKnob: View {
+    let label: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let defaultValue: Double
+    var color: Color = MX.cyan
+    var bipolar = false
+    let format: (Double) -> String
+    var body: some View {
+        VStack(spacing: 3) {
+            RotaryKnob(value: $value, range: range, defaultValue: defaultValue, arcColor: color, bipolar: bipolar, size: 36)
+            ConsoleValueField(value: $value, range: range, display: format, width: 60)
+            Text(label).font(.system(size: 9)).foregroundColor(MX.label).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+enum FXFormat {
+    static let hz: (Double) -> String = { $0 >= 1000 ? String(format: "%.1fk", $0 / 1000) : String(format: "%.0f Hz", $0) }
+    static let lowCut: (Double) -> String = { $0 < 20 ? "Off" : String(format: "%.0f Hz", $0) }
+    static let highCut: (Double) -> String = { $0 < 1000 || $0 >= 19999 ? "Off" : String(format: "%.1fk", $0 / 1000) }
+    static let db: (Double) -> String = { String(format: "%+.1f dB", $0) }
+    static let dbPlain: (Double) -> String = { String(format: "%.0f dB", $0) }
+    static let gate: (Double) -> String = { $0 <= -80 ? "Off" : String(format: "%.0f dB", $0) }
+    static let q: (Double) -> String = { String(format: "%.2f", $0) }
+    static let ms: (Double) -> String = { String(format: "%.0f ms", $0) }
+    static let ratio: (Double) -> String = { String(format: "%.1f:1", $0) }
+}
+
+private struct ConsolePanel<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) { content() }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 11).fill(MX.bg))
+            .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Color.black.opacity(0.6), lineWidth: 1))
+    }
+}
+
+struct CompactChannelConsole: View {
+    @EnvironmentObject var engine: Engine
+    @ObservedObject var source: Source
+    @Binding var audioDevices: [AudioDeviceInfo]
+
+    private var faderDB: Binding<Double> {
+        Binding(get: { AudioMath.gainToDB(source.gain) }, set: { source.gain = AudioMath.dbToGain($0) })
+    }
+    private var live: Bool { engine.isChannelLive(source) }
+    private var onActive: Bool { source.sendToMain && !source.muted && !source.audioFollowsVideo }
+    private var afvActive: Bool { source.sendToMain && !source.muted && source.audioFollowsVideo }
+
+    var body: some View {
+        ConsolePanel {
+            HStack(spacing: 8) {
+                Image(systemName: "speaker.wave.2.fill").font(.system(size: 15)).foregroundColor(MX.orange)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Audio").font(.system(size: 13, weight: .semibold)).foregroundColor(MX.text)
+                    Text(live ? "Live in the mix" : "Not in the mix").font(.system(size: 9)).foregroundColor(live ? MX.red : MX.dim)
+                }
+                Capsule().fill(live ? MX.red : MX.tallyOff).frame(width: 36, height: 6)
+                Spacer()
+                Button {
+                    source.gain = 1; source.trimDB = 0; source.pan = 0; source.muted = false; source.sendToMain = true
+                    source.audioFollowsVideo = false; source.solo = false
+                } label: {
+                    Image(systemName: "arrow.counterclockwise").font(.system(size: 11, weight: .semibold)).foregroundColor(MX.label)
+                        .frame(width: 24, height: 24).background(Circle().fill(MX.field))
+                }
+                .buttonStyle(.plain).help("Reset audio")
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "headphones").font(.system(size: 12)).foregroundColor(MX.label)
+                Picker("", selection: Binding(get: { source.audioDeviceID ?? "" }, set: { source.audioDeviceID = $0.isEmpty ? nil : $0 })) {
+                    Text(source is FileSource || source is AudioFileSource ? "File audio only" : "No microphone").tag("")
+                    ForEach(audioDevices) { d in Text(d.name).tag(d.id) }
+                }
+                .labelsHidden()
+                Button { audioDevices = AudioCapture.availableDevices() } label: {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold)).foregroundColor(MX.text)
+                        .frame(width: 26, height: 26).background(RoundedRectangle(cornerRadius: 6).fill(MX.field))
+                }
+                .buttonStyle(.plain).help("Refresh audio devices")
+            }
+
+            HStack(alignment: .top, spacing: 10) {
+                VStack(spacing: 6) {
+                    ChannelPeakLabel(id: source.id, active: true)
+                    HStack(spacing: 3) {
+                        ConsoleFader(db: faderDB).frame(width: 36)
+                        FaderScale().frame(width: 20)
+                        VStack(spacing: 2) {
+                            ChannelStereoMeter(id: source.id, active: true)
+                            HStack(spacing: 5) {
+                                Text("L").font(.system(size: 7)).foregroundColor(MX.label)
+                                Text("R").font(.system(size: 7)).foregroundColor(MX.label)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .frame(height: 200)
+                    ConsoleValueField(value: faderDB, range: -60...10, display: { AudioMath.dbText($0) })
+                }
+                .padding(8)
+                .frame(width: 118)
+                .background(RoundedRectangle(cornerRadius: 6).fill(MX.box))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MX.boxLine, lineWidth: 1))
+
+                VStack(spacing: 8) {
+                    VStack(spacing: 4) {
+                        Text("INPUT").font(.system(size: 9, weight: .bold)).foregroundColor(MX.label)
+                        RotaryKnob(value: $source.trimDB, range: -60...6, defaultValue: 0, arcColor: MX.green, size: 44, minLabel: "-∞", maxLabel: "+6")
+                        ConsoleValueField(value: $source.trimDB, range: -60...6, display: { AudioMath.dbText($0) }, width: 72)
+                    }
+                    .padding(8).frame(maxWidth: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(MX.box))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MX.boxLine, lineWidth: 1))
+
+                    VStack(spacing: 4) {
+                        Text("PAN").font(.system(size: 9, weight: .bold)).foregroundColor(MX.label)
+                        RotaryKnob(value: $source.pan, range: -100...100, defaultValue: 0, arcColor: MX.orange, bipolar: true, size: 40, minLabel: "L", maxLabel: "R")
+                        ConsoleValueField(value: $source.pan, range: -100...100, display: { String(format: "%+.0f", $0).replacingOccurrences(of: "+0", with: "0") }, width: 72)
+                    }
+                    .padding(8).frame(maxWidth: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(MX.box))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MX.boxLine, lineWidth: 1))
+                }
+            }
+
+            HStack(spacing: 8) {
+                HStack(spacing: 0) {
+                    pill("AFV", active: afvActive) {
+                        if afvActive { source.audioFollowsVideo = false; source.sendToMain = false }
+                        else { source.audioFollowsVideo = true; source.sendToMain = true; source.muted = false }
+                    }
+                    Rectangle().fill(Color.black).frame(width: 1)
+                    pill("ON", active: onActive) {
+                        if onActive { source.sendToMain = false }
+                        else { source.sendToMain = true; source.muted = false; source.audioFollowsVideo = false }
+                    }
+                }
+                .frame(height: 30)
+                .background(Capsule().fill(MX.field)).clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(Color.black, lineWidth: 1))
+
+                Button { source.muted.toggle() } label: {
+                    Text(source.muted ? "MUTED" : "MUTE").font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(source.muted ? .white : MX.label)
+                        .frame(width: 70, height: 30)
+                        .background(Capsule().fill(source.muted ? MX.red : MX.field))
+                        .overlay(Capsule().strokeBorder(Color.black, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+
+                Button { source.solo.toggle() } label: {
+                    Image(systemName: "headphones").font(.system(size: 14))
+                        .foregroundColor(source.solo ? .white : MX.dim)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(source.solo ? MX.orange : MX.field))
+                        .overlay(Circle().strokeBorder(Color.black, lineWidth: 1))
+                }
+                .buttonStyle(.plain).help("Solo to the Mac's speakers/headphones")
+            }
+        }
+    }
+
+    private func pill(_ t: String, active: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(t).font(.system(size: 11, weight: .semibold)).foregroundColor(active ? MX.orange : MX.dim)
+                .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct CompactEffectsConsole: View {
+    @ObservedObject var source: Source
+    @State private var expanded = false
+    @State private var tab = 0
+
+    var body: some View {
+        ConsolePanel {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform").font(.system(size: 14)).foregroundColor(MX.cyan)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Audio Effects").font(.system(size: 13, weight: .semibold)).foregroundColor(MX.text)
+                    Text("EQ · Compressor · Gate").font(.system(size: 9)).foregroundColor(MX.dim)
+                }
+                Spacer()
+                Menu("Preset") { ForEach(FXPreset.all) { p in Button(p.name) { source.applyFXPreset(p); source.fxEnabled = true } } }
+                    .menuStyle(.borderlessButton).fixedSize()
+                Toggle("", isOn: $source.fxEnabled).toggleStyle(.switch).tint(MX.orange).labelsHidden().controlSize(.small)
+                Button { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } } label: {
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold)).foregroundColor(MX.label)
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(spacing: 6) {
+                MiniEQDisplay(source: source).frame(height: 30)
+                    .padding(.horizontal, 4)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(MX.box))
+                    .onTapGesture { tab = 0; expanded = true }
+                MiniDynamicsDisplay(source: source).frame(width: 60, height: 30)
+                    .padding(2)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(MX.box))
+                    .onTapGesture { tab = 1; expanded = true }
+            }
+
+            if expanded {
+                HStack(spacing: 0) {
+                    tabButton("Equalizer", 0)
+                    tabButton("Dynamics", 1)
+                }
+                .background(Capsule().fill(MX.field)).clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(Color.black, lineWidth: 1))
+
+                if tab == 0 {
+                    ConsoleEQGraph(source: source).frame(height: 110)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(rgb: 0x141414)))
+                    knobGrid {
+                        EffectKnob(label: "Low cut", value: $source.eqHPF, range: 0...400, defaultValue: 0, format: FXFormat.lowCut)
+                        EffectKnob(label: "Low shelf", value: $source.eqLowGain, range: -18...18, defaultValue: 0, bipolar: true, format: FXFormat.db)
+                        EffectKnob(label: "High shelf", value: $source.eqHighGain, range: -18...18, defaultValue: 0, bipolar: true, format: FXFormat.db)
+                        EffectKnob(label: "Band 1 freq", value: $source.eqP1Freq, range: 40...1200, defaultValue: 300, format: FXFormat.hz)
+                        EffectKnob(label: "Band 1 gain", value: $source.eqP1Gain, range: -18...18, defaultValue: 0, bipolar: true, format: FXFormat.db)
+                        EffectKnob(label: "Band 1 Q", value: $source.eqP1Q, range: 0.3...10, defaultValue: 1, format: FXFormat.q)
+                        EffectKnob(label: "Band 2 freq", value: $source.eqP2Freq, range: 500...12000, defaultValue: 3000, format: FXFormat.hz)
+                        EffectKnob(label: "Band 2 gain", value: $source.eqP2Gain, range: -18...18, defaultValue: 0, bipolar: true, format: FXFormat.db)
+                        EffectKnob(label: "Band 2 Q", value: $source.eqP2Q, range: 0.3...10, defaultValue: 1, format: FXFormat.q)
+                        EffectKnob(label: "High cut", value: $source.eqLPF, range: 0...20000, defaultValue: 0, format: FXFormat.highCut)
+                    }
+                } else {
+                    Text("NOISE GATE").font(.system(size: 9, weight: .bold)).foregroundColor(MX.label)
+                    ConsoleDynamicsGraph(source: source, gateOnly: true).frame(height: 80)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(rgb: 0x141414)))
+                    knobGrid {
+                        EffectKnob(label: "Threshold", value: $source.gateThreshold, range: -80...0, defaultValue: -60, color: MX.dyn, format: FXFormat.gate)
+                        EffectKnob(label: "Range", value: $source.gateRange, range: -80...0, defaultValue: -60, color: MX.dyn, format: FXFormat.dbPlain)
+                        EffectKnob(label: "Attack", value: $source.gateAttack, range: 0...50, defaultValue: 1, color: MX.dyn, format: FXFormat.ms)
+                        EffectKnob(label: "Hold", value: $source.gateHold, range: 0...500, defaultValue: 100, color: MX.dyn, format: FXFormat.ms)
+                        EffectKnob(label: "Release", value: $source.gateRelease, range: 5...1000, defaultValue: 200, color: MX.dyn, format: FXFormat.ms)
+                    }
+                    Text("COMPRESSOR / LIMITER").font(.system(size: 9, weight: .bold)).foregroundColor(MX.label)
+                    ConsoleDynamicsGraph(source: source, gateOnly: false).frame(height: 80)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(rgb: 0x141414)))
+                    knobGrid {
+                        EffectKnob(label: "Threshold", value: $source.compThreshold, range: -40...0, defaultValue: -18, color: MX.dyn, format: FXFormat.dbPlain)
+                        EffectKnob(label: "Ratio", value: $source.compRatio, range: 1...20, defaultValue: 2, color: MX.dyn, format: FXFormat.ratio)
+                        EffectKnob(label: "Attack", value: $source.compAttack, range: 0...100, defaultValue: 10, color: MX.dyn, format: FXFormat.ms)
+                        EffectKnob(label: "Release", value: $source.compRelease, range: 10...500, defaultValue: 120, color: MX.dyn, format: FXFormat.ms)
+                        EffectKnob(label: "Makeup", value: $source.compMakeup, range: 0...18, defaultValue: 0, color: MX.dyn, format: FXFormat.db)
+                    }
+                }
+            }
+        }
+    }
+
+    private func tabButton(_ t: String, _ i: Int) -> some View {
+        Button { tab = i } label: {
+            Text(t).font(.system(size: 11, weight: .semibold)).foregroundColor(tab == i ? MX.orange : MX.label)
+                .frame(maxWidth: .infinity).frame(height: 26).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func knobGrid<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)], spacing: 10) {
+            content()
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(MX.box))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MX.boxLine, lineWidth: 1))
     }
 }

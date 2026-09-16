@@ -6,13 +6,19 @@ import PresentationKit
 
 // MARK: - Content shown by a slide input
 
+struct SlideColumn: Equatable, Hashable {
+    var label: String           // e.g. Bible version abbreviation
+    var text: String
+}
+
 struct SlideContent: Equatable, Hashable {
     var title: String = ""      // dictionary headword / song title
     var body: String = ""
     var footer: String = ""     // scripture reference / credits / dictionary source
     var label: String = ""      // operator-facing label ("Chorus", "John 3:16")
+    var columns: [SlideColumn] = []   // several Bible versions side by side / stacked
 
-    var isEmpty: Bool { title.isEmpty && body.isEmpty && footer.isEmpty }
+    var isEmpty: Bool { title.isEmpty && body.isEmpty && footer.isEmpty && columns.isEmpty }
 }
 
 // MARK: - Text rasteriser (Core Text via AppKit string drawing)
@@ -89,6 +95,11 @@ enum SlideRasterizer {
         let region = look.textRegion(width: Double(W), height: Double(H))
         // top-left fractions → AppKit bottom-left rect
         let area = CGRect(x: region.x, y: Double(H) - region.y - region.height, width: region.width, height: region.height)
+
+        if !content.columns.isEmpty {
+            drawColumns(content, look: look, area: area, W: W, H: H, scale: scale, ctx: ctx)
+            return ctx.makeImage()
+        }
 
         let showTitle = look.showTitle && !content.title.isEmpty
         let footerInline = (look.footerPosition == .below || look.footerPosition == .above) && !content.footer.isEmpty
@@ -169,6 +180,94 @@ enum SlideRasterizer {
             draw(fill, stroke: stroke, style: st, in: CGRect(x: mx, y: fy, width: fw, height: fh), scale: scale, ctx: ctx)
         }
         return ctx.makeImage()
+    }
+
+    /// Several versions of the same passage: one column (or row) each, same text size for all.
+    static func drawColumns(_ content: SlideContent, look: SlideLook, area: CGRect, W: Int, H: Int, scale: CGFloat, ctx: CGContext) {
+        let n = content.columns.count
+        let gap = CGFloat(look.columnGap) * scale
+        let side = look.parallelLayout == .sideBySide
+        var frames: [CGRect] = []
+        for i in 0..<n {
+            if side {
+                let w = (area.width - gap * CGFloat(n - 1)) / CGFloat(n)
+                frames.append(CGRect(x: area.minX + CGFloat(i) * (w + gap), y: area.minY, width: w, height: area.height))
+            } else {
+                let h = (area.height - gap * CGFloat(n - 1)) / CGFloat(n)
+                frames.append(CGRect(x: area.minX, y: area.maxY - CGFloat(i + 1) * h - CGFloat(i) * gap, width: area.width, height: h))
+            }
+        }
+        // footer takes space at the bottom (or top) of the screen
+        let footerText = content.footer
+        var footerH: CGFloat = 0
+        var footerStyle = look.footer
+        if !footerText.isEmpty && look.footerPosition != .hidden {
+            let f = NSAttributedString(string: cased(footerText, footerStyle.textCase), attributes: attributes(footerStyle, scale: scale))
+            footerH = height(f, width: CGFloat(W) - CGFloat(look.marginX) * CGFloat(W) * 2)
+        }
+
+        var labelStyle = look.title
+        labelStyle.size = max(18, look.body.size * 0.5)
+        labelStyle.align = look.body.align
+
+        func build(_ k: CGFloat) -> [(NSAttributedString?, NSAttributedString, NSAttributedString?, TextStyle, CGFloat)] {
+            content.columns.enumerated().map { i, col in
+                var bodyStyle = look.body; bodyStyle.size *= Double(k)
+                var ls = labelStyle; ls.size *= Double(max(0.6, k))
+                let label = look.showVersionLabels && !col.label.isEmpty
+                    ? NSAttributedString(string: cased(col.label, ls.textCase), attributes: attributes(ls, scale: scale)) : nil
+                let text = NSAttributedString(string: cased(col.text, bodyStyle.textCase), attributes: attributes(bodyStyle, scale: scale))
+                let stroke = bodyStyle.outlineWidth > 0
+                    ? NSAttributedString(string: cased(col.text, bodyStyle.textCase), attributes: attributes(bodyStyle, scale: scale, strokeOnly: true)) : nil
+                let w = frames[i].width
+                let total = (label.map { height($0, width: w) + 8 * scale } ?? 0) + height(text, width: w)
+                return (label, text, stroke, bodyStyle, total)
+            }
+        }
+        let limitH = (frames.first?.height ?? 0) - (side ? 0 : 0)
+        var k: CGFloat = 1
+        var blocks = build(k)
+        if look.shrinkToFit {
+            var tries = 0
+            while blocks.contains(where: { $0.4 > limitH }) && k > 0.25 && tries < 16 { k *= 0.9; blocks = build(k); tries += 1 }
+        }
+
+        for (i, b) in blocks.enumerated() {
+            let fr = frames[i]
+            let used = min(b.4, fr.height)
+            var top: CGFloat
+            switch look.verticalAlign {
+            case .top: top = fr.maxY
+            case .middle: top = fr.midY + used / 2
+            case .bottom: top = fr.minY + used
+            }
+            if look.boxColor.a > 0.001 {
+                let pad = CGFloat(look.boxPadding) * scale
+                let box = CGRect(x: fr.minX - pad / 2, y: top - used - pad, width: fr.width + pad, height: used + pad * 2)
+                let r = CGFloat(look.boxRadius) * scale
+                ctx.setFillColor(nsColor(look.boxColor).cgColor)
+                ctx.addPath(CGPath(roundedRect: box, cornerWidth: min(r, box.width / 2), cornerHeight: min(r, box.height / 2), transform: nil))
+                ctx.fillPath()
+            }
+            var y = top
+            if let label = b.0 {
+                let lh = height(label, width: fr.width)
+                draw(label, stroke: nil, style: labelStyle, in: CGRect(x: fr.minX, y: y - lh, width: fr.width, height: lh), scale: scale, ctx: ctx)
+                y -= lh + 8 * scale
+            }
+            let th = height(b.1, width: fr.width)
+            draw(b.1, stroke: b.2, style: b.3, in: CGRect(x: fr.minX, y: y - th, width: fr.width, height: th), scale: scale, ctx: ctx)
+        }
+
+        if footerH > 0 {
+            footerStyle.size *= Double(min(1, max(0.6, k)))
+            let fill = NSAttributedString(string: cased(footerText, footerStyle.textCase), attributes: attributes(footerStyle, scale: scale))
+            let mx = CGFloat(look.marginX) * CGFloat(W), my = CGFloat(max(0.03, look.marginY * 0.5)) * CGFloat(H)
+            let fw = CGFloat(W) - mx * 2
+            let fh = height(fill, width: fw)
+            let fy = (look.footerPosition == .screenTop || look.footerPosition == .above) ? CGFloat(H) - my - fh : my
+            draw(fill, stroke: nil, style: footerStyle, in: CGRect(x: mx, y: fy, width: fw, height: fh), scale: scale, ctx: ctx)
+        }
     }
 
     static func height(_ s: NSAttributedString, width: CGFloat) -> CGFloat {

@@ -56,6 +56,13 @@ public enum MediaBase: String, Codable, Sendable, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+/// How several Bible versions share the screen.
+public enum ParallelLayout: String, Codable, Sendable, CaseIterable, Identifiable {
+    case sideBySide = "Side by side"
+    case stacked = "Stacked"
+    public var id: String { rawValue }
+}
+
 /// Where the reference / song credit line goes.
 public enum FooterPosition: String, Codable, Sendable, CaseIterable, Identifiable {
     case below = "Under the text"
@@ -107,6 +114,9 @@ public struct SlideLook: Codable, Hashable, Identifiable, Sendable {
     public var maxSenses: Int               // dictionary
     public var showExamples: Bool           // dictionary
     public var fadeDuration: Double
+    public var parallelLayout: ParallelLayout   // several Bible versions at once
+    public var showVersionLabels: Bool
+    public var columnGap: Double                // 1080p points between version columns
 
     public init(id: UUID = UUID(), name: String = "Look") {
         self.id = id; self.name = name
@@ -132,12 +142,15 @@ public struct SlideLook: Codable, Hashable, Identifiable, Sendable {
         maxSenses = 3
         showExamples = false
         fadeDuration = 0.35
+        parallelLayout = .sideBySide
+        showVersionLabels = true
+        columnGap = 48
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, background, dim, mediaBlend, mediaOpacity, mediaBase, body, title, footer, showTitle, footerPosition, region, custom, marginX, marginY
         case verticalAlign, shrinkToFit, boxColor, boxPadding, boxRadius, boxFullWidth, showVerseNumbers, maxCharsPerSlide
-        case linesPerSlide, maxSenses, showExamples, fadeDuration
+        case linesPerSlide, maxSenses, showExamples, fadeDuration, parallelLayout, showVersionLabels, columnGap
     }
     public init(from decoder: Decoder) throws {
         let d = SlideLook()
@@ -156,6 +169,8 @@ public struct SlideLook: Codable, Hashable, Identifiable, Sendable {
         showVerseNumbers = c.value(.showVerseNumbers, d.showVerseNumbers); maxCharsPerSlide = c.value(.maxCharsPerSlide, d.maxCharsPerSlide)
         linesPerSlide = c.value(.linesPerSlide, d.linesPerSlide); maxSenses = c.value(.maxSenses, d.maxSenses)
         showExamples = c.value(.showExamples, d.showExamples); fadeDuration = c.value(.fadeDuration, d.fadeDuration)
+        parallelLayout = c.value(.parallelLayout, d.parallelLayout); showVersionLabels = c.value(.showVersionLabels, d.showVersionLabels)
+        columnGap = c.value(.columnGap, d.columnGap)
     }
 
     /// The text region in pixels (top-left origin) for a screen of the given size, margins applied.

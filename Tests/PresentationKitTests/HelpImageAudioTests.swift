@@ -82,3 +82,13 @@ final class HelpImageAudioTests: XCTestCase {
         XCTAssertEqual(AudioMath.dbText(-80), "-∞")
     }
 }
+
+final class HelpV44Tests: XCTestCase {
+    func testNewTopicsAreFindable() {
+        XCTAssertEqual(HelpIndex.search("automate lower third").first?.id, "automation")
+        XCTAssertEqual(HelpIndex.search("generate abstract").first?.id, "generator")
+        XCTAssertEqual(HelpIndex.search("parallel versions").first?.id, "parallel-bible")
+        XCTAssertEqual(HelpIndex.search("royalty free video").first?.id, "backgrounds-library")
+        XCTAssertEqual(HelpIndex.search("feedback").first?.id, "monitor")
+    }
+}

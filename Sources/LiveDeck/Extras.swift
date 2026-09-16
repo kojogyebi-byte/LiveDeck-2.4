@@ -14,7 +14,10 @@ enum AppNavigator {
         case "deck.inputs": present.deck = DeckTab.inputs.rawValue
         case "deck.present": present.deck = DeckTab.present.rawValue
         case "deck.dictionary": present.deck = DeckTab.dictionary.rawValue
-        case "deck.images": present.deck = DeckTab.images.rawValue
+        case "deck.images": present.deck = DeckTab.images.rawValue; present.mediaSection = 0
+        case "deck.backgrounds": present.deck = DeckTab.images.rawValue; present.mediaSection = 1
+        case "deck.generator": present.deck = DeckTab.images.rawValue; present.mediaSection = 2
+        case "deck.automation": present.deck = DeckTab.automation.rawValue
         case "deck.audio": present.deck = DeckTab.audio.rawValue
         case "right.input": engine.rightTab = 1
         case "right.audio": engine.rightTab = 0
@@ -567,6 +570,7 @@ struct PresetInput: Codable {
     var look: SlideLook?
     var adjust: [Double]       // zoom panX panY rotation cropL cropR cropT cropB brightness contrast saturation
     var audio: PresetAudio
+    var generator: GeneratorSettings?
 }
 
 struct PresetOutput: Codable {
@@ -638,6 +642,7 @@ final class PresetStore: ObservableObject {
         case is BarsSource: return "bars"
         case is DictionarySource: return "dictionary"
         case is PresentationSource: return "presentation"
+        case is GeneratorSource: return "generator"
         default: return "empty"
         }
     }
@@ -654,7 +659,7 @@ final class PresetStore: ObservableObject {
                                    location: s.sourceURLString ?? s.originLocation,
                                    color: color, look: (s as? SlideSource)?.look,
                                    adjust: [s.zoom, s.panX, s.panY, s.rotation, s.cropL, s.cropR, s.cropT, s.cropB, s.brightness, s.contrast, s.saturation],
-                                   audio: PresetAudio(s))
+                                   audio: PresetAudio(s), generator: (s as? GeneratorSource)?.settings)
             }
             p.master = PresetAudio(engine.masterBus)
         }
@@ -793,6 +798,7 @@ final class PresetStore: ObservableObject {
         case "bars": return BarsSource()
         case "presentation": return PresentationSource(name: spec.name, look: spec.look ?? .fullScreen)
         case "dictionary": return DictionarySource(name: spec.name, look: spec.look ?? .dictionaryPanel)
+        case "generator": return GeneratorSource(settings: spec.generator ?? GeneratorSettings(), name: spec.name)
         default: break
         }
         return EmptySource()
