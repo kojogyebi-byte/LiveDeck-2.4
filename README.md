@@ -1,4 +1,16 @@
-# LiveDeck Studio (macOS) — v4.6.0
+# LiveDeck Studio (macOS) — v4.7.0
+
+**New in 4.7 — LiveDeck Link (several computers on one network):**
+- **Automatic discovery:** every Mac running LiveDeck with *Share on this network* turned on appears in the new **Network** tab (Bonjour `_livedeck._tcp`, TCP). Name each station (Front of house, Stage, Media desk…). An optional shared **passcode** keeps other people out — it is checked with a challenge/response, never sent over the network.
+- **Live status of other stations:** what is on their Program and Preview, keys, REC time and LIVE, plus the words currently on screen.
+- **Messages:** chat to everyone or one station, quick cues (Standby, Ready, Go, Next slide, Camera 1/2, Wrap up…) and **Attention** (amber flash + beep). Messages pop up at the top right; the top-bar **LINK** button shows connected stations and unread messages.
+- **Share media:** right-click a Library item, a file/image input, a song or a preset → **Send to computer** (optionally *and add as input*). Or **Browse their media** and **Get** files from another station. Transfers show progress, can be cancelled, and the receiver accepts them (or turns on *Accept files without asking*). Files go to Library → Shared, songs to Songs & Bible, presets to Presets.
+- **Illuminated switcher keys:** PVW / PGM / K·P / K·L on input tiles now look like a hardware panel — square keys that glow green, red or amber when lit.
+- `PresentationKit` adds `LinkProtocol.swift` (message envelope, binary framing, pure-Swift SHA-256, passcode proof); **67 automated tests**. Info.plist adds `NSLocalNetworkUsageDescription` and `NSBonjourServices`.
+
+---
+
+# Previous — v4.6.0
 
 **New in 4.6:**
 - **AI Search tab** — ask **Claude, ChatGPT, Gemini, Grok, DeepSeek, Mistral, Perplexity (web search), Groq, Ollama (local, no key) or any OpenAI-compatible server**. Choose how it writes (Answer, Bible study, Sermon points, Explain simply, Summary, Prayer points, Announcement, Quotes, Translate) plus your own extra rules. Answers are cleaned of Markdown, can be edited, are saved for reuse, and become slides on an **AI Search input** with the same Format editor as songs, scripture and the dictionary (max characters per slide, question as title, AI credit line). Operator bar and right-click: show, Preview, Program, Key PVW, Key PGM, clear. API keys are stored in the macOS Keychain; model ids are editable (defaults: claude-sonnet-5, gpt-5.5, gemini-3.8-flash).

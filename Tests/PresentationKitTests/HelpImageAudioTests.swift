@@ -110,3 +110,11 @@ final class HelpV46Tests: XCTestCase {
         XCTAssertEqual(HelpIndex.search("resize panel").first?.id, "panel-size")
     }
 }
+
+final class HelpV47Tests: XCTestCase {
+    func testNetworkTopics() {
+        XCTAssertEqual(HelpIndex.search("multiple computers").first?.id, "network")
+        XCTAssertEqual(HelpIndex.search("intercom").first?.id, "network-chat")
+        XCTAssertEqual(HelpIndex.search("send song").first?.id, "network-share")
+    }
+}

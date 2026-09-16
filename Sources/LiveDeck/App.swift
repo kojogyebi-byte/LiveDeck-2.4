@@ -11,6 +11,7 @@ struct LiveDeckApp: App {
     @StateObject private var generator = GeneratorModel()
     @StateObject private var automation = AutomationModel()
     @StateObject private var ai = AIModel()
+    @StateObject private var link = LinkManager()
 
     var body: some Scene {
         WindowGroup("LiveDeck Studio") {
@@ -26,6 +27,7 @@ struct LiveDeckApp: App {
                 .environmentObject(generator)
                 .environmentObject(automation)
                 .environmentObject(ai)
+                .environmentObject(link)
                 .frame(minWidth: 1280, minHeight: 760)
                 .onAppear {
                     present.engine = engine
@@ -35,6 +37,11 @@ struct LiveDeckApp: App {
                     generator.engine = engine
                     automation.engine = engine
                     ai.engine = engine
+                    link.engine = engine
+                    link.backgrounds = backgrounds
+                    link.present = present
+                    link.presets = presets
+                    link.activate()
                     engine.start()
                 }
         }

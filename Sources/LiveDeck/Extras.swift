@@ -26,6 +26,7 @@ enum AppNavigator {
         case "right.scenes": engine.rightTab = 3
         case "right.outputs": engine.rightTab = 4
         case "right.presets": engine.rightTab = 5
+        case "right.network": engine.rightTab = 6
         default: break
         }
     }
@@ -880,6 +881,15 @@ final class PresetStore: ObservableObject {
         catch { message = "Could not save preset: \(error.localizedDescription)" }
     }
 
+    /// Adds a preset received from another computer.
+    func importPreset(_ p: AppPreset) {
+        var copy = p
+        if presets.contains(where: { $0.id == p.id }) { copy.id = UUID() }
+        copy.modified = Date()
+        do { try write(copy); reload(); message = "Received preset “\(copy.name)”." }
+        catch { message = "Could not save the received preset: \(error.localizedDescription)" }
+    }
+
     func update(_ preset: AppPreset, from engine: Engine) {
         let p = PresetStore.capture(engine, name: preset.name, includes: preset.includes, id: preset.id, created: preset.created)
         do { try write(p); reload(); message = "Updated “\(p.name)” with the current setup." }
@@ -1030,6 +1040,7 @@ final class PresetStore: ObservableObject {
 
 struct PresetsPanel: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var link: LinkManager
     @EnvironmentObject var presets: PresetStore
     @State private var name = ""
     @State private var includes = PresetIncludes()
@@ -1109,6 +1120,7 @@ struct PresetsPanel: View {
                                 Button("Update with current setup") { presets.update(p, from: engine) }
                                 Button("Rename…") { renameText = p.name; renaming = p.id }
                                 Button("Export…") { presets.export(p) }
+                                LinkSendMenu(title: "Send to computer") { pid in link.sharePreset(p, to: pid) }
                                 Divider()
                                 Button("Delete", role: .destructive) { presets.delete(p) }
                             }

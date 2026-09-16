@@ -334,6 +334,7 @@ struct MediaDeck: View {
 
 struct BackgroundsView: View {
     @EnvironmentObject var bg: BackgroundsModel
+    @EnvironmentObject var link: LinkManager
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
 
@@ -375,6 +376,8 @@ struct BackgroundsView: View {
                                         Divider()
                                         Button(item.favorite ? "Remove from favourites" : "Add to favourites") { bg.catalog.setFavorite(item.id, !item.favorite); bg.refresh() }
                                         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([bg.catalog.url(item)]) }
+                                        LinkSendMenu(title: "Send to computer") { pid in link.offerLibraryItem(item, to: pid) }
+                                        LinkSendMenu(title: "Send to computer and add as input") { pid in link.offerLibraryItem(item, to: pid, addAsInput: true) }
                                         Button("Delete", role: .destructive) { bg.catalog.remove(item.id); bg.refresh() }
                                     }
                             }

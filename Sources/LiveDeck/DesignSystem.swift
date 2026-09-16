@@ -752,3 +752,57 @@ struct CPInspector<Content: View>: View {
         .background(CP.bg)
     }
 }
+
+
+// MARK: - Illuminated switcher keys (hardware-panel look)
+
+enum SK {
+    static let red = Color(rgb: 0xEF3B2D)
+    static let green = Color(rgb: 0x4CD13A)
+    static let amber = Color(rgb: 0xF4C430)
+    static let white = Color(rgb: 0xEDEDED)
+}
+
+private struct KeyCornerMark: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.maxX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.minX, y: r.minY))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// Square illuminated key: glows in its colour when lit, dark with coloured text when not.
+struct SwitcherKeyStyle: ButtonStyle {
+    let color: Color
+    let lit: Bool
+    var minWidth: CGFloat = 40
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 10.5, weight: .heavy))
+            .lineLimit(1)
+            .foregroundColor(lit ? Color.black.opacity(0.85) : color.opacity(0.85))
+            .padding(.horizontal, 6)
+            .frame(minWidth: minWidth, minHeight: 26)
+            .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: 5).fill(lit ? color : Color(rgb: 0x262626))
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(LinearGradient(colors: [Color.white.opacity(lit ? 0.28 : 0.06), Color.clear, Color.black.opacity(lit ? 0.12 : 0.25)],
+                                             startPoint: .top, endPoint: .bottom))
+                }
+            )
+            .overlay(alignment: .topTrailing) {
+                KeyCornerMark().fill(Color.black.opacity(lit ? 0.38 : 0.55)).frame(width: 7, height: 7).padding(3)
+            }
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.black.opacity(0.85), lineWidth: 1.5))
+            .overlay(RoundedRectangle(cornerRadius: 4).inset(by: 1.5).strokeBorder(Color.white.opacity(lit ? 0.35 : 0.07), lineWidth: 1))
+            .shadow(color: lit ? color.opacity(0.8) : .clear, radius: 6)
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .brightness(configuration.isPressed ? -0.1 : 0)
+            .animation(.easeOut(duration: 0.12), value: lit)
+            .contentShape(Rectangle())
+    }
+}

@@ -15,6 +15,7 @@ private let pipNoneTag = UUID()
 
 struct MainView: View {
     @EnvironmentObject var backgrounds: BackgroundsModel
+    @EnvironmentObject var link: LinkManager
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
@@ -49,6 +50,7 @@ struct MainView: View {
         .background(WindowChrome())
         .overlay { if dropTargeted { Rectangle().stroke(DS.accent, lineWidth: 3).allowsHitTesting(false) } }
         .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
+        .overlay(alignment: .topTrailing) { LinkToast().animation(.easeInOut(duration: 0.25), value: link.toast?.id) }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
         .sheet(isPresented: $showStream) { StreamSettingsView() }
         .sheet(isPresented: $backgrounds.showFirstRun) {
@@ -257,6 +259,7 @@ struct TopBar: View {
             DSIconButton(symbol: "square.and.arrow.down", help: "Save show…") { engine.saveShow() }
             Rectangle().fill(DS.line).frame(width: 1, height: 20)
             PresetsMenu()
+            LinkTopBarButton()
             Spacer()
             Button { engine.openOutputWindow() } label: {
                 Label(engine.programWindowActive ? (engine.programOutFullscreen ? "PROGRAM OUT · FULL" : "PROGRAM OUT · WINDOW") : "PROGRAM OUT",
@@ -769,6 +772,7 @@ struct TileTransport<S: MediaPlayback>: View {
 
 struct InputTile: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var link: LinkManager
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
     @EnvironmentObject var gen: GeneratorModel
@@ -828,17 +832,17 @@ struct InputTile: View {
                 ChannelMeterBar(id: source.id, muted: source.muted, segments: 14)
                     .frame(width: tileW, height: 6).padding(.vertical, 2).background(DS.bg1)
                 HStack(spacing: 6) {
-                    Button("PVW") { select() }.buttonStyle(.ds(.preview, .small, active: isPreview))
-                    Button("PGM") { engine.setPreview(source.id); engine.cut() }.buttonStyle(.ds(.program, .small, active: isProgram))
+                    Button("PVW") { select() }.buttonStyle(SwitcherKeyStyle(color: SK.green, lit: isPreview))
+                    Button("PGM") { engine.setPreview(source.id); engine.cut() }.buttonStyle(SwitcherKeyStyle(color: SK.red, lit: isProgram))
                     if let f = source as? FileSource { TileTransport(source: f) }
                     else if let a = source as? AudioFileSource { TileTransport(source: a) }
                     if !(source is AudioFileSource) && (tileW >= 250 || !(source is FileSource)) {
-                        HStack(spacing: 0) {
+                        HStack(spacing: 5) {
                             Button("K·P") { engine.toggleKeyPreview(source.id) }
-                                .buttonStyle(.ds(.amber, .small, active: isPreviewKeyed))
+                                .buttonStyle(SwitcherKeyStyle(color: SK.amber, lit: isPreviewKeyed, minWidth: 36))
                                 .help("Key over PREVIEW (goes on air with the next CUT/AUTO)")
                             Button("K·L") { engine.toggleKey(source.id) }
-                                .buttonStyle(.ds(.amber, .small, active: isKeyed))
+                                .buttonStyle(SwitcherKeyStyle(color: SK.amber, lit: isKeyed, minWidth: 36))
                                 .help("Key over PROGRAM (live)")
                         }
                     }
@@ -876,6 +880,11 @@ struct InputTile: View {
                 Button(source.muted ? "Unmute" : "Mute") { source.muted.toggle() }
                 Button(source.solo ? "Unsolo" : "Solo (headphones)") { source.solo.toggle() }
                 Button("Audio in mixer") { select(); present.deck = DeckTab.audio.rawValue }
+                if let path = source.originLocation, !(source is CameraSource), FileManager.default.fileExists(atPath: path) {
+                    Divider()
+                    LinkSendMenu(title: "Send file to computer") { pid in link.offerFile(URL(fileURLWithPath: path), title: source.name, to: pid) }
+                    LinkSendMenu(title: "Send to computer as an input") { pid in link.offerFile(URL(fileURLWithPath: path), title: source.name, to: pid, addAsInput: true) }
+                }
                 if source.sourceURLString != nil {
                     Button("Edit address…") { engine.openEditStream(source.id) }
                 }
@@ -1077,6 +1086,7 @@ struct ScenesPanel: View {
 
 struct RightPanel: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var link: LinkManager
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
@@ -1094,7 +1104,8 @@ struct RightPanel: View {
                 DSTabItem(id: 2, title: "Overlays", icon: "square.stack.3d.up"),
                 DSTabItem(id: 3, title: "Scenes", icon: "rectangle.split.2x2"),
                 DSTabItem(id: 4, title: "Outputs", icon: "display"),
-                DSTabItem(id: 5, title: "Presets", icon: "tray.full")
+                DSTabItem(id: 5, title: "Presets", icon: "tray.full"),
+                DSTabItem(id: 6, title: link.unread > 0 ? "Network •\(link.unread)" : "Network", icon: "network")
             ])
             .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
             Group {
@@ -1103,6 +1114,7 @@ struct RightPanel: View {
                 else if engine.rightTab == 2 { OverlaysPanel() }
                 else if engine.rightTab == 3 { ScenesPanel() }
                 else if engine.rightTab == 5 { PresetsPanel() }
+                else if engine.rightTab == 6 { NetworkPanel() }
                 else { OutputsPanel() }
             }
             .frame(maxHeight: .infinity)

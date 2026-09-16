@@ -13,7 +13,7 @@
     <key>CFBundleIdentifier</key>
     <string>org.livedeck.studio</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.6.0</string>
+    <string>4.7.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundlePackageType</key>
@@ -33,6 +33,12 @@
     </dict>
     <key>NSCameraUsageDescription</key>
     <string>LiveDeck needs camera access to use cameras as live video sources.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>LiveDeck finds other LiveDeck computers on your network to share media, songs and messages.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_livedeck._tcp</string>
+    </array>
     <key>NSMicrophoneUsageDescription</key>
     <string>LiveDeck needs microphone access to record audio with your program output.</string>
 </dict>

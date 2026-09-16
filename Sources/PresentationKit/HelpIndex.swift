@@ -20,7 +20,7 @@ public struct HelpTopic: Identifiable, Hashable, Sendable {
 
 public enum HelpIndex {
     public static let categories = ["Getting started", "Switching", "Inputs", "Songs & Bible", "Dictionary", "Images",
-                                    "AI search", "Audio", "Overlays & scenes", "Automation", "Outputs & streaming", "Recording", "Presets", "Keyboard & help"]
+                                    "AI search", "Audio", "Overlays & scenes", "Automation", "Network", "Outputs & streaming", "Recording", "Presets", "Keyboard & help"]
 
     static func fold(_ s: String) -> String {
         s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
@@ -314,6 +314,28 @@ public enum HelpIndex {
                           "When: at a time of day, after a delay, repeat every…, when an input goes on Program, or when recording/streaming starts.",
                           "Hold for N seconds hides it again automatically; ‘Undo when it ends’ follows the camera or recording.",
                           "Press Start automation. Each cue shows a countdown; Run fires a cue now; Activity lists what happened."], target: "deck.automation"),
+        // Network
+        HelpTopic("network", "Connect several LiveDeck computers", category: "Network",
+                  keywords: ["network", "lan", "wifi", "multiple computers", "other mac", "link", "bonjour", "share", "team", "collaborate", "passcode"],
+                  summary: "Macs running LiveDeck on the same network find each other, show each other's status, chat and share media.",
+                  steps: ["On every computer: Network tab (control panel) → turn on Share on this network, and give the station a name (e.g. Front of house, Stage, Media desk).",
+                          "Set the same passcode on all of them if other people use the network. macOS may ask to allow local network access — choose Allow (System Settings → Privacy & Security → Local Network).",
+                          "Other computers appear under Stations with a green dot, what is on their Program and Preview, keys and REC/LIVE.",
+                          "The LINK button in the top bar shows how many are connected and unread messages."], target: "right.network"),
+        HelpTopic("network-chat", "Send messages between computers", category: "Network",
+                  keywords: ["chat", "message", "intercom", "talk", "cue", "attention", "standby", "communicate"],
+                  summary: "Text messages and quick cues between operators.",
+                  steps: ["Network → Messages: choose Everyone or one station, type and Send.",
+                          "Quick buttons send Standby, Ready, Go, Next slide, Camera 1/2, Wrap up…",
+                          "The ⚠︎ button sends Attention: it flashes amber and beeps on the other computer.",
+                          "Incoming messages pop up at the top right; click one to open the Network panel."], target: "right.network"),
+        HelpTopic("network-share", "Share media, songs and presets over the network", category: "Network",
+                  keywords: ["send file", "share media", "transfer", "copy to other computer", "send song", "send preset", "receive"],
+                  summary: "Send library images and videos, input files, songs and presets to another computer — or pull media from theirs.",
+                  steps: ["Right-click an item in Media → Library → Send to computer (or … and add as input).",
+                          "Right-click a song, a preset or a file/image input → Send to computer.",
+                          "Pull: Stations → ⋯ → Browse their media, then Get.",
+                          "The receiver accepts in Transfers (or turns on Accept files without asking). Received media goes to Library → Shared; songs to Songs & Bible; presets to Presets."], target: "right.network"),
         // Outputs & streaming
         HelpTopic("program-out", "Full-screen output to a projector or LED wall", category: "Outputs & streaming",
                   keywords: ["projector", "second screen", "display", "led", "fullscreen", "full screen", "hdmi", "program out", "external monitor"],
