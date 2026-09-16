@@ -1,4 +1,6 @@
-# LiveDeck Studio (macOS) — v4.9.3
+# LiveDeck Studio (macOS) — v4.9.4
+
+**4.9.4 (build fix):** `StreamHealth` now has a public initializer so the app target can create it.
 
 **4.9.3 — On-air status bar** above the monitors: time and date, stage countdown, BLACK (fade to black), keys (Program/Preview), overlays on air, automation, network link, Program Out state, format and live fps, audio (stereo mini-meter, level, CLIP, MUTED, SILENT while live), REC (time, file size, hours of disk left) and **LIVE stream strength** (time on air, five signal bars, bitrate, speed, dropped frames, destinations; click for full stream details and errors). Stream statistics come from ffmpeg `-progress`; health is judged from speed, send backlog and recent dropped frames. Right-click to hide; gear menu to show again. Also fixes the wrapped “DURATION” label. **84 automated tests.**
 

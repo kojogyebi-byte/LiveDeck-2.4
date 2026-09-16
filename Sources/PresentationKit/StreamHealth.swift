@@ -54,6 +54,10 @@ public struct StreamHealth: Equatable, Sendable {
     public var bars: Int            // 0…5
     public var advice: String
 
+    public init(level: StreamHealthLevel, bars: Int, advice: String) {
+        self.level = level; self.bars = bars; self.advice = advice
+    }
+
     /// - Parameters:
     ///   - seconds: time since the stream started
     ///   - speed: ffmpeg encode/send speed (1.0 = real time)
