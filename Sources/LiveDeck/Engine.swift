@@ -134,6 +134,45 @@ final class Engine: ObservableObject {
     @Published var showHelp = false
     @Published var showZoom = false
     @Published var showPreflight = false
+
+    // MARK: on-air status (status bar above Program)
+    @Published var streamHealth = StreamHealth(level: .off, bars: 0, advice: "")
+    @Published var streamProgress = FFmpegProgress()
+    @Published var streamSeconds = 0
+    @Published var recordBytes: Int64 = 0
+    @Published var diskFreeBytes: Int64 = 0
+    @Published var lastClip: Date?
+    @Published var lastSignal = Date()
+    private var dropHistory: [(time: Double, drops: Int)] = []
+    private var statusTimer: Timer?
+    private var statusTick = 0
+
+    /// 1 Hz: stream statistics and health, recording size, free disk space.
+    private func updateOnAirStatus() {
+        statusTick += 1
+        let s = streamer.statsSnapshot()
+        let now = ProcessInfo.processInfo.systemUptime
+        if isStreaming {
+            dropHistory.append((now, s.progress.dropFrames))
+            dropHistory.removeAll { now - $0.time > 6 }
+            let recentDrops = max(0, s.progress.dropFrames - (dropHistory.first?.drops ?? s.progress.dropFrames))
+            streamProgress = s.progress
+            streamSeconds = Int(s.seconds)
+            streamHealth = StreamHealth.evaluate(streaming: true, seconds: s.seconds, speed: s.progress.speed,
+                                                 backlogSeconds: s.backlogSeconds, droppedRecently: recentDrops,
+                                                 fps: fpsTarget, receivedProgress: s.received)
+        } else if streamHealth.level != .off {
+            streamHealth = StreamHealth(level: .off, bars: 0, advice: ""); streamSeconds = 0; dropHistory = []
+        }
+        if isRecording, let url = writer?.outputURL,
+           let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value {
+            recordBytes = size
+        } else if !isRecording && recordBytes != 0 { recordBytes = 0 }
+        if statusTick % 5 == 1,
+           let free = try? outputFolder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
+            diskFreeBytes = free
+        }
+    }
     /// Input whose name is being edited (MainView shows the rename box).
     @Published var renamingSourceID: UUID?
     /// Switcher key rows under the monitors: 0 = when the Inputs tab is hidden · 1 = always · 2 = never
@@ -329,6 +368,9 @@ final class Engine: ObservableObject {
         if let v = UserDefaults.standard.object(forKey: "audio.monitorDB") as? Double { monitorLevelDB = v }
         hearLiveInputs = UserDefaults.standard.bool(forKey: "audio.hearLive")
         audio.programSink = { [weak self] l, r, n, time in self?.consumeProgramAudio(l, r, n, time) }
+        let st = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.updateOnAirStatus() }
+        RunLoop.main.add(st, forMode: .common)
+        statusTimer = st
         audio.start()
         audioStatus = audio.lastError
         syncAudio()
@@ -431,6 +473,8 @@ final class Engine: ObservableObject {
         if meterML < 0.0005 { meterML = 0 }
         if meterMR < 0.0005 { meterMR = 0 }
         let mm = max(meterML, meterMR)
+        if max(m.master.0, m.master.1) >= 0.98 { lastClip = Date() }
+        if max(m.master.0, m.master.1) > 0.003, Date().timeIntervalSince(lastSignal) > 0.5 { lastSignal = Date() }
         if abs(mm - telemetry.master) > 0.002 || (mm == 0 && telemetry.master != 0) {
             telemetry.master = mm; telemetry.masterL = meterML; telemetry.masterR = meterMR
         }

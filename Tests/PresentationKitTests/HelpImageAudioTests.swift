@@ -137,3 +137,10 @@ final class HelpV49Tests: XCTestCase {
         XCTAssertEqual(HelpIndex.search("crash").first?.id, "recovery")
     }
 }
+
+final class HelpV493Tests: XCTestCase {
+    func testStatusBarTopic() {
+        XCTAssertEqual(HelpIndex.search("stream strength").first?.id, "status-bar")
+        XCTAssertEqual(HelpIndex.search("dropped frames").first?.id, "status-bar")
+    }
+}

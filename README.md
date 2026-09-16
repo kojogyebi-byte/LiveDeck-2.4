@@ -1,7 +1,12 @@
-# LiveDeck Studio (macOS) — v4.9.1
+# LiveDeck Studio (macOS) — v4.9.3
 
-**4.9.1 — English Bibles included:**
-- Nine English Bibles now ship inside the app and are added to the Bible library on first launch: **KJV** (Authorized King James Version), **KJV+** (KJV with Strong's — numbers removed for display), **ASV**, **ASVs** (ASV with Strong's), **WEB** (World English Bible), **NET** (NET Bible®), **Geneva** (1587), **Coverdale** (1535) and **Tyndale** (1534; Pentateuch, Jonah and New Testament). Text is cleaned for the screen (Strong's codes, red-letter marks, pilcrows and supplied-word brackets removed) and fully searchable.
+**4.9.3 — On-air status bar** above the monitors: time and date, stage countdown, BLACK (fade to black), keys (Program/Preview), overlays on air, automation, network link, Program Out state, format and live fps, audio (stereo mini-meter, level, CLIP, MUTED, SILENT while live), REC (time, file size, hours of disk left) and **LIVE stream strength** (time on air, five signal bars, bitrate, speed, dropped frames, destinations; click for full stream details and errors). Stream statistics come from ffmpeg `-progress`; health is judged from speed, send backlog and recent dropped frames. Right-click to hide; gear menu to show again. Also fixes the wrapped “DURATION” label. **84 automated tests.**
+
+
+**4.9.2:** the bundled Bibles were removed from the repository (63 MB was too large for GitHub). Install them from the separate **LiveDeck-English-Bibles.zip** with Songs & Bible → Bible → Import file… (choose the zip), or drop the zip on the Bible area. If a `Resources/Bibles` folder of `.ldbible` files is ever added back, the app still installs them automatically on first launch.
+
+**4.9.1 — English Bibles:**
+- Nine English Bibles, added to the Bible library by importing the pack: **KJV** (Authorized King James Version), **KJV+** (KJV with Strong's — numbers removed for display), **ASV**, **ASVs** (ASV with Strong's), **WEB** (World English Bible), **NET** (NET Bible®), **Geneva** (1587), **Coverdale** (1535) and **Tyndale** (1534; Pentateuch, Jonah and New Testament). Text is cleaned for the screen (Strong's codes, red-letter marks, pilcrows and supplied-word brackets removed) and fully searchable.
 - New importer for **Bible SuperSearch JSON** (`{"metadata":…,"verses":[…]}`), plus batch import: choose many files, a folder, or a **.zip** — or drop them on the Bible area. Already-installed versions are skipped; `.ldbible` files install directly.
 - Workflow copies `Resources/Bibles` into the app bundle. **80 automated tests.**
 - Licence note: the NET Bible text is free for non-commercial use with acknowledgement of Biblical Studies Press; the others are public domain.

@@ -926,6 +926,16 @@ final class StreamOutput {
     private var startTime: TimeInterval = 0
     private var fps = 30
     private var stderrTail = ""
+    private var progress = FFmpegProgress()
+    private var progressReceived = false
+    private var backlogFrames: Int64 = 0
+
+    /// Live numbers for the on-air status bar.
+    func statsSnapshot() -> (progress: FFmpegProgress, received: Bool, backlogSeconds: Double, seconds: Double) {
+        lock.lock(); defer { lock.unlock() }
+        let secs = running ? ProcessInfo.processInfo.systemUptime - startTime : 0
+        return (progress, progressReceived, Double(backlogFrames) / Double(max(1, fps)), secs)
+    }
 
     static func ffmpegPath() -> String? {
         let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg", "/opt/local/bin/ffmpeg"]
@@ -954,7 +964,7 @@ final class StreamOutput {
         signal(SIGPIPE, SIG_IGN)   // a dead ffmpeg must produce a write error, not kill LiveDeck
 
         var args: [String] = [
-            "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-hide_banner", "-loglevel", "error", "-nostdin", "-progress", "pipe:1",
             "-f", "rawvideo", "-pixel_format", "bgra", "-video_size", "\(width)x\(height)",
             "-framerate", "\(fps)", "-i", "pipe:0"
         ]
@@ -991,9 +1001,17 @@ final class StreamOutput {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: ff)
         p.arguments = args
-        let inPipe = Pipe(), errPipe = Pipe()
+        let inPipe = Pipe(), errPipe = Pipe(), progressPipe = Pipe()
         p.standardInput = inPipe
-        p.standardOutput = FileHandle.nullDevice
+        p.standardOutput = progressPipe
+        progressPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let d = h.availableData
+            guard let self, !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
+            self.lock.lock()
+            self.progress.apply(s)
+            self.progressReceived = true
+            self.lock.unlock()
+        }
         p.standardError = errPipe
         stderrTail = ""
         errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
@@ -1007,12 +1025,14 @@ final class StreamOutput {
             // short delay so the last stderr lines (the actual error) are captured first
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 errPipe.fileHandleForReading.readabilityHandler = nil
+                progressPipe.fileHandleForReading.readabilityHandler = nil
                 self?.processEnded(proc)
             }
         }
 
         lock.lock()
         running = true; withAudio = useAudio; latestFrame = nil; audioRing.removeAll()
+        progress = FFmpegProgress(); progressReceived = false; backlogFrames = 0
         self.fps = fps; startTime = ProcessInfo.processInfo.systemUptime
         lock.unlock()
 
@@ -1073,6 +1093,7 @@ final class StreamOutput {
             lock.lock(); let t0 = startTime, rate = Double(fps), frame = latestFrame; lock.unlock()
             let elapsed = ProcessInfo.processInfo.systemUptime - t0
             let due = Int64(elapsed * rate) + 1
+            lock.lock(); backlogFrames = max(0, due - written - 1); lock.unlock()
             if written >= due {
                 Thread.sleep(forTimeInterval: max(0.001, Double(written) / rate - elapsed))
                 continue

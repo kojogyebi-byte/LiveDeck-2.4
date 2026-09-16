@@ -24,6 +24,7 @@ struct MainView: View {
     @State private var showStream = false
     @State private var dropTargeted = false
     @State private var renameText = ""
+    @AppStorage("ui.onAirBar") private var showOnAirBar = true
     var body: some View {
         VStack(spacing: 0) {
             TopBar(showStream: $showStream)
@@ -33,6 +34,10 @@ struct MainView: View {
                     // Monitors keep 16:9; the lower deck (inputs / songs & Bible / dictionary) fills the rest.
                     let monH = min(geo.size.height * 0.5, geo.size.width * 0.265)
                     VStack(spacing: 0) {
+                        if showOnAirBar {
+                            OnAirStatusBar()
+                                .contextMenu { Button("Hide status bar") { showOnAirBar = false } }
+                        }
                         HStack(spacing: 8) {
                             MonitorPane(title: previewName, accent: DS.preview, isProgram: false)
                             TransitionColumn()
@@ -342,6 +347,10 @@ struct TopBar: View {
                 Button("Keyboard shortcuts…") { engine.showHotkeys = true }
                 Button("Pre-service check…") { engine.showPreflight = true }
                 checkButton("Hear microphones in the Mac's speakers", engine.hearLiveInputs) { engine.hearLiveInputs.toggle() }
+                checkButton("Show on-air status bar", UserDefaults.standard.object(forKey: "ui.onAirBar") as? Bool ?? true) {
+                    let cur = UserDefaults.standard.object(forKey: "ui.onAirBar") as? Bool ?? true
+                    UserDefaults.standard.set(!cur, forKey: "ui.onAirBar")
+                }
                 Button("Choose recording folder…") { engine.chooseOutputFolder() }
                 Button("Reveal last recording") { engine.revealLastRecording() }
             } label: { Image(systemName: "gearshape.fill").foregroundColor(DS.text2) }
@@ -644,7 +653,8 @@ struct TransitionColumn: View {
                 .help("Drag down to transition manually")
             VStack(spacing: 3) {
                 HStack(spacing: 4) {
-                    Text("DURATION").font(.system(size: 8.5, weight: .bold)).kerning(0.6).foregroundColor(DS.text3)
+                    Text("DURATION").font(.system(size: 8, weight: .bold)).foregroundColor(DS.text3)
+                        .lineLimit(1).minimumScaleFactor(0.7).fixedSize()
                     Spacer(minLength: 0)
                     CPValueField(value: $engine.transitionDuration, range: 0.1...5.0, format: "%.1fs")
                         .contextMenu {
