@@ -46,6 +46,9 @@ struct MainView: View {
         .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
         .sheet(isPresented: $showStream) { StreamSettingsView() }
+        .sheet(isPresented: $engine.showHelp) {
+            HelpCenter().environmentObject(engine).environmentObject(present)
+        }
         .onAppear { present.engine = engine; dict.engine = engine }
     }
     var previewName: String { engine.sources.first { $0.id == engine.previewID }?.name ?? "Preview" }
@@ -119,6 +122,10 @@ struct HotKeys: NSViewRepresentable {
 
         func handle(_ ev: NSEvent) -> Bool {
             guard let engine, let window = NSApp.keyWindow, window === NSApp.mainWindow, window.attachedSheet == nil else { return false }
+            if ev.modifierFlags.contains(.command) && !ev.modifierFlags.contains(.control) {
+                let ch = (ev.charactersIgnoringModifiers ?? "").lowercased()
+                if ch == "k" || ch == "?" || ch == "/" { engine.showHelp = true; return true }
+            }
             if !ev.modifierFlags.intersection([.command, .control, .option]).isEmpty { return false }
             let responder = window.firstResponder
             if responder is NSText || responder is NSTextView { return false }
@@ -223,6 +230,8 @@ struct TopBar: View {
             Rectangle().fill(DS.line).frame(width: 1, height: 20)
             DSIconButton(symbol: "folder", help: "Open show…") { engine.loadShow() }
             DSIconButton(symbol: "square.and.arrow.down", help: "Save show…") { engine.saveShow() }
+            Rectangle().fill(DS.line).frame(width: 1, height: 20)
+            PresetsMenu()
             Spacer()
             Button { engine.openOutputWindow() } label: {
                 Label(engine.programWindowActive ? "PROGRAM OUT · ON" : "PROGRAM OUT", systemImage: "rectangle.inset.filled")
@@ -246,6 +255,20 @@ struct TopBar: View {
             .buttonStyle(.ds(.program, .regular, active: engine.isRecording))
             Spacer()
             SystemStatsView()
+            Button { engine.showHelp = true } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass")
+                    Text("Find a tool").font(.system(size: 11))
+                    Text("⌘K").font(DS.mono(9)).foregroundColor(DS.text3)
+                }
+                .foregroundColor(DS.text2)
+                .padding(.horizontal, 9).frame(height: 24)
+                .background(RoundedRectangle(cornerRadius: 6).fill(DS.bg0))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DS.line, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help("Search tools and instructions")
+            DSIconButton(symbol: "questionmark", help: "Help & user guide") { engine.helpQuery = ""; engine.showHelp = true }
             Text("\(engine.height)p\(engine.fpsTarget)").font(DS.mono(11)).foregroundColor(DS.text2)
                 .padding(.horizontal, 7).frame(height: 22)
                 .background(RoundedRectangle(cornerRadius: 4).fill(DS.bg0))
@@ -433,9 +456,11 @@ struct LowerDeck: View {
                 DSTabBar(selection: $present.deck, items: [
                     DSTabItem(id: DeckTab.inputs.rawValue, title: "Inputs", icon: "square.grid.2x2"),
                     DSTabItem(id: DeckTab.present.rawValue, title: "Songs & Bible", icon: "music.note.list"),
-                    DSTabItem(id: DeckTab.dictionary.rawValue, title: "Dictionary", icon: "character.book.closed")
+                    DSTabItem(id: DeckTab.dictionary.rawValue, title: "Dictionary", icon: "character.book.closed"),
+                    DSTabItem(id: DeckTab.images.rawValue, title: "Images", icon: "photo.on.rectangle.angled"),
+                    DSTabItem(id: DeckTab.audio.rawValue, title: "Audio Mixer", icon: "slider.vertical.3")
                 ])
-                .frame(width: 420)
+                .frame(width: 640)
                 Spacer()
                 if present.deck == DeckTab.inputs.rawValue {
                     AddInputMenu()
@@ -450,6 +475,8 @@ struct LowerDeck: View {
             .overlay(Rectangle().fill(DS.lineSoft).frame(height: 1), alignment: .bottom)
             if present.deck == DeckTab.present.rawValue { PresentDeck() }
             else if present.deck == DeckTab.dictionary.rawValue { DictionaryDeck() }
+            else if present.deck == DeckTab.images.rawValue { ImageSearchDeck() }
+            else if present.deck == DeckTab.audio.rawValue { MixerConsole() }
             else { InputBus() }
         }
         .background(DS.bg1)
@@ -828,7 +855,8 @@ struct RightPanel: View {
                 DSTabItem(id: 0, title: "Audio", icon: "slider.vertical.3"),
                 DSTabItem(id: 2, title: "Overlays", icon: "square.stack.3d.up"),
                 DSTabItem(id: 3, title: "Scenes", icon: "rectangle.split.2x2"),
-                DSTabItem(id: 4, title: "Outputs", icon: "display")
+                DSTabItem(id: 4, title: "Outputs", icon: "display"),
+                DSTabItem(id: 5, title: "Presets", icon: "tray.full")
             ])
             .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
             Group {
@@ -836,6 +864,7 @@ struct RightPanel: View {
                 else if engine.rightTab == 1 { InputSettingsPanel() }
                 else if engine.rightTab == 2 { OverlaysPanel() }
                 else if engine.rightTab == 3 { ScenesPanel() }
+                else if engine.rightTab == 5 { PresetsPanel() }
                 else { OutputsPanel() }
             }
             .frame(maxHeight: .infinity)
@@ -1002,7 +1031,8 @@ struct InputAdjust: View {
                     .buttonStyle(.plain).help("Refresh audio devices")
                 }
                 VStack(spacing: 2) {
-                    CPSliderRow(icon: "dial.medium", label: "Gain", value: $source.gain, range: 0...1.5, defaultValue: 1, showDivider: false)
+                    CPSliderRow(icon: "dial.low", label: "Trim dB", value: $source.trimDB, range: -60...6, defaultValue: 0, format: "%.1f")
+                    CPSliderRow(icon: "dial.medium", label: "Fader", value: $source.gain, range: 0...3.16, defaultValue: 1, showDivider: false)
                     HStack(spacing: 8) {
                         Color.clear.frame(width: 18 + 64 + 8, height: 1)
                         ChannelMeterBar(id: source.id, muted: source.muted, segments: 24).frame(height: 11)
@@ -1181,15 +1211,6 @@ struct CompCurve: View {
     }
 }
 
-struct AudioEffects: View {
-    @ObservedObject var source: Source
-    var body: some View {
-        ScrollView { AudioEffectsBody(source: source).padding(12) }
-            .frame(width: 380, height: 560)
-            .background(CP.bg)
-    }
-}
-
 struct AudioEffectsBody: View {
     @ObservedObject var source: Source
     var body: some View {
@@ -1238,23 +1259,7 @@ struct AudioEffectsBody: View {
 }
 
 struct AudioMixerPanel: View {
-    @EnvironmentObject var engine: Engine
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("AUDIO MIXER").font(.system(size: 10, weight: .heavy)).kerning(2).foregroundColor(.secondary)
-                MasterStrip(label: "MASTER", active: true, showFXButton: true)
-                MasterStrip(label: "RECORDING", active: engine.isRecording)
-                DBScale().padding(.horizontal, 4)
-                Divider()
-                ForEach(engine.sources) { s in
-                    ChannelStrip(source: s)
-                }
-                Text("Each input has its own fader, mute (M) and solo (S). Assign an audio device per input (Input tab) for live metering. To record the summed mix (faders, mutes and solos applied), enable “Mix input faders into recording & stream” in the gear menu; otherwise recording and stream carry the single master device.")
-                    .font(.system(size: 9)).foregroundColor(.secondary).padding(.top, 4)
-            }.padding(10)
-        }
-    }
+    var body: some View { MixerConsole() }
 }
 
 struct ClockText: View {

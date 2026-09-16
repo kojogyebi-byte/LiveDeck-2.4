@@ -14,6 +14,48 @@ public enum LookRegion: String, Codable, Sendable, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+/// How an image/video background combines with the colour or gradient beneath it.
+public enum MediaBlendMode: String, Codable, Sendable, CaseIterable, Identifiable {
+    case normal = "Normal"
+    case multiply = "Multiply"
+    case screen = "Screen"
+    case overlay = "Overlay"
+    case softLight = "Soft Light"
+    case hardLight = "Hard Light"
+    case darken = "Darken"
+    case lighten = "Lighten"
+    case colorDodge = "Colour Dodge"
+    case colorBurn = "Colour Burn"
+    case difference = "Difference"
+    case exclusion = "Exclusion"
+    case hue = "Hue"
+    case saturation = "Saturation"
+    case color = "Colour"
+    case luminosity = "Luminosity"
+    public var id: String { rawValue }
+    public var hint: String {
+        switch self {
+        case .normal: return "Media covers the base (use opacity to tint)."
+        case .multiply: return "Darkens — the base colour tints the media."
+        case .screen: return "Lightens — good for glowing or light backgrounds."
+        case .overlay: return "Adds contrast and colour from the base."
+        case .softLight: return "Gentle colour wash."
+        case .hardLight: return "Strong colour wash."
+        case .darken, .lighten: return "Keeps the darker / lighter of media and base."
+        case .colorDodge, .colorBurn: return "Brightens / deepens with strong colour."
+        case .difference, .exclusion: return "Inverts colours where they differ."
+        case .hue, .saturation, .color, .luminosity: return "Mixes one colour property from the base."
+        }
+    }
+}
+
+/// What sits under an image/video background.
+public enum MediaBase: String, Codable, Sendable, CaseIterable, Identifiable {
+    case color = "Colour"
+    case gradient = "Gradient"
+    public var id: String { rawValue }
+}
+
 /// Where the reference / song credit line goes.
 public enum FooterPosition: String, Codable, Sendable, CaseIterable, Identifiable {
     case below = "Under the text"
@@ -33,6 +75,9 @@ public struct SlideLook: Codable, Hashable, Identifiable, Sendable {
     // Background
     public var background: SlideBackground
     public var dim: Double                  // 0…0.9 black layer over image/video for readability
+    public var mediaBlend: MediaBlendMode        // image/video blended onto the base colour/gradient
+    public var mediaOpacity: Double         // 0…1
+    public var mediaBase: MediaBase
 
     // Text
     public var body: TextStyle
@@ -67,6 +112,9 @@ public struct SlideLook: Codable, Hashable, Identifiable, Sendable {
         self.id = id; self.name = name
         background = SlideBackground(kind: .color, color: .black)
         dim = 0
+        mediaBlend = .normal
+        mediaOpacity = 1
+        mediaBase = .color
         body = TextStyle(size: 80, bold: true, align: .center, shadow: true)
         title = TextStyle(size: 96, bold: true, color: RGBAColor(1, 0.78, 0.30), align: .center)
         footer = TextStyle(size: 40, color: RGBAColor(0.85, 0.85, 0.85), align: .center, shadow: true)
@@ -87,7 +135,7 @@ public struct SlideLook: Codable, Hashable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, background, dim, body, title, footer, showTitle, footerPosition, region, custom, marginX, marginY
+        case id, name, background, dim, mediaBlend, mediaOpacity, mediaBase, body, title, footer, showTitle, footerPosition, region, custom, marginX, marginY
         case verticalAlign, shrinkToFit, boxColor, boxPadding, boxRadius, boxFullWidth, showVerseNumbers, maxCharsPerSlide
         case linesPerSlide, maxSenses, showExamples, fadeDuration
     }
@@ -96,6 +144,8 @@ public struct SlideLook: Codable, Hashable, Identifiable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = c.value(.id, UUID()); name = c.value(.name, d.name)
         background = c.value(.background, d.background); dim = c.value(.dim, d.dim)
+        mediaBlend = c.value(.mediaBlend, d.mediaBlend); mediaOpacity = c.value(.mediaOpacity, d.mediaOpacity)
+        mediaBase = c.value(.mediaBase, d.mediaBase)
         body = c.value(.body, d.body); title = c.value(.title, d.title); footer = c.value(.footer, d.footer)
         showTitle = c.value(.showTitle, d.showTitle); footerPosition = c.value(.footerPosition, d.footerPosition)
         region = c.value(.region, d.region); custom = c.value(.custom, d.custom)

@@ -1,3 +1,17 @@
+# LiveDeck Studio (macOS) — v4.3.0
+
+**New in 4.3:**
+- **Help & Find a tool.** Press **⌘K**, the *Find a tool* box in the top bar, or **?** (also Help menu → LiveDeck Help, ⌘?). Type what you want to do — *blend*, *projector*, *lyrics*, *stream*, *preset* — and results appear instantly. Each topic has step-by-step instructions, related topics and a **Show me** button that opens the right tab. The guide covers every part of the app in 12 categories, from *Run your first service* to keyboard shortcuts.
+- **Blend modes for slide backgrounds.** Images and looping videos behind songs, scripture and dictionary cards now blend onto a base colour or gradient: Normal, Multiply, Screen, Overlay, Soft/Hard Light, Darken, Lighten, Colour Dodge/Burn, Difference, Exclusion, Hue, Saturation, Colour, Luminosity — plus media opacity. (Format → Background → Blending.)
+- **Images tab — web image search.** Type a word and pick from free, openly-licensed images (**Openverse** and **Wikimedia Commons**, filter by shape). Add the image as an input, send it straight to Preview or Program, or use it as the background for Songs & Bible or Dictionary. Creator and licence are shown. A **Web browser** mode (DuckDuckGo / Google / Bing Images) lets you right-click → Copy Image and paste it as an input or background.
+- **Console-style audio mixer** (new **Audio Mixer** tab, also in the control panel's Audio tab), modelled on the supplied reference: per-input channel strips with tally bar, **Input trim knob** (-∞…+6 dB), **Equalizer** and **Dynamics** mini displays, peak dB readout, console **fader** (-∞…+10 dB) with scale and L/R meters, **Pan knob**, **AFV / ON** buttons (audio follows video), and headphones **solo**; Master strip with fader, meters, mute, clear solo and "mix to rec/stream". Every knob and fader value box accepts typed numbers; double-click resets.
+- **Redesigned audio effects window.** Click a channel's EQ or Dynamics display: a large EQ response graph with knob bands (Low Cut, Low Shelf, Band 1, Band 2, High Shelf, High Cut) and a Dynamics page with Noise Gate and Compressor/Limiter transfer graphs and knobs; presets and an Effects on/off switch.
+- **Presets.** Save the current setup and recall it later — choose what to include: inputs (cameras, files, streams, web pages, colours, Songs/Bible/Dictionary inputs with their looks), audio mixer & effects, overlays/layouts/scenes, output format & recording settings, transitions. Recall from the **Presets** menu in the top bar or the **Presets** tab; update, rename, delete, export and import `.ldpreset` files.
+- Audio engine: trim and AFV now affect the recorded/streamed mix, the Master fader and mute work, faders go to +10 dB. **Pan is stored and recalled but not yet audible** — the recording/stream mix is still mono (stereo mix is planned).
+- `PresentationKit` gains `ImageSearch.swift`, `HelpIndex.swift`, `AudioMath.swift` and blend settings in looks; **42 automated tests** (was 36).
+
+---
+
 # LiveDeck Studio (macOS) — v4.2.0
 
 **New in 4.2:**

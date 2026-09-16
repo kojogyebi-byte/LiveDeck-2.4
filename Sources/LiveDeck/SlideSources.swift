@@ -191,6 +191,27 @@ enum SlideRasterizer {
         ctx.restoreGState()
     }
 
+    static func cgBlend(_ m: MediaBlendMode) -> CGBlendMode {
+        switch m {
+        case .normal: return .normal
+        case .multiply: return .multiply
+        case .screen: return .screen
+        case .overlay: return .overlay
+        case .softLight: return .softLight
+        case .hardLight: return .hardLight
+        case .darken: return .darken
+        case .lighten: return .lighten
+        case .colorDodge: return .colorDodge
+        case .colorBurn: return .colorBurn
+        case .difference: return .difference
+        case .exclusion: return .exclusion
+        case .hue: return .hue
+        case .saturation: return .saturation
+        case .color: return .color
+        case .luminosity: return .luminosity
+        }
+    }
+
     /// Draws `img` into `rect` with the given fit.
     static func drawImage(_ img: CGImage, in rect: CGRect, fit: FitMode, ctx: CGContext) {
         let iw = CGFloat(img.width), ih = CGFloat(img.height)
@@ -280,27 +301,36 @@ class SlideSource: Source {
         case .color:
             ctx.setFillColor(SlideRasterizer.nsColor(bg.color).cgColor); ctx.fill(rect)
         case .gradient:
-            let colors = [SlideRasterizer.nsColor(bg.color).cgColor, SlideRasterizer.nsColor(bg.color2).cgColor] as CFArray
-            if let g = CGGradient(colorsSpace: SlideRasterizer.space, colors: colors, locations: [0, 1]) {
-                let a = CGFloat(bg.angle) * .pi / 180
-                let c = CGPoint(x: rect.midX, y: rect.midY)
-                let d = max(rect.width, rect.height) / 2
-                let start = CGPoint(x: c.x - cos(a) * d, y: c.y + sin(a) * d)
-                let end = CGPoint(x: c.x + cos(a) * d, y: c.y - sin(a) * d)
-                ctx.saveGState(); ctx.clip(to: rect)
-                ctx.drawLinearGradient(g, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+            drawGradient(bg.color, bg.color2, angle: bg.angle, in: ctx, rect: rect)
+        case .image, .video:
+            // base layer under the media
+            if look.mediaBase == .gradient { drawGradient(bg.color, bg.color2, angle: bg.angle, in: ctx, rect: rect) }
+            else { ctx.setFillColor(SlideRasterizer.nsColor(bg.color).cgColor); ctx.fill(rect) }
+            let media: CGImage? = bg.kind == .image ? bgImage : bgVideo?.currentImage()
+            if let img = media {
+                ctx.saveGState()
+                ctx.setBlendMode(SlideRasterizer.cgBlend(look.mediaBlend))
+                ctx.setAlpha(CGFloat(min(1, max(0, look.mediaOpacity))))
+                SlideRasterizer.drawImage(img, in: rect, fit: bg.fit, ctx: ctx)
                 ctx.restoreGState()
             }
-        case .image:
-            ctx.setFillColor(NSColor.black.cgColor); ctx.fill(rect)
-            if let img = bgImage { SlideRasterizer.drawImage(img, in: rect, fit: bg.fit, ctx: ctx) }
-        case .video:
-            ctx.setFillColor(NSColor.black.cgColor); ctx.fill(rect)
-            if let img = bgVideo?.currentImage() { SlideRasterizer.drawImage(img, in: rect, fit: bg.fit, ctx: ctx) }
         }
         if look.dim > 0.001 && bg.kind != .transparent && bg.kind != .none {
             ctx.setFillColor(NSColor.black.withAlphaComponent(CGFloat(min(0.95, look.dim))).cgColor); ctx.fill(rect)
         }
+    }
+
+    private func drawGradient(_ c1: RGBAColor, _ c2: RGBAColor, angle: Double, in ctx: CGContext, rect: CGRect) {
+        let colors = [SlideRasterizer.nsColor(c1).cgColor, SlideRasterizer.nsColor(c2).cgColor] as CFArray
+        guard let g = CGGradient(colorsSpace: SlideRasterizer.space, colors: colors, locations: [0, 1]) else { return }
+        let a = CGFloat(angle) * .pi / 180
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let d = max(rect.width, rect.height) / 2
+        let start = CGPoint(x: c.x - cos(a) * d, y: c.y + sin(a) * d)
+        let end = CGPoint(x: c.x + cos(a) * d, y: c.y - sin(a) * d)
+        ctx.saveGState(); ctx.clip(to: rect)
+        ctx.drawLinearGradient(g, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        ctx.restoreGState()
     }
 
     private func textImage(_ c: SlideContent, cache: inout [String: CGImage], size: CGSize) -> CGImage? {

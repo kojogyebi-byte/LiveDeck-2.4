@@ -5,6 +5,7 @@ import CoreMedia
 import Combine
 import CoreServices
 import UniformTypeIdentifiers
+import PresentationKit
 
 enum TransitionType: String, CaseIterable, Identifiable {
     case cut = "Cut", fade = "Fade", wipe = "Wipe", slide = "Slide", zoom = "Zoom"
@@ -126,6 +127,8 @@ final class Engine: ObservableObject {
     @Published var inputTileScale: Double = 1.0 { didSet { persistSettings() } }
     @Published var mixInputsIntoRecording = false { didSet { persistSettings() } }
     @Published var showHotkeys = false
+    @Published var showHelp = false
+    @Published var helpQuery = ""
     static let defaultHotkeys: [String: String] = [
         "take": "Return", "cut": "C", "ftb": "B", "record": "R", "snapshot": "S", "stream": "L"
     ]
@@ -305,10 +308,14 @@ final class Engine: ObservableObject {
             if id == self?.masterInputID { return 1 }
             guard let self, let s = self.sources.first(where: { $0.id == id }) else { return 0 }
             if s.muted || !s.sendToMain { return 0 }
+            if s.audioFollowsVideo && !self.isOnAir(s.id) { return 0 }
             if self.sources.contains(where: { $0.solo }) && !s.solo { return 0 }
-            return Float(min(1.5, max(0, s.gain)))
+            return Float(min(4, s.channelGain))
         }
-        mixRecorder.masterGain = { 1.0 }
+        mixRecorder.masterGain = { [weak self] in
+            guard let self else { return 1 }
+            return self.masterBus.muted ? 0 : Float(min(4, self.masterBus.channelGain))
+        }
         mixRecorder.snapshotFor = { [weak self] id in
             guard let self, id != self.masterInputID,
                   let s = self.sources.first(where: { $0.id == id }) else { return nil }
@@ -433,7 +440,33 @@ final class Engine: ObservableObject {
         return s
     }
 
+    /// Replaces every input at once (preset recall). Old inputs are stopped; Program/Preview are cleared.
+    func replaceAllSources(_ new: [Source]) {
+        for s in sources { s.stop() }
+        keyedSources.removeAll(); keyAlpha.removeAll()
+        transitioning = false; manualActive = false; transFrom = nil; tbar = 0
+        programID = nil; previewID = nil; selectedSourceID = nil
+        layoutSlots = Array(repeating: nil, count: 10)
+        sources = new
+        if let first = new.first(where: { !$0.isPlaceholder }) { previewID = first.id }
+    }
+
     func isKeyed(_ id: UUID) -> Bool { keyedSources.contains(id) }
+
+    /// True when the input is visible on Program (directly, in a layout slot, or keyed).
+    func isOnAir(_ id: UUID) -> Bool {
+        if programID == id || keyedSources.contains(id) { return true }
+        if programLayout != .single && layoutSlots.contains(where: { $0 == id }) { return true }
+        return false
+    }
+
+    /// Whether a channel is currently audible in the mix (drives the mixer tally).
+    func isChannelLive(_ s: Source) -> Bool {
+        if s.isPlaceholder || s.muted || !s.sendToMain { return false }
+        if s.audioFollowsVideo && !isOnAir(s.id) { return false }
+        if sources.contains(where: { $0.solo }) && !s.solo { return false }
+        return true
+    }
     func toggleKey(_ id: UUID) {
         if keyedSources.contains(id) { keyedSources.remove(id) } else { keyedSources.insert(id) }
     }

@@ -6,7 +6,7 @@ import PresentationKit
 
 // MARK: - Lower deck tabs (same page as the switcher)
 
-enum DeckTab: Int { case inputs = 0, present = 1, dictionary = 2 }
+enum DeckTab: Int { case inputs = 0, present = 1, dictionary = 2, images = 3, audio = 4 }
 
 enum PresentLibraryTab: String, CaseIterable, Identifiable {
     case songs = "Songs"
@@ -1297,6 +1297,24 @@ struct LookEditor: View {
                 FieldRow(label: "Fit") {
                     DSSegmented(selection: $source.look.background.fit, options: [(FitMode.fill, "Fill"), (FitMode.fit, "Fit"), (FitMode.stretch, "Stretch")])
                 }
+                SectionLabel("Blending")
+                FieldRow(label: "Base") {
+                    DSSegmented(selection: $source.look.mediaBase, options: [(MediaBase.color, "Colour"), (MediaBase.gradient, "Gradient")])
+                }
+                if source.look.mediaBase == .gradient {
+                    DSColorWell(label: "Base from", color: colorBinding($source.look.background.color))
+                    DSColorWell(label: "Base to", color: colorBinding($source.look.background.color2))
+                    ParamSlider(label: "Base angle", value: $source.look.background.angle, range: 0...360, defaultValue: 90, format: "%.0f°")
+                } else {
+                    DSColorWell(label: "Base colour", color: colorBinding($source.look.background.color))
+                }
+                FieldRow(label: "Blend mode") {
+                    Picker("", selection: $source.look.mediaBlend) {
+                        ForEach(MediaBlendMode.allCases) { m in Text(m.rawValue).tag(m) }
+                    }.labelsHidden()
+                }
+                Text(source.look.mediaBlend.hint).font(.system(size: 10)).foregroundColor(DS.text3)
+                ParamSlider(label: "Media opacity", value: $source.look.mediaOpacity, range: 0...1, defaultValue: 1, format: "%.2f")
             default:
                 Text("Only the text is drawn — key it over Program, or put it in a layout above a camera.")
                     .font(.system(size: 10)).foregroundColor(DS.text3)

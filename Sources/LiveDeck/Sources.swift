@@ -7,6 +7,7 @@ import AppKit
 import Darwin
 import IOKit
 import WebKit
+import PresentationKit
 
 let sharedCIContext = CIContext()
 
@@ -60,6 +61,16 @@ class Source: NSObject, ObservableObject, Identifiable {
     var isPlaceholder: Bool { false }
 
     @Published var muted = false
+    /// Input trim in dB (console "Input" knob), applied before the fader.
+    @Published var trimDB: Double = 0
+    /// -100 (left) … +100 (right). Stored and recalled; audible once the mix is stereo.
+    @Published var pan: Double = 0
+    /// Audio-follow-video: the channel is only in the mix while the input is on Program (or keyed).
+    @Published var audioFollowsVideo = false
+    /// File path, URL or device id the input was created from (used by presets).
+    var originLocation: String?
+    /// Fader × trim, as a linear gain.
+    var channelGain: Double { max(0, gain) * AudioMath.dbToGain(trimDB) }
     @Published var sendToMain = true
     @Published var gain: Double = 1.0
     @Published var solo = false
@@ -194,6 +205,7 @@ final class CameraSource: Source, AVCaptureVideoDataOutputSampleBufferDelegate {
 
     init(device: AVCaptureDevice) {
         super.init(name: device.localizedName, kindLabel: "CAMERA")
+        originLocation = device.uniqueID
         session.sessionPreset = .high
         if let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) {
             session.addInput(input)
@@ -284,6 +296,7 @@ final class FileSource: Source, MediaPlayback {
         item.add(output)
         player = AVPlayer(playerItem: item)
         super.init(name: displayName ?? url.lastPathComponent, kindLabel: label)
+        originLocation = url.isFileURL ? url.path : url.absoluteString
         if url.scheme == "http" || url.scheme == "https" { sourceURLString = url.absoluteString }
         loop = startLooping
         loopObserver = NotificationCenter.default.addObserver(
@@ -297,7 +310,7 @@ final class FileSource: Source, MediaPlayback {
         }
         let vt = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.player.volume = self.muted ? 0 : Float(min(1, self.gain))
+            self.player.volume = self.muted ? 0 : Float(min(1, self.channelGain))
         }
         RunLoop.main.add(vt, forMode: .common); volTimer = vt
         if autoplay {
@@ -371,6 +384,7 @@ final class ImageSource: Source {
         var rect = CGRect(origin: .zero, size: nsimg?.size ?? .zero)
         image = nsimg?.cgImage(forProposedRect: &rect, context: nil, hints: nil)
         super.init(name: url.lastPathComponent, kindLabel: "IMAGE")
+        originLocation = url.path
     }
 
     override func currentImage() -> CGImage? { image }
@@ -457,6 +471,7 @@ final class AudioFileSource: Source, MediaPlayback {
     init(url: URL, autoplay: Bool = false) {
         player = AVPlayer(url: url)
         super.init(name: url.lastPathComponent, kindLabel: "AUDIO")
+        originLocation = url.path
         loopObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: player.currentItem, queue: .main
         ) { [weak self] _ in self?.endReached() }
@@ -468,7 +483,7 @@ final class AudioFileSource: Source, MediaPlayback {
         }
         let vt = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.player.volume = self.muted ? 0 : Float(min(1, self.gain))
+            self.player.volume = self.muted ? 0 : Float(min(1, self.channelGain))
         }
         RunLoop.main.add(vt, forMode: .common); volTimer = vt
         if autoplay { player.play() } else { paused = true }
