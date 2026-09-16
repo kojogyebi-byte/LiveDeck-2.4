@@ -130,6 +130,18 @@ final class Engine: ObservableObject {
     @Published var audioDevices: [AudioDeviceInfo] = []
     @Published var selectedAudioDeviceID: String?
     @Published var fpsTarget = 30
+    /// Exact frame-rate format, including interlaced (50i, 59.94i, 60i). `fpsTarget` mirrors its nominal frames per second.
+    @Published var frameFormatID: String = FrameRateFormat.standard.id
+    var frameFormat: FrameRateFormat { FrameRateFormat.byID(frameFormatID) ?? FrameRateFormat.fromLegacy(fpsTarget) }
+    /// Interlaced formats are streamed as progressive frames (what YouTube/Facebook expect) unless turned off.
+    @Published var streamInterlacedAsProgressive: Bool = UserDefaults.standard.object(forKey: "stream.progressiveFromInterlaced") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(streamInterlacedAsProgressive, forKey: "stream.progressiveFromInterlaced") }
+    }
+    private var fieldIndex = 0
+    private var topField: CVPixelBuffer?
+    /// Per-display output settings (custom region, scaling, crop, output raster), keyed by display.
+    @Published var screenSettings: [String: ScreenOutputSettings] = Engine.loadScreenSettings()
+    private var rasterContexts: [Int: CGContext] = [:]
     @Published var showSafeGuides = false
 
     // Recording settings
@@ -376,8 +388,11 @@ final class Engine: ObservableObject {
             }
             self.updatePowerGuard()
         }
+        let ff = frameFormat
+        let interlacedStream = ff.interlaced && !streamInterlacedAsProgressive
         let ok = streamer.start(urls: targets.map { $0.composedURL }, width: width, height: height,
-                                fps: fpsTarget, bitrateKbps: streamBitrateKbps, audio: streamAudio)
+                                fps: ff.framesPerSecond, rate: ff.ffmpegRate, interlaced: interlacedStream,
+                                bitrateKbps: streamBitrateKbps, audio: streamAudio)
         isStreaming = streamer.isStreaming
         if ok {
             streamError = ""
@@ -437,8 +452,8 @@ final class Engine: ObservableObject {
         sysMon.start()
         audioDevices = AudioCapture.availableDevices()
         lastFrameTime = CACurrentMediaTime(); fpsClock = lastFrameTime
-        let t = Timer(timeInterval: 1.0 / Double(fpsTarget), repeats: true) { [weak self] _ in self?.renderFrame() }
-        t.tolerance = 0.005
+        let t = Timer(timeInterval: 1.0 / frameFormat.renderRate, repeats: true) { [weak self] _ in self?.renderFrame() }
+        t.tolerance = 0.003
         RunLoop.main.add(t, forMode: .common)
         timer = t
         startAudio()
@@ -715,6 +730,7 @@ final class Engine: ObservableObject {
         d.set(recContainer, forKey: "recContainer")
         d.set(recBitrateMbps, forKey: "recBitrate")
         d.set(fpsTarget, forKey: "fpsTarget")
+        d.set(frameFormatID, forKey: "frameFormat")
         d.set(width, forKey: "rwidth"); d.set(height, forKey: "rheight")
         d.set(inputTileScale, forKey: "tileScale")
         d.set(mixInputsIntoRecording, forKey: "mixInputs")
@@ -729,6 +745,8 @@ final class Engine: ObservableObject {
         if let cont = d.string(forKey: "recContainer") { recContainer = cont }
         let br = d.integer(forKey: "recBitrate"); if br > 0 { recBitrateMbps = br }
         let f = d.integer(forKey: "fpsTarget"); if f > 0 { fpsTarget = f }
+        if let id = d.string(forKey: "frameFormat"), let ff = FrameRateFormat.byID(id) { frameFormatID = ff.id; fpsTarget = ff.nominalFPS }
+        else { frameFormatID = FrameRateFormat.fromLegacy(fpsTarget).id }
         let w = d.integer(forKey: "rwidth"), h = d.integer(forKey: "rheight"); if w > 0 && h > 0 { width = w; height = h }
         let ts = d.double(forKey: "tileScale"); if ts > 0 { inputTileScale = ts }
         mixInputsIntoRecording = d.bool(forKey: "mixInputs")
@@ -803,15 +821,109 @@ final class Engine: ObservableObject {
     }
     func setResolution(width: Int, height: Int) { guard !isRecording, !isStreaming else { return }; self.width = width; self.height = height; persistSettings() }
 
-    func setFrameRate(_ f: Int) {
-        guard !isRecording, !isStreaming, f != fpsTarget else { return }
-        fpsTarget = f
+    func setFrameRate(_ f: Int) { setFrameFormat(FrameRateFormat.fromLegacy(f).id) }
+
+    /// Changes the frame rate (progressive or interlaced). Not allowed while recording or streaming.
+    func setFrameFormat(_ id: String) {
+        guard !isRecording, !isStreaming, let ff = FrameRateFormat.byID(id), id != frameFormatID else { return }
+        frameFormatID = ff.id
+        fpsTarget = ff.nominalFPS
+        fieldIndex = 0; topField = nil
         persistSettings()
         timer?.invalidate()
-        let t = Timer(timeInterval: 1.0 / Double(f), repeats: true) { [weak self] _ in self?.renderFrame() }
-        t.tolerance = 0.005
+        let t = Timer(timeInterval: 1.0 / ff.renderRate, repeats: true) { [weak self] _ in self?.renderFrame() }
+        t.tolerance = 0.003
         RunLoop.main.add(t, forMode: .common)
         timer = t
+    }
+
+    // MARK: display output settings
+
+    static func loadScreenSettings() -> [String: ScreenOutputSettings] {
+        guard let d = UserDefaults.standard.data(forKey: "screenOutputSettings"),
+              let m = try? JSONDecoder().decode([String: ScreenOutputSettings].self, from: d) else { return [:] }
+        return m
+    }
+
+    /// Stable key for a display (its name and pixel size), so settings follow the projector/LED processor.
+    func displayKey(_ index: Int) -> String {
+        guard NSScreen.screens.indices.contains(index) else { return "display-\(index)" }
+        let s = NSScreen.screens[index]
+        let px = displayPixels(index)
+        return "\(s.localizedName)-\(px.width)x\(px.height)"
+    }
+
+    func displayPixels(_ index: Int) -> (width: Int, height: Int) {
+        guard NSScreen.screens.indices.contains(index) else { return (1920, 1080) }
+        let s = NSScreen.screens[index]
+        return (Int(s.frame.width * s.backingScaleFactor), Int(s.frame.height * s.backingScaleFactor))
+    }
+
+    /// The first screen (with the menu bar) is the main display; the others are extended displays.
+    func isExtendedDisplay(_ index: Int) -> Bool { index > 0 && NSScreen.screens.indices.contains(index) }
+
+    func outputSettings(_ index: Int) -> ScreenOutputSettings {
+        var s = screenSettings[displayKey(index)] ?? ScreenOutputSettings(regionWidth: displayPixels(index).width, regionHeight: displayPixels(index).height)
+        if !isExtendedDisplay(index) { s.customRegion = false }
+        return s
+    }
+
+    func setOutputSettings(_ index: Int, _ new: ScreenOutputSettings) {
+        let px = displayPixels(index)
+        var s = OutputGeometry.clampRegion(new, displayWidth: px.width, displayHeight: px.height)
+        if !isExtendedDisplay(index) { s.customRegion = false }
+        let old = outputSettings(index)
+        screenSettings[displayKey(index)] = s
+        if let data = try? JSONEncoder().encode(screenSettings) { UserDefaults.standard.set(data, forKey: "screenOutputSettings") }
+        rasterContexts[index] = nil
+        screenViews[index]?.configure(s)
+        // region changes move/resize the output window
+        if screenWindows[index] != nil, screenFullscreen[index] == true,
+           old.customRegion != s.customRegion || old.regionX != s.regionX || old.regionY != s.regionY || old.regionWidth != s.regionWidth || old.regionHeight != s.regionHeight {
+            positionScreenWindow(index)
+        }
+    }
+
+    /// Window frame (in points) for a display output: the whole display, or the custom region.
+    private func outputFrame(_ index: Int) -> NSRect? {
+        guard NSScreen.screens.indices.contains(index) else { return nil }
+        let screen = NSScreen.screens[index]
+        let s = outputSettings(index)
+        guard s.customRegion else { return screen.frame }
+        let k = max(1, screen.backingScaleFactor)
+        let w = CGFloat(s.regionWidth) / k, h = CGFloat(s.regionHeight) / k
+        return NSRect(x: screen.frame.minX + CGFloat(s.regionX) / k, y: screen.frame.maxY - CGFloat(s.regionY) / k - h, width: w, height: h)
+    }
+
+    private func positionScreenWindow(_ index: Int) {
+        guard let w = screenWindows[index], let f = outputFrame(index) else { return }
+        w.setFrame(f, display: true)
+    }
+
+    /// Applies crop and (optionally) re-scales to the chosen output raster; the display layer does the final fit/crop/squeeze.
+    private func outputImage(_ base: CGImage, index: Int, settings s: ScreenOutputSettings) -> CGImage {
+        var img = base
+        if s.hasCrop {
+            let r = OutputGeometry.cropRect(sourceWidth: base.width, sourceHeight: base.height, s)
+            if let c = base.cropping(to: CGRect(x: r.x, y: r.y, width: r.width, height: r.height)) { img = c }
+        }
+        guard s.outputWidth > 0, s.outputHeight > 0 else { return img }
+        var ctx = rasterContexts[index]
+        if ctx == nil || ctx?.width != s.outputWidth || ctx?.height != s.outputHeight {
+            ctx = CGContext(data: nil, width: s.outputWidth, height: s.outputHeight, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)
+            rasterContexts[index] = ctx
+        }
+        guard let c = ctx else { return img }
+        let rgb = s.letterboxRGB.count >= 3 ? s.letterboxRGB : [0, 0, 0]
+        c.setFillColor(CGColor(srgbRed: CGFloat(rgb[0]), green: CGFloat(rgb[1]), blue: CGFloat(rgb[2]), alpha: 1))
+        c.fill(CGRect(x: 0, y: 0, width: s.outputWidth, height: s.outputHeight))
+        c.interpolationQuality = s.quality == .pixel ? .none : (s.quality == .sharp ? .high : .medium)
+        let p = OutputGeometry.placement(contentWidth: Double(img.width), contentHeight: Double(img.height),
+                                         targetWidth: Double(s.outputWidth), targetHeight: Double(s.outputHeight), scaling: s.scaling)
+        // CG origin is bottom-left
+        c.draw(img, in: CGRect(x: p.x, y: Double(s.outputHeight) - p.y - p.height, width: p.width, height: p.height))
+        return c.makeImage() ?? img
     }
 
     // MARK: sources
@@ -1063,19 +1175,38 @@ final class Engine: ObservableObject {
 
         if let img = ctx.makeImage() {
             for v in consumers.allObjects { v.show(img) }
-            // Per-display source override: send a chosen input (instead of Program) to a screen.
-            if !screenSource.isEmpty {
-                for (idx, sid) in screenSource {
-                    guard let v = screenViews[idx], let s = sources.first(where: { $0.id == sid }),
-                          let simg = imageForSource(s) else { continue }
-                    v.show(simg)
-                }
+            // Display outputs: Program or a chosen input, then crop / re-scale per display.
+            for (idx, v) in screenViews {
+                var base: CGImage? = img
+                if let sid = screenSource[idx], let s = sources.first(where: { $0.id == sid }) { base = imageForSource(s) }
+                guard let b = base else { continue }
+                let settings = outputSettings(idx)
+                v.show(settings.hasCrop || settings.outputWidth > 0 ? outputImage(b, index: idx, settings: settings) : b)
             }
         }
-        if isRecording, let input = videoInput, input.isReadyForMoreMediaData, let adaptor = adaptor {
-            adaptor.append(pb, withPresentationTime: CMClockGetTime(CMClockGetHostTimeClock()))
+
+        // Interlaced formats: every render is a field; two fields are woven into one frame (top field first).
+        var framePB: CVPixelBuffer? = pb
+        if frameFormat.interlaced {
+            fieldIndex += 1
+            if fieldIndex % 2 == 1 {
+                topField = pb
+                framePB = nil
+            } else {
+                framePB = topField.map { weave(top: $0, bottom: pb) }
+                topField = nil
+            }
         }
-        if streamer.isStreaming { streamer.writeFrame(pb) }
+        if isRecording, let frame = framePB, let input = videoInput, input.isReadyForMoreMediaData, let adaptor = adaptor {
+            adaptor.append(frame, withPresentationTime: CMClockGetTime(CMClockGetHostTimeClock()))
+        }
+        if streamer.isStreaming {
+            if frameFormat.interlaced && streamInterlacedAsProgressive {
+                if fieldIndex % 2 == 1 { streamer.writeFrame(pb) }   // one field per frame → progressive
+            } else if let frame = framePB {
+                streamer.writeFrame(frame)
+            }
+        }
 
         // ---- PREVIEW MONITOR ----
         if !previewConsumers.allObjects.isEmpty && (previewID != nil || !previewKeys.isEmpty) {
@@ -1231,6 +1362,25 @@ final class Engine: ObservableObject {
         try? lines.joined(separator: "\n").write(to: out, atomically: true, encoding: .utf8)
     }
 
+    /// Copies the bottom-field lines of `bottom` into `top` and marks the buffer interlaced (top field first).
+    private func weave(top: CVPixelBuffer, bottom: CVPixelBuffer) -> CVPixelBuffer {
+        guard CVPixelBufferGetWidth(top) == CVPixelBufferGetWidth(bottom), CVPixelBufferGetHeight(top) == CVPixelBufferGetHeight(bottom) else { return bottom }
+        CVPixelBufferLockBaseAddress(top, [])
+        defer { CVPixelBufferUnlockBaseAddress(top, []) }
+        guard let dst = CVPixelBufferGetBaseAddress(top), let src = CVPixelBufferGetBaseAddress(bottom) else { return bottom }
+        let rows = CVPixelBufferGetHeight(top)
+        let bprD = CVPixelBufferGetBytesPerRow(top), bprS = CVPixelBufferGetBytesPerRow(bottom)
+        let n = min(bprD, bprS)
+        var row = 1
+        while row < rows {
+            memcpy(dst.advanced(by: row * bprD), src.advanced(by: row * bprS), n)
+            row += 2
+        }
+        CVBufferSetAttachment(top, kCVImageBufferFieldCountKey, NSNumber(value: 2), .shouldPropagate)
+        CVBufferSetAttachment(top, kCVImageBufferFieldDetailKey, kCVImageBufferFieldDetailSpatialFirstLineEarly, .shouldPropagate)
+        return top
+    }
+
     func snapshot() {
         guard let c = consumers.allObjects.first?.layer?.contents else { return }
         let img = c as! CGImage
@@ -1334,16 +1484,17 @@ final class Engine: ObservableObject {
     }
 
     /// Builds an output window — borderless full screen, or a normal resizable 16:9 window.
-    private func makeOutputWindow(fullscreen: Bool, screen: NSScreen, title: String, attach: (FrameNSView) -> Void) -> OutputWindow {
+    private func makeOutputWindow(fullscreen: Bool, screen: NSScreen, title: String, frameOverride: NSRect? = nil, attach: (FrameNSView) -> Void) -> OutputWindow {
         let sameAsControls = screen == controlsScreen
         let win: OutputWindow
         let view: FrameNSView
         if fullscreen {
-            view = FrameNSView(frame: NSRect(origin: .zero, size: screen.frame.size))
-            win = OutputWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
+            let frame = frameOverride ?? screen.frame
+            view = FrameNSView(frame: NSRect(origin: .zero, size: frame.size))
+            win = OutputWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
             win.level = sameAsControls ? NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 1) : .normal
             win.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
-            win.setFrame(screen.frame, display: true)
+            win.setFrame(frame, display: true)
             if sameAsControls { NSApp.presentationOptions = [.hideDock, .hideMenuBar] }
         } else {
             let vf = screen.visibleFrame
@@ -1427,10 +1578,14 @@ final class Engine: ObservableObject {
         guard screens.indices.contains(index) else { return }
         if let old = screenWindows[index] { old.onClose = nil; old.close(); NSApp.presentationOptions = [] }
         var viewRef: FrameNSView?
-        let win = makeOutputWindow(fullscreen: fullscreen, screen: screens[index], title: "LiveDeck — \(screens[index].localizedName)") { [weak self] v in
-            self?.addConsumer(v); viewRef = v
+        let settings = outputSettings(index)
+        let region = fullscreen && settings.customRegion ? outputFrame(index) : nil
+        let win = makeOutputWindow(fullscreen: fullscreen, screen: screens[index], title: "LiveDeck — \(screens[index].localizedName)", frameOverride: region) { v in
+            viewRef = v
         }
+        viewRef?.configure(settings)
         screenViews[index] = viewRef
+        rasterContexts[index] = nil
         screenFullscreen[index] = fullscreen
         win.onToggleFullscreen = { [weak self] in
             guard let self else { return }
@@ -1488,6 +1643,33 @@ final class FrameNSView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
     func show(_ image: CGImage) { layer?.contents = image }
+
+    /// Scaling (letterbox / crop / squeeze / 1:1), filter quality, letterbox colour and alignment edges.
+    func configure(_ s: ScreenOutputSettings) {
+        guard let l = layer else { return }
+        switch s.scaling {
+        case .letterbox: l.contentsGravity = .resizeAspect
+        case .crop: l.contentsGravity = .resizeAspectFill
+        case .squeeze: l.contentsGravity = .resize
+        case .native: l.contentsGravity = .center
+        }
+        l.masksToBounds = true
+        switch s.quality {
+        case .smooth: l.magnificationFilter = .linear; l.minificationFilter = .linear
+        case .sharp: l.magnificationFilter = .linear; l.minificationFilter = .trilinear
+        case .pixel: l.magnificationFilter = .nearest; l.minificationFilter = .nearest
+        }
+        let rgb = s.letterboxRGB.count >= 3 ? s.letterboxRGB : [0, 0, 0]
+        l.backgroundColor = CGColor(srgbRed: CGFloat(rgb[0]), green: CGFloat(rgb[1]), blue: CGFloat(rgb[2]), alpha: 1)
+        l.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        l.borderWidth = s.showEdges ? 3 : 0
+        l.borderColor = NSColor.systemRed.cgColor
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let w = window { layer?.contentsScale = w.backingScaleFactor }
+    }
 }
 
 // MARK: - Per-source live thumbnail view

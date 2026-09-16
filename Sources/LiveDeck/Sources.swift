@@ -924,7 +924,7 @@ final class StreamOutput {
     private var audioRing = [Float]()
     private var fifoPath: String?
     private var startTime: TimeInterval = 0
-    private var fps = 30
+    private var fps: Double = 30
     private var stderrTail = ""
     private var progress = FFmpegProgress()
     private var progressReceived = false
@@ -934,7 +934,7 @@ final class StreamOutput {
     func statsSnapshot() -> (progress: FFmpegProgress, received: Bool, backlogSeconds: Double, seconds: Double) {
         lock.lock(); defer { lock.unlock() }
         let secs = running ? ProcessInfo.processInfo.systemUptime - startTime : 0
-        return (progress, progressReceived, Double(backlogFrames) / Double(max(1, fps)), secs)
+        return (progress, progressReceived, Double(backlogFrames) / max(1, fps), secs)
     }
 
     static func ffmpegPath() -> String? {
@@ -956,7 +956,7 @@ final class StreamOutput {
 
     static func muxer(for url: String) -> String { url.lowercased().hasPrefix("srt://") ? "mpegts" : "flv" }
 
-    func start(urls: [String], width: Int, height: Int, fps: Int, bitrateKbps: Int, audio: Bool) -> Bool {
+    func start(urls: [String], width: Int, height: Int, fps: Double, rate: String, interlaced: Bool, bitrateKbps: Int, audio: Bool) -> Bool {
         let targets = urls.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard !isStreaming else { return false }
         guard let ff = StreamOutput.ffmpegPath() else { lastError = "ffmpeg not found."; return false }
@@ -966,7 +966,7 @@ final class StreamOutput {
         var args: [String] = [
             "-hide_banner", "-loglevel", "error", "-nostdin", "-progress", "pipe:1",
             "-f", "rawvideo", "-pixel_format", "bgra", "-video_size", "\(width)x\(height)",
-            "-framerate", "\(fps)", "-i", "pipe:0"
+            "-framerate", rate, "-i", "pipe:0"
         ]
         var useAudio = false
         if audio {
@@ -984,9 +984,14 @@ final class StreamOutput {
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p",
             "-b:v", "\(bitrateKbps)k", "-maxrate", "\(bitrateKbps)k", "-bufsize", "\(bitrateKbps * 2)k",
-            "-g", "\(max(2, fps * 2))", "-keyint_min", "\(max(2, fps * 2))", "-sc_threshold", "0",
+            "-g", "\(max(2, Int((fps * 2).rounded())))", "-keyint_min", "\(max(2, Int((fps * 2).rounded())))", "-sc_threshold", "0",
             "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"
         ]
+        if interlaced {
+            // woven fields, top field first
+            args += ["-x264opts", "tff=1", "-field_order", "tt"]
+            if targets.count == 1 { args += ["-flags", "+ildct+ilme"] }
+        }
         if targets.count == 1 {
             args += ["-f", StreamOutput.muxer(for: targets[0]), targets[0]]
         } else {
@@ -995,7 +1000,7 @@ final class StreamOutput {
                     ? "[f=mpegts:onfail=ignore:bsfs/v=dump_extra]\(u)"
                     : "[f=flv:onfail=ignore]\(u)"
             }.joined(separator: "|")
-            args += ["-flags", "+global_header", "-f", "tee", spec]
+            args += ["-flags", interlaced ? "+global_header+ildct+ilme" : "+global_header", "-f", "tee", spec]
         }
 
         let p = Process()
@@ -1090,7 +1095,7 @@ final class StreamOutput {
         var written: Int64 = 0
         var failed = false
         while isRunning {
-            lock.lock(); let t0 = startTime, rate = Double(fps), frame = latestFrame; lock.unlock()
+            lock.lock(); let t0 = startTime, rate = fps, frame = latestFrame; lock.unlock()
             let elapsed = ProcessInfo.processInfo.systemUptime - t0
             let due = Int64(elapsed * rate) + 1
             lock.lock(); backlogFrames = max(0, due - written - 1); lock.unlock()

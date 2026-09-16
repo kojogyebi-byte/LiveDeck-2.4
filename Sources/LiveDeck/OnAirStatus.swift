@@ -79,9 +79,10 @@ struct OnAirStatusBar: View {
                 .help("Program Out — click to turn on/off")
 
             // frame rate
-            let fpsLow = tele.fps > 0 && tele.fps < engine.fpsTarget - 2
+            let rate = Int(engine.frameFormat.renderRate.rounded())
+            let fpsLow = tele.fps > 0 && tele.fps < rate - 2
             chip(tint: fpsLow ? DS.amber : nil) {
-                label("\(engine.height)p", "\(tele.fps)/\(engine.fpsTarget) fps", color: fpsLow ? DS.amber : DS.text)
+                label(engine.frameFormat.name(height: engine.height), "\(tele.fps)/\(rate) \(engine.frameFormat.interlaced ? "fields" : "fps")", color: fpsLow ? DS.amber : DS.text)
             }
             .help(fpsLow ? "Frame rate is low — close other apps or remove unused inputs" : "Output format and live frame rate")
 

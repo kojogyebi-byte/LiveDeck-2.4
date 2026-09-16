@@ -111,8 +111,9 @@ enum Preflight {
 
         // Performance & outputs
         let fps = engine.telemetry.fps
-        if fps > 0 && fps < engine.fpsTarget - 3 {
-            out.append(PreflightItem(title: "Frame rate is low (\(fps) of \(engine.fpsTarget) fps)", detail: "Close other apps, lower the resolution, or remove unused inputs and web pages.", level: .warn))
+        let rate = Int(engine.frameFormat.renderRate.rounded())
+        if fps > 0 && fps < rate - 3 {
+            out.append(PreflightItem(title: "Frame rate is low (\(fps) of \(rate) \(engine.frameFormat.interlaced ? "fields" : "fps"))", detail: "Close other apps, lower the resolution, or remove unused inputs and web pages.", level: .warn))
         }
         if NSScreen.screens.count > 1 && !engine.programWindowActive {
             out.append(PreflightItem(title: "Projector/second display connected", detail: "Program Out is off.", level: .info,

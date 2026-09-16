@@ -770,6 +770,7 @@ struct PresetOutput: Codable {
     var width: Int, height: Int, fps: Int
     var recCodec: String, recContainer: String, recBitrateMbps: Int
     var mixInputsIntoRecording: Bool
+    var frameFormat: String?
 }
 
 struct AppPreset: Codable, Identifiable {
@@ -868,7 +869,8 @@ final class PresetStore: ObservableObject {
         if includes.output {
             p.output = PresetOutput(width: engine.width, height: engine.height, fps: engine.fpsTarget,
                                     recCodec: engine.recCodec.rawValue, recContainer: engine.recContainer,
-                                    recBitrateMbps: engine.recBitrateMbps, mixInputsIntoRecording: engine.mixInputsIntoRecording)
+                                    recBitrateMbps: engine.recBitrateMbps, mixInputsIntoRecording: engine.mixInputsIntoRecording,
+                                    frameFormat: engine.frameFormatID)
         }
         if includes.transitions {
             p.transition = engine.transition.rawValue
@@ -919,7 +921,7 @@ final class PresetStore: ObservableObject {
                 missing.append("format not changed while recording/streaming")
             } else {
                 engine.setResolution(width: o.width, height: o.height)
-                engine.setFrameRate(o.fps)
+                if let ff = o.frameFormat { engine.setFrameFormat(ff) } else { engine.setFrameRate(o.fps) }
             }
             if let c = RecCodec(rawValue: o.recCodec) { engine.recCodec = c }
             engine.recContainer = o.recContainer

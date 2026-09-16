@@ -1,4 +1,10 @@
-# LiveDeck Studio (macOS) — v4.9.5
+# LiveDeck Studio (macOS) — v4.9.6
+
+**4.9.6:**
+- **Frame rates:** progressive 23.976, 24, 25, 29.97, 30, 50, 59.94, 60p and **interlaced 50i, 59.94i, 60i** (top field first). Exact NTSC fractions (30000/1001…). Interlaced formats render every field (smooth on displays) and weave two fields into each recorded/streamed frame with field metadata (use ProRes MOV for flagged interlaced files). Streams go out progressive by default; optional true interlaced H.264 (`+ildct+ilme`, tff). Top bar shows e.g. 1080i59.94.
+- **Display outputs** (Outputs → External Displays → Output settings, per display, remembered by display name and resolution): **custom size and position on extended displays** (pixels; halves and common sizes as presets), fit **Letterbox / Crop to fill / Squeeze / 1:1 pixels**, **crop** left/right/top/bottom (4:3 centre, remove black bars), **upscale/downscale** to a fixed output resolution with Smooth / Sharp / Pixel-exact quality (shows the exact scale factor), letterbox colour and red alignment edges.
+- **88 automated tests.**
+
 
 **4.9.5:**
 - **Menus stay open.** The status-bar numbers (record time, stream stats, audio clip/signal, disk space) moved from `Engine` to `Telemetry`, the automation countdown no longer publishes 4×/s, network station status has its own store, and the main window no longer subscribes to the network/automation models. Nothing refreshes the whole window every second any more (menus were being closed by those refreshes; this also frees CPU for rendering).

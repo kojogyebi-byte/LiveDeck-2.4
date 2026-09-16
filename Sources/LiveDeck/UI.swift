@@ -310,7 +310,7 @@ struct TopBar: View {
             .buttonStyle(.plain)
             .help("Search tools and instructions")
             DSIconButton(symbol: "questionmark", help: "Help & user guide") { engine.helpQuery = ""; engine.showHelp = true }
-            Text("\(engine.height)p\(engine.fpsTarget)").font(DS.mono(11)).foregroundColor(DS.text2)
+            Text(engine.frameFormat.name(height: engine.height)).font(DS.mono(11)).foregroundColor(DS.text2)
                 .padding(.horizontal, 7).frame(height: 22)
                 .background(RoundedRectangle(cornerRadius: 4).fill(DS.bg0))
             Menu {
@@ -322,8 +322,22 @@ struct TopBar: View {
                     checkButton("4K DCI", engine.width == 4096) { engine.setResolution(width: 4096, height: 2160) }
                 }
                 Menu("Frame rate") {
-                    ForEach([24, 25, 30, 50, 60], id: \.self) { r in
-                        checkButton("\(r)p", engine.fpsTarget == r) { engine.setFrameRate(r) }
+                    Section("Progressive") {
+                        ForEach(FrameRateFormat.progressive) { f in
+                            checkButton(f.menuTitle, engine.frameFormatID == f.id) { engine.setFrameFormat(f.id) }
+                        }
+                    }
+                    Section("Interlaced (top field first)") {
+                        ForEach(FrameRateFormat.interlacedFormats) { f in
+                            checkButton(f.menuTitle, engine.frameFormatID == f.id) { engine.setFrameFormat(f.id) }
+                        }
+                    }
+                    Divider()
+                    checkButton("Stream interlaced formats as progressive (recommended)", engine.streamInterlacedAsProgressive) {
+                        engine.streamInterlacedAsProgressive.toggle()
+                    }
+                    if engine.isRecording || engine.isStreaming {
+                        Text("Stop recording and streaming to change the frame rate")
                     }
                 }
                 Divider()
@@ -1974,7 +1988,7 @@ struct StatusBar: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         HStack(spacing: 10) {
-            Text("\(engine.width)×\(engine.height) · \(engine.fpsTarget)p").font(DS.mono(10)).foregroundColor(DS.text2)
+            Text("\(engine.width)×\(engine.height) · \(engine.frameFormat.name(height: engine.height))").font(DS.mono(10)).foregroundColor(DS.text2)
             FPSText()
             DiskReadout()
             Spacer()
@@ -2430,6 +2444,17 @@ struct OutputsPanel: View {
         ndiAvailable = NDIBridge.shared.isAvailable; ndiVersion = NDIBridge.shared.versionString
     }
 
+    private func outputSummary(_ index: Int) -> String {
+        let s = engine.outputSettings(index)
+        let px = engine.displayPixels(index)
+        var parts = ["\(px.width)×\(px.height)"]
+        if s.customRegion { parts.append("region \(s.regionWidth)×\(s.regionHeight) at \(s.regionX),\(s.regionY)") }
+        parts.append(s.scaling.rawValue)
+        if s.hasCrop { parts.append("cropped") }
+        if s.outputWidth > 0 { parts.append("scaled to \(s.outputWidth)×\(s.outputHeight)") }
+        return "Output settings — " + parts.joined(separator: " · ")
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
@@ -2485,6 +2510,12 @@ struct OutputsPanel: View {
                                 set: { _ in engine.toggleScreenOutput(sc.index) }))
                                 .toggleStyle(.switch).tint(CP.blue).labelsHidden()
                         }
+                        DisclosureGroup {
+                            ScreenOutputEditor(index: sc.index)
+                        } label: {
+                            Text(outputSummary(sc.index)).font(.system(size: 10)).foregroundColor(CP.text2).lineLimit(1)
+                        }
+                        .padding(.vertical, 2)
                         if engine.activeScreens.contains(sc.index) {
                             CPRow(icon: "arrow.turn.down.right", label: "Send") {
                                 Picker("", selection: Binding(

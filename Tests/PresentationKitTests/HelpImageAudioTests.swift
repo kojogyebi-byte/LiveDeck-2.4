@@ -150,3 +150,10 @@ final class HelpV495Tests: XCTestCase {
         XCTAssertEqual(HelpIndex.search("screen saver").first?.id, "keep-awake")
     }
 }
+
+final class HelpV496Tests: XCTestCase {
+    func testOutputTopics() {
+        XCTAssertEqual(HelpIndex.search("letterbox").first?.id, "display-output-settings")
+        XCTAssertEqual(HelpIndex.search("1080i").first?.id, "interlaced")
+    }
+}
