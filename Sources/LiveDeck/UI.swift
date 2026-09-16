@@ -36,6 +36,9 @@ struct MainView: View {
                             MonitorPane(title: programName, accent: DS.program, isProgram: true)
                         }
                         .padding(8).frame(height: monH)
+                        if engine.busStripMode == 1 || (engine.busStripMode == 0 && present.deck != DeckTab.inputs.rawValue) {
+                            SwitcherBusStrip().padding(.horizontal, 8).padding(.bottom, 6)
+                        }
                         LowerDeck().frame(maxHeight: .infinity)
                     }
                 }
@@ -55,6 +58,9 @@ struct MainView: View {
         .sheet(isPresented: $showStream) { StreamSettingsView() }
         .sheet(isPresented: $backgrounds.showFirstRun) {
             StarterPackSheet().environmentObject(backgrounds)
+        }
+        .sheet(isPresented: $engine.showZoom) {
+            ZoomSetupView().environmentObject(engine)
         }
         .sheet(isPresented: $engine.showHelp) {
             HelpCenter().environmentObject(engine).environmentObject(present)
@@ -111,23 +117,30 @@ func keyEquivFromName(_ s: String) -> KeyEquivalent? {
 struct HotKeys: NSViewRepresentable {
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var link: LinkManager
+    @EnvironmentObject var automation: AutomationModel
+    @EnvironmentObject var presets: PresetStore
+    @EnvironmentObject var ai: AIModel
 
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSView {
-        context.coordinator.engine = engine
-        context.coordinator.present = present
+        wire(context.coordinator)
         context.coordinator.install()
         return NSView(frame: .zero)
     }
-    func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.engine = engine
-        context.coordinator.present = present
+    func updateNSView(_ nsView: NSView, context: Context) { wire(context.coordinator) }
+    private func wire(_ c: Coordinator) {
+        c.engine = engine; c.present = present; c.link = link; c.automation = automation; c.presets = presets; c.ai = ai
     }
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) { coordinator.remove() }
 
     final class Coordinator {
         weak var engine: Engine?
         weak var present: PresentModel?
+        weak var link: LinkManager?
+        weak var automation: AutomationModel?
+        weak var presets: PresetStore?
+        weak var ai: AIModel?
         private var monitor: Any?
 
         func install() {
@@ -149,72 +162,28 @@ struct HotKeys: NSViewRepresentable {
 
         func handle(_ ev: NSEvent) -> Bool {
             guard let engine, let window = NSApp.keyWindow, window === NSApp.mainWindow, window.attachedSheet == nil else { return false }
-            if ev.modifierFlags.contains(.command) && !ev.modifierFlags.contains(.control) {
-                let ch = (ev.charactersIgnoringModifiers ?? "").lowercased()
-                if ch == "k" || ch == "?" || ch == "/" { engine.showHelp = true; return true }
-            }
-            if !ev.modifierFlags.intersection([.command, .control, .option]).isEmpty { return false }
             let responder = window.firstResponder
-            if responder is NSText || responder is NSTextView { return false }
+            let typing = responder is NSText || responder is NSTextView
 
-            // Slide clickers / arrows: Page Up/Down anywhere; ← → when the Songs & Bible tab is open.
-            if let present {
-                let arrowsOK = present.deck == DeckTab.present.rawValue && !(responder is NSTableView)
-                switch ev.keyCode {
-                case 121: present.step(1); return true                       // Page Down
-                case 116: present.step(-1); return true                      // Page Up
-                case 124 where arrowsOK: present.step(1); return true       // →
-                case 123 where arrowsOK: present.step(-1); return true      // ←
-                default: break
+            // Slide arrows on the Songs & Bible and AI Search tabs (not while typing)
+            if !typing, ev.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty, let present {
+                if present.deck == DeckTab.present.rawValue && !(responder is NSTableView) {
+                    if ev.keyCode == 124 { present.step(1); return true }
+                    if ev.keyCode == 123 { present.step(-1); return true }
+                }
+                if present.deck == DeckTab.ai.rawValue, let ai {
+                    if ev.keyCode == 124 { ai.step(1); return true }
+                    if ev.keyCode == 123 { ai.step(-1); return true }
                 }
             }
-            if let ch = ev.charactersIgnoringModifiers, let n = Int(ch), (1...9).contains(n) {
-                guard engine.sources.indices.contains(n - 1) else { return false }
-                let src = engine.sources[n - 1]
-                if !src.isPlaceholder { engine.setPreview(src.id); engine.selectedSourceID = src.id }
-                return true
-            }
-            let map: [(String, () -> Void)] = [
-                ("take", { engine.runTransition() }), ("cut", { engine.cut() }), ("ftb", { engine.toggleFTB() }),
-                ("record", { engine.toggleRecording() }), ("snapshot", { engine.snapshot() }), ("stream", { engine.toggleStream(nil) })
-            ]
-            for (action, run) in map where matches(engine.hotkeys[action], ev) { run(); return true }
-            return false
-        }
-    }
-}
 
-struct HotkeysView: View {
-    @EnvironmentObject var engine: Engine
-    @Environment(\.dismiss) private var dismiss
-    private let actions: [(String, String)] = [
-        ("take", "Take (transition)"), ("cut", "Cut"), ("ftb", "Fade to black"),
-        ("record", "Record"), ("snapshot", "Snapshot"), ("stream", "Stream")]
-    private let keyOptions = ["None", "Return", "Space", "A", "B", "C", "D", "E", "F", "G",
-                              "L", "M", "P", "Q", "R", "S", "T", "V", "W", "X", "Z"]
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("KEYBOARD SHORTCUTS").font(.system(size: 13, weight: .heavy)).kerning(1)
-                Spacer()
-                Button("Reset") { engine.hotkeys = Engine.defaultHotkeys }
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
-            Text("Number keys 1–9 always stage that input to Preview. Assign a key to each action below.")
-                .font(.system(size: 11)).foregroundColor(.secondary)
-            ForEach(actions, id: \.0) { act in
-                HStack {
-                    Text(act.1).font(.system(size: 12)).frame(width: 160, alignment: .leading)
-                    Picker("", selection: Binding(
-                        get: { engine.hotkeys[act.0] ?? "None" },
-                        set: { engine.hotkeys[act.0] = $0 })) {
-                        ForEach(keyOptions, id: \.self) { Text($0).tag($0) }
-                    }.labelsHidden()
-                }
-            }
-            Spacer()
+            guard let key = KeyCombo.keyName(keyCode: ev.keyCode, characters: ev.charactersIgnoringModifiers) else { return false }
+            let f = ev.modifierFlags
+            let combo = KeyCombo(key, command: f.contains(.command), option: f.contains(.option), control: f.contains(.control), shift: f.contains(.shift))
+            if combo.isPlain && typing { return false }
+            guard let action = ShortcutCatalog.actionID(for: combo, in: engine.shortcuts) else { return false }
+            return ShortcutRunner.run(action, engine: engine, present: present, link: link, automation: automation, presets: presets)
         }
-        .padding(16).frame(width: 420, height: 380).preferredColorScheme(.dark)
     }
 }
 
@@ -350,7 +319,7 @@ struct TopBar: View {
         .padding(.horizontal, 12).frame(height: 46)
         .background(DS.bg2)
         .overlay(Rectangle().fill(DS.line).frame(height: 1), alignment: .bottom)
-        .sheet(isPresented: Binding(get: { engine.showHotkeys }, set: { engine.showHotkeys = $0 })) { HotkeysView() }
+        .sheet(isPresented: Binding(get: { engine.showHotkeys }, set: { engine.showHotkeys = $0 })) { ShortcutsView().environmentObject(engine) }
     }
 }
 
@@ -540,6 +509,78 @@ struct ProgramOutMenuItems: View {
             Button(engine.programOutFullscreen ? "Switch Program Out to a window" : "Switch Program Out to full screen") { engine.toggleProgramOutFullscreen() }
             Button("Close Program Out") { engine.closeOutputWindow() }
         }
+    }
+}
+
+/// Hardware-style PROGRAM and PREVIEW key rows so inputs can be switched from any tab.
+struct SwitcherBusStrip: View {
+    @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+
+    var body: some View {
+        let inputs = Array(engine.sources.enumerated()).filter { !$0.element.isPlaceholder }
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .trailing, spacing: 6) {
+                Text("PROGRAM").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(DS.program).frame(height: 30)
+                Text("PREVIEW").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(DS.preview).frame(height: 30)
+            }
+            .frame(width: 58, alignment: .trailing)
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        ForEach(inputs, id: \.element.id) { i, s in
+                            Button(label(i, s)) { engine.setPreview(s.id); engine.cut() }
+                                .buttonStyle(SwitcherKeyStyle(color: engine.programID == s.id ? SK.red : SK.amber,
+                                                              lit: engine.programID == s.id || engine.isKeyed(s.id), minWidth: 62))
+                                .frame(height: 30)
+                                .help("Cut \(s.name) to Program" + (engine.isKeyed(s.id) ? " (keyed over Program)" : ""))
+                                .contextMenu { busMenu(s) }
+                        }
+                    }
+                    HStack(spacing: 6) {
+                        ForEach(inputs, id: \.element.id) { i, s in
+                            Button(label(i, s)) { engine.setPreview(s.id); engine.selectedSourceID = s.id }
+                                .buttonStyle(SwitcherKeyStyle(color: engine.previewID == s.id ? SK.green : SK.amber,
+                                                              lit: engine.previewID == s.id || engine.isPreviewKeyed(s.id), minWidth: 62))
+                                .frame(height: 30)
+                                .help("Put \(s.name) on Preview")
+                                .contextMenu { busMenu(s) }
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            VStack(spacing: 6) {
+                Button("CUT") { engine.cut() }.buttonStyle(SwitcherKeyStyle(color: SK.white, lit: false, minWidth: 56)).frame(height: 30)
+                Button("AUTO") { engine.runTransition() }.buttonStyle(SwitcherKeyStyle(color: SK.red, lit: true, minWidth: 56)).frame(height: 30)
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(rgb: 0x151515)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.black, lineWidth: 1))
+        .contextMenu {
+            Button("Show only when the Inputs tab is hidden") { engine.busStripMode = 0 }
+            Button("Always show") { engine.busStripMode = 1 }
+            Button("Hide switcher buttons") { engine.busStripMode = 2 }
+        }
+    }
+
+    private func label(_ i: Int, _ s: Source) -> String {
+        let n = s.name.uppercased()
+        let short = n.count > 9 ? String(n.prefix(8)) + "…" : n
+        return "\(i + 1) \(short)"
+    }
+
+    @ViewBuilder private func busMenu(_ s: Source) -> some View {
+        Button("Cut to Program") { engine.setPreview(s.id); engine.cut() }
+        Button("Put on Preview") { engine.setPreview(s.id) }
+        Divider()
+        Button(engine.isPreviewKeyed(s.id) ? "Remove key from Preview" : "Key over Preview") { engine.toggleKeyPreview(s.id) }
+        Button(engine.isKeyed(s.id) ? "Remove key from Program" : "Key over Program") { engine.toggleKey(s.id) }
+        Divider()
+        Button("Adjust input") { engine.selectedSourceID = s.id; engine.rightTab = 1 }
+        Divider()
+        Button("Hide switcher buttons") { engine.busStripMode = 2 }
     }
 }
 
@@ -771,6 +812,7 @@ struct TileTransport<S: MediaPlayback>: View {
 }
 
 struct InputTile: View {
+    @EnvironmentObject var ai: AIModel
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var link: LinkManager
     @EnvironmentObject var present: PresentModel
@@ -831,32 +873,12 @@ struct InputTile: View {
                     .onTapGesture { select() }
                 ChannelMeterBar(id: source.id, muted: source.muted, segments: 14)
                     .frame(width: tileW, height: 6).padding(.vertical, 2).background(DS.bg1)
-                HStack(spacing: 6) {
-                    Button("PVW") { select() }.buttonStyle(SwitcherKeyStyle(color: SK.green, lit: isPreview))
-                    Button("PGM") { engine.setPreview(source.id); engine.cut() }.buttonStyle(SwitcherKeyStyle(color: SK.red, lit: isProgram))
-                    if let f = source as? FileSource { TileTransport(source: f) }
-                    else if let a = source as? AudioFileSource { TileTransport(source: a) }
-                    if !(source is AudioFileSource) && (tileW >= 250 || !(source is FileSource)) {
-                        HStack(spacing: 5) {
-                            Button("K·P") { engine.toggleKeyPreview(source.id) }
-                                .buttonStyle(SwitcherKeyStyle(color: SK.amber, lit: isPreviewKeyed, minWidth: 36))
-                                .help("Key over PREVIEW (goes on air with the next CUT/AUTO)")
-                            Button("K·L") { engine.toggleKey(source.id) }
-                                .buttonStyle(SwitcherKeyStyle(color: SK.amber, lit: isKeyed, minWidth: 36))
-                                .help("Key over PROGRAM (live)")
-                        }
-                    }
-                    if (source is SlideSource || source is GeneratorSource) && tileW >= 230 {
-                        Button { openController() } label: { Image(systemName: "slider.horizontal.3") }
-                            .buttonStyle(.ds(.normal, .small)).help("Open its controls")
-                    }
-                    Spacer(minLength: 0)
-                    Button { source.muted.toggle() } label: {
-                        Image(systemName: source.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 12))
-                            .foregroundColor(source.muted ? DS.program : DS.text2)
-                    }.buttonStyle(.plain)
+                ViewThatFits(in: .horizontal) {
+                    footer(keys: true, transport: true)
+                    footer(keys: false, transport: true)
+                    footer(keys: false, transport: false)
                 }
-                .padding(.horizontal, 6).frame(width: tileW, height: 40).background(DS.bg2)
+                .frame(width: tileW, height: 40).background(DS.bg2)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -902,13 +924,60 @@ struct InputTile: View {
         if source is PresentationSource { present.targetID = source.id }
         if source is DictionarySource { dict.targetID = source.id }
     }
+    /// Tile control strip; ViewThatFits drops the less important parts on narrow tiles, but the
+    /// edit (controls) button and the ⋯ menu are always kept.
+    private func footer(keys: Bool, transport: Bool) -> some View {
+        HStack(spacing: 6) {
+            Button("PVW") { select() }.buttonStyle(SwitcherKeyStyle(color: SK.green, lit: isPreview, minWidth: 36))
+            Button("PGM") { engine.setPreview(source.id); engine.cut() }.buttonStyle(SwitcherKeyStyle(color: SK.red, lit: isProgram, minWidth: 36))
+            if transport {
+                if let f = source as? FileSource { TileTransport(source: f) }
+                else if let a = source as? AudioFileSource { TileTransport(source: a) }
+                else if let pl = source as? PlaylistSource { PlaylistTransport(source: pl) }
+            }
+            if keys && !(source is AudioFileSource) {
+                HStack(spacing: 5) {
+                    Button("K·P") { engine.toggleKeyPreview(source.id) }
+                        .buttonStyle(SwitcherKeyStyle(color: SK.amber, lit: isPreviewKeyed, minWidth: 34))
+                        .help("Key over PREVIEW (goes on air with the next CUT/AUTO)")
+                    Button("K·L") { engine.toggleKey(source.id) }
+                        .buttonStyle(SwitcherKeyStyle(color: SK.amber, lit: isKeyed, minWidth: 34))
+                        .help("Key over PROGRAM (live)")
+                }
+            }
+            Spacer(minLength: 0)
+            Button { openController() } label: { Image(systemName: "slider.horizontal.3").font(.system(size: 12)) }
+                .buttonStyle(.plain).foregroundColor(DS.text2).help("Edit this input")
+            if !keys || !transport {
+                Menu {
+                    if !transport, let f = source as? FileSource { Button(f.paused ? "Play" : "Pause") { f.togglePlay() }; Button("Restart") { f.restart() } }
+                    if !transport, let a = source as? AudioFileSource { Button(a.paused ? "Play" : "Pause") { a.togglePlay() }; Button("Restart") { a.restart() } }
+                    if !transport, let pl = source as? PlaylistSource { Button(pl.playing ? "Pause" : "Play") { pl.togglePlay() }; Button("Next item") { pl.next() } }
+                    Button(isPreviewKeyed ? "Remove key from Preview" : "Key over Preview") { engine.toggleKeyPreview(source.id) }
+                    Button(isKeyed ? "Remove key from Program" : "Key over Program") { engine.toggleKey(source.id) }
+                    Divider()
+                    Button(source.muted ? "Unmute" : "Mute") { source.muted.toggle() }
+                    Button("Edit input") { openController() }
+                } label: { Image(systemName: "ellipsis.circle").font(.system(size: 12)) }
+                .menuStyle(.borderlessButton).fixedSize().frame(width: 22)
+            }
+            Button { source.muted.toggle() } label: {
+                Image(systemName: source.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").font(.system(size: 12))
+                    .foregroundColor(source.muted ? DS.program : DS.text2)
+            }.buttonStyle(.plain)
+        }
+        .padding(.horizontal, 6).frame(height: 40)
+    }
+
     private func openController() {
         if let g = source as? GeneratorSource {
             gen.liveUpdate = false; gen.targetID = g.id; gen.settings = g.settings; gen.liveUpdate = true
             present.mediaSection = 2; present.deck = DeckTab.images.rawValue
         }
         else if source is DictionarySource { dict.targetID = source.id; present.deck = DeckTab.dictionary.rawValue }
-        else { present.targetID = source.id; present.deck = DeckTab.present.rawValue }
+        else if source is AISource { ai.targetID = source.id; present.deck = DeckTab.ai.rawValue }
+        else if source is PresentationSource { present.targetID = source.id; present.deck = DeckTab.present.rawValue }
+        else { engine.selectedSourceID = source.id; engine.rightTab = 1 }
     }
 }
 
@@ -930,6 +999,10 @@ struct AddInputMenuItems: View {
             if devices.isEmpty { Text("No devices found") }
         }
         Button("Screen Capture") { engine.addScreen() }
+        Button("Zoom Meeting / App Window…") { engine.showZoom = true }
+        Button("Playlist (videos, audio, images)") {
+            let p = PlaylistSource(); engine.placeInput(p); engine.selectedSourceID = p.id; engine.rightTab = 1
+        }
         Button("Video File…") { pickFile(types: videoFileTypes) { engine.addFile(url: $0) } }
         Button("Image…") { pickFile(types: ["public.image"]) { engine.addImage(url: $0) } }
         Divider()
@@ -1160,6 +1233,8 @@ struct InputSettingsPanel: View {
             VStack(spacing: 12) {
                 InputChannelCard()
                 if let s = engine.sources.first(where: { $0.id == engine.selectedSourceID }), !s.isPlaceholder {
+                    if let pl = s as? PlaylistSource { PlaylistEditorCard(source: pl).id("pl-" + s.id.uuidString) }
+                    CaptureStatusCard(source: s)
                     InputAdjust(source: s).id(s.id)
                 } else {
                     VStack(spacing: 8) {

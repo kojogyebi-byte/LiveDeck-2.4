@@ -132,11 +132,33 @@ final class Engine: ObservableObject {
     @Published var mixInputsIntoRecording = false { didSet { persistSettings() } }
     @Published var showHotkeys = false
     @Published var showHelp = false
+    @Published var showZoom = false
+    /// Switcher key rows under the monitors: 0 = when the Inputs tab is hidden · 1 = always · 2 = never
+    @Published var busStripMode: Int = UserDefaults.standard.integer(forKey: "ui.busStrip") { didSet { UserDefaults.standard.set(busStripMode, forKey: "ui.busStrip") } }
     @Published var helpQuery = ""
     static let defaultHotkeys: [String: String] = [
         "take": "Return", "cut": "C", "ftb": "B", "record": "R", "snapshot": "S", "stream": "L"
     ]
     @Published var hotkeys: [String: String] = Engine.loadHotkeys() { didSet { UserDefaults.standard.set(hotkeys, forKey: "hotkeys") } }
+    /// Assignable shortcuts (action id → key combination).
+    @Published var shortcuts: [String: KeyCombo] = Engine.loadShortcuts() {
+        didSet { if let d = try? JSONEncoder().encode(shortcuts) { UserDefaults.standard.set(d, forKey: "shortcuts.v2") } }
+    }
+    static func loadShortcuts() -> [String: KeyCombo] {
+        if let d = UserDefaults.standard.data(forKey: "shortcuts.v2"), let m = try? JSONDecoder().decode([String: KeyCombo].self, from: d) { return m }
+        // first run of 4.8: start from the recommended set, keeping any keys chosen in the old shortcut window
+        var m = ShortcutCatalog.defaults
+        let old = loadHotkeys()
+        let rename = ["take": "auto", "cut": "cut", "ftb": "ftb", "record": "record", "snapshot": "snapshot", "stream": "stream"]
+        for (oldID, newID) in rename {
+            guard let k = old[oldID] else { continue }
+            if k == "None" || k.isEmpty { m[newID] = nil; continue }
+            let combo = KeyCombo(k)
+            for (other, c) in m where c == combo && other != newID { m[other] = nil }
+            m[newID] = combo
+        }
+        return m
+    }
     static func loadHotkeys() -> [String: String] {
         var m = defaultHotkeys
         if let d = UserDefaults.standard.dictionary(forKey: "hotkeys") as? [String: String] { for (k, v) in d { m[k] = v } }
@@ -320,10 +342,20 @@ final class Engine: ObservableObject {
         for s in sources where !s.isPlaceholder {
             let file = s as? FileSource
             let audioFile = s as? AudioFileSource
-            guard file != nil || audioFile != nil || s.audioDeviceID != nil else { continue }
+            let playlist = s as? PlaylistSource
+            let liveAudio = s as? LiveAudioSource
+            guard file != nil || audioFile != nil || playlist != nil || liveAudio != nil || s.audioDeviceID != nil else { continue }
             keep.insert(s.id)
             let c = audio.channel(s.id)
             audio.setDevice(s.audioDeviceID, for: c)
+            if let pl = playlist {
+                pl.updateOnAir(anyOnAir(pl.id))
+                if let item = pl.audioItem { audio.attachMedia(item, to: c) { [weak pl] ok in pl?.audioRouted = ok } }
+            }
+            if let la = liveAudio, la.audioSink == nil {
+                let ring = c.liveRing
+                la.audioSink = { l, r, n in ring.write(l, r, frames: n) }
+            }
             if let f = file, let item = f.audioItem {
                 audio.attachMedia(item, to: c) { [weak f] ok in f?.audioRouted = ok }
             }

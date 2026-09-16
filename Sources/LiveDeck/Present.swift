@@ -1296,6 +1296,7 @@ struct LookColumn: View {
 struct LookEditor: View {
     @ObservedObject var source: SlideSource
     @EnvironmentObject var present: PresentModel
+    @State private var showLibrary = false
     @State private var families: [String] = []
     @State private var showSave = false
     @State private var saveName = ""
@@ -1406,7 +1407,10 @@ struct LookEditor: View {
                     Text(source.look.background.media.map { URL(fileURLWithPath: $0.path).lastPathComponent } ?? "No file chosen")
                         .font(DS.small).foregroundColor(DS.text2).lineLimit(1).truncationMode(.middle)
                     Spacer()
-                    Button("Choose…") { chooseMedia(video: source.look.background.kind == .video) }.buttonStyle(.ds(.normal, .small))
+                    Button("Library…") { showLibrary = true }.buttonStyle(.ds(.primary, .small))
+                        .popover(isPresented: $showLibrary, arrowEdge: .leading) { LibraryBackgroundPicker(source: source) }
+                        .help("Choose from your Media library, generated loops or your inputs")
+                    Button("File…") { chooseMedia(video: source.look.background.kind == .video) }.buttonStyle(.ds(.normal, .small))
                 }
                 if let p = source.backgroundProblem { Text(p).font(.system(size: 10)).foregroundColor(DS.amber) }
                 FieldRow(label: "Fit") {
@@ -1505,6 +1509,100 @@ struct LookEditor: View {
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
             source.look.background.media = MediaRef(path: url.path, bytes: size)
         }
+    }
+}
+
+/// Pick a background from the Media library (downloaded, generated, imported, shared) or from existing inputs.
+struct LibraryBackgroundPicker: View {
+    @EnvironmentObject var bg: BackgroundsModel
+    @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @ObservedObject var source: SlideSource
+    @Environment(\.dismiss) private var dismiss
+    @State private var filter = 0     // 0 all · 1 videos · 2 images · 3 generated · 4 inputs
+
+    private var items: [LocalBackground] {
+        switch filter {
+        case 1: return bg.items.filter { $0.kind == .video }
+        case 2: return bg.items.filter { $0.kind == .image }
+        case 3: return bg.items.filter { $0.category == "Generated" }
+        default: return bg.items
+        }
+    }
+    private var inputMedia: [(name: String, path: String, video: Bool)] {
+        engine.sources.compactMap { s in
+            guard let path = s.originLocation, FileManager.default.fileExists(atPath: path) else { return nil }
+            if s is FileSource { return (s.name, path, true) }
+            if s is ImageSource { return (s.name, path, false) }
+            return nil
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Background from library").font(.system(size: 13, weight: .semibold)).foregroundColor(CP.text)
+                Spacer()
+                Button("Make one in Generator") { present.mediaSection = 2; present.deck = DeckTab.images.rawValue; dismiss() }
+                    .buttonStyle(.ds(.ghost, .small))
+            }
+            DSSegmented(selection: $filter, options: [(0, "All"), (1, "Videos"), (2, "Images"), (3, "Generated"), (4, "Inputs")])
+            ScrollView {
+                if filter == 4 {
+                    if inputMedia.isEmpty { CPNote("No video or image inputs yet.") }
+                    VStack(spacing: 4) {
+                        ForEach(inputMedia, id: \.path) { m in
+                            Button { apply(path: m.path, video: m.video) } label: {
+                                HStack {
+                                    Image(systemName: m.video ? "film" : "photo").frame(width: 18)
+                                    Text(m.name).lineLimit(1)
+                                    Spacer()
+                                }
+                                .font(.system(size: 12)).foregroundColor(CP.text)
+                                .padding(8).background(RoundedRectangle(cornerRadius: 6).fill(CP.field))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                } else {
+                    if items.isEmpty { CPNote("Nothing here yet — download backgrounds, import your own or export a loop from the Generator (Media tab).") }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                        ForEach(items) { item in
+                            Button { bg.useAsBackground(item, on: source); dismiss() } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    ZStack(alignment: .topTrailing) {
+                                        Color.black
+                                        if let img = bg.thumbs[item.id] { Image(nsImage: img).resizable().aspectRatio(contentMode: .fill) }
+                                        if item.kind == .video {
+                                            Image(systemName: "play.fill").font(.system(size: 8)).foregroundColor(.white).padding(3)
+                                                .background(Circle().fill(Color.black.opacity(0.6))).padding(3)
+                                        }
+                                    }
+                                    .aspectRatio(16.0 / 9.0, contentMode: .fit).clipped().cornerRadius(4)
+                                    Text(item.title).font(.system(size: 10)).foregroundColor(CP.text).lineLimit(1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .onAppear { bg.thumbnail(item) }
+                        }
+                    }
+                }
+            }
+            .frame(height: 320)
+        }
+        .padding(12)
+        .frame(width: 440)
+        .background(CP.bg)
+        .onAppear { bg.refresh() }
+    }
+
+    private func apply(path: String, video: Bool) {
+        let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0
+        var look = source.look
+        look.background.kind = video ? .video : .image
+        look.background.media = MediaRef(path: path, bytes: size)
+        source.look = look
+        dismiss()
     }
 }
 

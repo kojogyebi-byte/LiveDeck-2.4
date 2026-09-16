@@ -763,6 +763,7 @@ struct PresetInput: Codable {
     var adjust: [Double]       // zoom panX panY rotation cropL cropR cropT cropB brightness contrast saturation
     var audio: PresetAudio
     var generator: GeneratorSettings?
+    var playlist: Playlist?
 }
 
 struct PresetOutput: Codable {
@@ -836,6 +837,8 @@ final class PresetStore: ObservableObject {
         case is PresentationSource: return "presentation"
         case is GeneratorSource: return "generator"
         case is AISource: return "ai"
+        case is PlaylistSource: return "playlist"
+        case is RTMPListenSource: return "rtmpListen"
         default: return "empty"
         }
     }
@@ -852,7 +855,7 @@ final class PresetStore: ObservableObject {
                                    location: s.sourceURLString ?? s.originLocation,
                                    color: color, look: (s as? SlideSource)?.look,
                                    adjust: [s.zoom, s.panX, s.panY, s.rotation, s.cropL, s.cropR, s.cropT, s.cropB, s.brightness, s.contrast, s.saturation],
-                                   audio: PresetAudio(s), generator: (s as? GeneratorSource)?.settings)
+                                   audio: PresetAudio(s), generator: (s as? GeneratorSource)?.settings, playlist: (s as? PlaylistSource)?.playlist)
             }
             p.master = PresetAudio(engine.masterBus)
         }
@@ -1002,6 +1005,10 @@ final class PresetStore: ObservableObject {
         case "dictionary": return DictionarySource(name: spec.name, look: spec.look ?? .dictionaryPanel)
         case "generator": return GeneratorSource(settings: spec.generator ?? GeneratorSettings(), name: spec.name)
         case "ai": return AISource(name: spec.name, look: spec.look ?? AISource.defaultLook)
+        case "playlist": return PlaylistSource(playlist: spec.playlist ?? Playlist(), name: spec.name)
+        case "rtmpListen":
+            let parts = loc.split(separator: "|").map(String.init)
+            return RTMPListenSource(port: Int(parts.first ?? "") ?? 1935, streamKey: parts.count > 1 ? parts[1] : "zoom", name: spec.name)
         default: break
         }
         return EmptySource()

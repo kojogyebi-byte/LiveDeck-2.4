@@ -118,3 +118,12 @@ final class HelpV47Tests: XCTestCase {
         XCTAssertEqual(HelpIndex.search("send song").first?.id, "network-share")
     }
 }
+
+final class HelpV48Tests: XCTestCase {
+    func testV48Topics() {
+        XCTAssertEqual(HelpIndex.search("zoom meeting").first?.id, "zoom")
+        XCTAssertEqual(HelpIndex.search("walk-in playlist").first?.id, "playlist")
+        XCTAssertEqual(HelpIndex.search("switch cameras").first?.id, "bus-keys")
+        XCTAssertEqual(HelpIndex.search("assign keys").first?.id, "shortcuts")
+    }
+}

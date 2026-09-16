@@ -333,6 +333,7 @@ struct MediaDeck: View {
 }
 
 struct BackgroundsView: View {
+    @EnvironmentObject var engine: Engine
     @EnvironmentObject var bg: BackgroundsModel
     @EnvironmentObject var link: LinkManager
     @EnvironmentObject var present: PresentModel
@@ -377,6 +378,15 @@ struct BackgroundsView: View {
                                         Button(item.favorite ? "Remove from favourites" : "Add to favourites") { bg.catalog.setFavorite(item.id, !item.favorite); bg.refresh() }
                                         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([bg.catalog.url(item)]) }
                                         LinkSendMenu(title: "Send to computer") { pid in link.offerLibraryItem(item, to: pid) }
+                                        Menu("Add to playlist") {
+                                            ForEach(engine.sources.compactMap { $0 as? PlaylistSource }, id: \.id) { pl in
+                                                Button(pl.name) { addToPlaylist(pl, item) }
+                                            }
+                                            Button("New playlist input") {
+                                                let pl = PlaylistSource(); engine.placeInput(pl); addToPlaylist(pl, item)
+                                                engine.selectedSourceID = pl.id; engine.rightTab = 1
+                                            }
+                                        }
                                         LinkSendMenu(title: "Send to computer and add as input") { pid in link.offerLibraryItem(item, to: pid, addAsInput: true) }
                                         Button("Delete", role: .destructive) { bg.catalog.remove(item.id); bg.refresh() }
                                     }
@@ -460,6 +470,12 @@ struct BackgroundsView: View {
             .frame(minWidth: 280, idealWidth: 340, maxWidth: 440, maxHeight: .infinity)
             .background(CP.bg)
         }
+    }
+
+    private func addToPlaylist(_ pl: PlaylistSource, _ item: LocalBackground) {
+        pl.playlist.items.append(PlaylistItem(path: bg.catalog.url(item).path, title: item.title, kind: item.kind == .video ? .video : .image))
+        pl.playlistEdited()
+        bg.message = "Added “\(item.title)” to \(pl.name)."
     }
 
     private func keyField(_ title: String, _ binding: Binding<String>, _ signup: URL?) -> some View {

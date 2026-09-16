@@ -1,4 +1,17 @@
-# LiveDeck Studio (macOS) — v4.7.0
+# LiveDeck Studio (macOS) — v4.8.0
+
+**New in 4.8:**
+- **Playlist input** — one holder that plays videos, audio and images in order (Add Input → Playlist). Drop files/folders, Add files…, From library, or right-click a Media item → Add to playlist. Auto-advance, loop, shuffle, per-image duration, start when taken to Program, reorder, disable, play now / cue; tile transport ◀ ▶ ▶▶ with item number; audio routed through the mixer; save/open named playlists (`Library/playlists.json`); saved in presets.
+- **Backgrounds from inside the app** — Format → Background → **Library…** picks downloaded, generated (Generator loops), imported or shared media, or the file of an existing video/image input. **File…** still chooses any file.
+- **Switcher buttons under the monitors** — hardware-style PROGRAM (cut) and PREVIEW rows plus CUT/AUTO, shown whenever the Inputs tab is hidden (right-click: always / hide).
+- **Tile controls never disappear** — narrow tiles drop keys/transport into a ⋯ menu but always keep the edit button; the edit button now opens the right editor for every input type.
+- **Assignable keyboard shortcuts** — 90 actions (switching, inputs 1–9 to Preview/Program, keys over Preview/Program, slides, overlays, output, audio, playlist, tabs, control-panel tabs, presets…). Record any key combination, conflict and macOS-shortcut warnings, **Smart setup** (fill empty actions, reset to recommended, clear). Recommended set is created automatically; old shortcuts are kept.
+- **Zoom** — Add Input → **Zoom Meeting / App Window…**: join with an invite link or meeting ID (opens the Zoom app), then add the meeting window as an input with **meeting audio** (ScreenCaptureKit; kept out of the speakers to avoid echo; follows Zoom when it replaces its window). Alternative for hosts: receive Zoom's **Custom Live Streaming** over RTMP (ffmpeg listener with video + audio). Guide for sharing LiveDeck's Program Out window into Zoom. Works with any app window (Teams, browser meetings…).
+- `PresentationKit` adds `Shortcuts.swift`, `Playlists.swift` (with Zoom link parsing); **73 automated tests**.
+
+---
+
+# Previous — v4.7.0
 
 **New in 4.7 — LiveDeck Link (several computers on one network):**
 - **Automatic discovery:** every Mac running LiveDeck with *Share on this network* turned on appears in the new **Network** tab (Bonjour `_livedeck._tcp`, TCP). Name each station (Front of house, Stage, Media desk…). An optional shared **passcode** keeps other people out — it is checked with a challenge/response, never sent over the network.
