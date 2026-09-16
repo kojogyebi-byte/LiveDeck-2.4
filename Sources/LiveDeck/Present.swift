@@ -206,7 +206,7 @@ final class PresentModel: ObservableObject {
                     if let list = try? SongImporter.importFile(u), !list.isEmpty { imported += list } else { failures += 1 }
                 }
                 DispatchQueue.main.async {
-                    for s in imported { try? self.library.songs.save(s) }
+                    for s in imported { _ = try? self.library.songs.save(s) }
                     self.refreshSongs()
                     if let first = imported.first { self.selectedSongID = first.id }
                     self.status = "Imported \(imported.count) song(s)" + (failures > 0 ? ", \(failures) file(s) not recognised." : ".")

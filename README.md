@@ -1,4 +1,6 @@
-# LiveDeck Studio (macOS) — v4.4.0
+# LiveDeck Studio (macOS) — v4.4.1
+
+**4.4.1 (build fix):** matches the macOS 14.5 SDK (Xcode 15.4) — `MTAudioProcessingTapCreate` takes an `Unmanaged<MTAudioProcessingTap>` out-pointer, and the `AVAudioSourceNode` render block has four parameters. Also silences the unused-result warnings.
 
 **New in 4.4:**
 - **Real program audio engine.** Video files, audio files and microphones now all go through one mixer (AVAudioEngine). File audio is taken out of AVPlayer with an MTAudioProcessingTap, so **mute, faders, trim, ON/AFV, pan, solo, effects and the Master fader/mute really change what you hear, record and stream**. Meters read the real samples (left and right). Recording and stream audio are now the stereo Program mix (AAC 192 k). The old "Mix input faders into recording & stream" switch is gone — the console mix is always what goes out.

@@ -377,7 +377,7 @@ final class GeneratorModel: ObservableObject {
         let name = "\(settings.style.rawValue)-\(settings.seed).png".replacingOccurrences(of: " ", with: "-")
         let url = backgrounds.catalog.folder.appendingPathComponent(name)
         if GeneratorExporter.still(settings, to: url) {
-            try? backgrounds.catalog.add(file: url, id: "gen-still-\(settings.style.rawValue)-\(settings.seed)", title: settings.style.rawValue + " (still)",
+            _ = try? backgrounds.catalog.add(file: url, id: "gen-still-\(settings.style.rawValue)-\(settings.seed)", title: settings.style.rawValue + " (still)",
                                          kind: .image, category: "Generated", provider: "LiveDeck generator")
             backgrounds.refresh()
             message = "Saved still image to Backgrounds."
@@ -397,7 +397,7 @@ final class GeneratorModel: ObservableObject {
             DispatchQueue.main.async {
                 self.exporting = false
                 if ok {
-                    try? backgrounds.catalog.add(file: url, id: "gen-loop-\(s.style.rawValue)-\(s.seed)", title: s.style.rawValue + " (loop)",
+                    _ = try? backgrounds.catalog.add(file: url, id: "gen-loop-\(s.style.rawValue)-\(s.seed)", title: s.style.rawValue + " (loop)",
                                                  kind: .video, category: "Generated", provider: "LiveDeck generator")
                     backgrounds.refresh()
                     self.message = "Saved a \(Int(s.loopSeconds)) s seamless loop to Backgrounds."

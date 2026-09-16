@@ -147,7 +147,7 @@ final class BackgroundsModel: ObservableObject {
         for p in stills {
             let url = catalog.folder.appendingPathComponent("starter-\(p.name.replacingOccurrences(of: " ", with: "-")).png")
             if GeneratorExporter.still(p.settings, to: url) {
-                try? catalog.add(file: url, id: "starter-still-\(p.name)", title: p.name, kind: .image, category: "Generated", provider: "LiveDeck generator")
+                _ = try? catalog.add(file: url, id: "starter-still-\(p.name)", title: p.name, kind: .image, category: "Generated", provider: "LiveDeck generator")
             }
         }
         refresh()
@@ -160,7 +160,7 @@ final class BackgroundsModel: ObservableObject {
             let url = catalog.folder.appendingPathComponent("starter-\(p.name.replacingOccurrences(of: " ", with: "-"))-loop.mp4")
             GeneratorExporter.loop(s, to: url, size: CGSize(width: 1280, height: 720), progress: { _ in }, completion: { ok in
                 DispatchQueue.main.async {
-                    if ok { try? self.catalog.add(file: url, id: "starter-loop-\(p.name)", title: p.name + " (loop)", kind: .video,
+                    if ok { _ = try? self.catalog.add(file: url, id: "starter-loop-\(p.name)", title: p.name + " (loop)", kind: .video,
                                                   category: "Generated", provider: "LiveDeck generator") }
                     self.refresh()
                     remaining -= 1
@@ -210,7 +210,7 @@ final class BackgroundsModel: ObservableObject {
             guard resp == .OK, let self else { return }
             for u in panel.urls {
                 let isVideo = ["mp4", "mov", "m4v"].contains(u.pathExtension.lowercased())
-                try? self.catalog.add(file: u, id: "import-" + UUID().uuidString, title: u.deletingPathExtension().lastPathComponent,
+                _ = try? self.catalog.add(file: u, id: "import-" + UUID().uuidString, title: u.deletingPathExtension().lastPathComponent,
                                       kind: isVideo ? .video : .image, category: "Imported")
             }
             self.refresh()

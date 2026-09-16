@@ -246,11 +246,11 @@ enum MediaAudioTap {
                         Unmanaged<MediaTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
                             .consume(bufferListInOut, frames: Int(numberFramesOut.pointee))
                     })
-                var tap: MTAudioProcessingTap?
+                var tap: Unmanaged<MTAudioProcessingTap>?
                 let err = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap)
                 guard err == noErr, let tap else { completion(false); return }
                 let params = AVMutableAudioMixInputParameters(track: track)
-                params.audioTapProcessor = tap
+                params.audioTapProcessor = tap.takeRetainedValue()
                 let mix = AVMutableAudioMix()
                 mix.inputParameters = [params]
                 item.audioMix = mix
@@ -333,7 +333,7 @@ final class ProgramAudioEngine {
         guard !isRunning else { return }
         guard let fmt = AVAudioFormat(standardFormatWithSampleRate: Self.sampleRate, channels: 2) else { return }
         if sourceNode == nil {
-            let node = AVAudioSourceNode(format: fmt) { [weak self] _, timestamp, frameCount, _, outputData -> OSStatus in
+            let node = AVAudioSourceNode(format: fmt) { [weak self] _, timestamp, frameCount, outputData -> OSStatus in
                 self?.render(frames: Int(frameCount), timestamp: timestamp, output: outputData)
                 return noErr
             }

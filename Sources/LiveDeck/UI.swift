@@ -774,7 +774,7 @@ struct LayoutThumb: View {
                                     CGRect(x: 0, y: H / 2, width: W / 2, height: H / 2), CGRect(x: W / 2, y: H / 2, width: W / 2, height: H / 2)]
                 case .grid:
                     var rs: [CGRect] = []
-                    let cols = 3, rows = 2
+                    let cols = 3
                     for i in 0..<6 { let r = i / cols, c = i % cols
                         rs.append(CGRect(x: CGFloat(c) * W / 3, y: CGFloat(r) * H / 2, width: W / 3, height: H / 2)) }
                     return rs
