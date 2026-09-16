@@ -12,6 +12,8 @@ struct LiveDeckApp: App {
     @StateObject private var automation = AutomationModel()
     @StateObject private var ai = AIModel()
     @StateObject private var link = LinkManager()
+    @StateObject private var stage = StageModel()
+    @StateObject private var session = SessionGuard()
 
     var body: some Scene {
         WindowGroup("LiveDeck Studio") {
@@ -28,6 +30,8 @@ struct LiveDeckApp: App {
                 .environmentObject(automation)
                 .environmentObject(ai)
                 .environmentObject(link)
+                .environmentObject(stage)
+                .environmentObject(session)
                 .frame(minWidth: 1280, minHeight: 760)
                 .onAppear {
                     present.engine = engine
@@ -42,6 +46,9 @@ struct LiveDeckApp: App {
                     link.present = present
                     link.presets = presets
                     link.activate()
+                    session.engine = engine
+                    session.presets = presets
+                    session.activate()
                     engine.start()
                 }
         }

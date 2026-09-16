@@ -93,6 +93,30 @@ public final class BibleStore {
         return out
     }
 
+    /// Search-as-you-type: all words must match, the last word may be unfinished, quotes = exact phrase.
+    /// Best matches first (FTS5 rank); falls back to a simple contains search.
+    public func liveSearch(_ query: String, limit: Int = 60) -> [BibleVerse] {
+        let q = query.trimmed
+        guard q.count >= 2 else { return [] }
+        var out: [BibleVerse] = []
+        if hasFTS, let match = BibleAssist.ftsQuery(q) {
+            let sql = """
+                SELECT v.book, v.chapter, v.verse, v.text FROM verses_fts f JOIN verses v ON v.rowid = f.rowid
+                WHERE verses_fts MATCH ? ORDER BY rank LIMIT ?
+                """
+            try? db.query(sql, [.text(match), .int(limit)]) {
+                out.append(BibleVerse(book: $0.int(0), chapter: $0.int(1), verse: $0.int(2), text: $0.text(3)))
+            }
+            if !out.isEmpty { return out }
+        }
+        let plain = q.replacingOccurrences(of: "\"", with: "")
+        try? db.query("SELECT book, chapter, verse, text FROM verses WHERE text LIKE ? ORDER BY book, chapter, verse LIMIT ?",
+                      [.text("%" + plain + "%"), .int(limit)]) {
+            out.append(BibleVerse(book: $0.int(0), chapter: $0.int(1), verse: $0.int(2), text: $0.text(3)))
+        }
+        return out
+    }
+
     /// Full-text search (FTS5 when available, LIKE otherwise). Returns at most `limit` verses.
     public func search(_ query: String, limit: Int = 100) -> [BibleVerse] {
         let q = query.trimmed

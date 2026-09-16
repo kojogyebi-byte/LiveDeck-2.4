@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import PresentationKit
 
+extension Notification.Name { static let clearStageMessage = Notification.Name("livedeck.stage.clearMessage") }
+
 // MARK: - Running shortcut actions
 
 enum ShortcutRunner {
@@ -37,6 +39,9 @@ enum ShortcutRunner {
         case "programOut.fullscreen": engine.toggleProgramOutFullscreen()
         case "multiview": engine.openMultiviewWindow()
         case "guides": engine.showSafeGuides.toggle()
+        case "marker": guard engine.isRecording else { return false }; engine.addMarker()
+        case "preflight": engine.showPreflight = true
+        case "stage.clearMessage": NotificationCenter.default.post(name: .clearStageMessage, object: nil)
         case "audio.masterMute": engine.masterBus.muted.toggle()
         case "audio.hearMics": engine.hearLiveInputs.toggle()
         case "audio.clearSolo": engine.sources.forEach { $0.solo = false }

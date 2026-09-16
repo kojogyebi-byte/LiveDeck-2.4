@@ -301,6 +301,7 @@ struct AIAnswerColumn: View {
                     ForEach(engine.sources.compactMap { $0 as? AISource }, id: \.id) { s in Button(s.name) { ai.targetID = s.id } }
                     Divider()
                     Button("New AI Search input") { let s = engine.addAIInput(); ai.targetID = s.id }
+                    if let t = target { Button("Rename “\(t.name)”…") { engine.renamingSourceID = t.id } }
                 } label: {
                     HStack(spacing: 4) {
                         Circle().fill(onAir ? DS.program : (keyed ? DS.amber : DS.text3)).frame(width: 7, height: 7)

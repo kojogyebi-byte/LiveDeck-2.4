@@ -133,6 +133,9 @@ final class Engine: ObservableObject {
     @Published var showHotkeys = false
     @Published var showHelp = false
     @Published var showZoom = false
+    @Published var showPreflight = false
+    /// Input whose name is being edited (MainView shows the rename box).
+    @Published var renamingSourceID: UUID?
     /// Switcher key rows under the monitors: 0 = when the Inputs tab is hidden · 1 = always · 2 = never
     @Published var busStripMode: Int = UserDefaults.standard.integer(forKey: "ui.busStrip") { didSet { UserDefaults.standard.set(busStripMode, forKey: "ui.busStrip") } }
     @Published var helpQuery = ""
@@ -725,6 +728,7 @@ final class Engine: ObservableObject {
         let old = programID; programID = p; previewID = old
         transitioning = false; manualActive = false; transT = 1; transFrom = nil
         takePreviewKeys()
+        if markEveryCut && isRecording { addMarker() }
     }
 
     // MARK: scene layouts
@@ -806,6 +810,7 @@ final class Engine: ObservableObject {
         programID = incoming
         transFrom = nil; transitioning = false; manualActive = false; transT = 1
         takePreviewKeys()
+        if markEveryCut && isRecording { addMarker() }
     }
 
     // MARK: layers
@@ -1045,6 +1050,7 @@ final class Engine: ObservableObject {
             w.startWriting(); w.startSession(atSourceTime: CMClockGetTime(CMClockGetHostTimeClock()))
             writer = w; videoInput = vIn; audioInput = aIn; adaptor = ad
             recordSeconds = 0; isRecording = true; fileOutputActive = true
+            recordStartDate = Date(); markers = [RecordingMarker(seconds: 0, label: programLabel)]
             // The program mix from the audio engine is written as it is rendered.
             audioWriterLock.lock(); liveAudioWriterInput = aIn; audioWriterLock.unlock()
             recordTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.recordSeconds += 1 }
@@ -1058,9 +1064,37 @@ final class Engine: ObservableObject {
         guard let w = writer else { return }
         videoInput?.markAsFinished(); audioInput?.markAsFinished()
         let url = w.outputURL
+        writeChapters(for: url)
         w.finishWriting { [weak self] in DispatchQueue.main.async {
             self?.lastRecordingURL = url; NSWorkspace.shared.activateFileViewerSelecting([url]) } }
         writer = nil; videoInput = nil; audioInput = nil; adaptor = nil
+    }
+
+    // MARK: recording markers (YouTube-style chapters)
+
+    struct RecordingMarker: Identifiable, Hashable { let id = UUID(); var seconds: Int; var label: String }
+    @Published var markers: [RecordingMarker] = []
+    @Published var markEveryCut: Bool = UserDefaults.standard.bool(forKey: "rec.markCuts") { didSet { UserDefaults.standard.set(markEveryCut, forKey: "rec.markCuts") } }
+    private var recordStartDate = Date()
+    private var programLabel: String { sources.first { $0.id == programID }?.name ?? "Start" }
+
+    /// Adds a chapter marker to the recording (a label, or what is on Program).
+    func addMarker(_ label: String? = nil) {
+        guard isRecording else { return }
+        let secs = Int(Date().timeIntervalSince(recordStartDate))
+        let text = (label ?? "").trimmingCharacters(in: .whitespaces)
+        if let last = markers.last, secs - last.seconds < 2 { markers.removeLast() }
+        markers.append(RecordingMarker(seconds: secs, label: text.isEmpty ? programLabel : text))
+    }
+
+    func markerTime(_ s: Int) -> String { s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%02d:%02d", s / 60, s % 60) }
+
+    private func writeChapters(for url: URL) {
+        guard markers.count > 1 else { return }
+        var lines = ["Chapters for \(url.lastPathComponent)", ""]
+        for m in markers { lines.append("\(markerTime(m.seconds)) \(m.label)") }
+        let out = url.deletingPathExtension().appendingPathExtension("chapters.txt")
+        try? lines.joined(separator: "\n").write(to: out, atomically: true, encoding: .utf8)
     }
 
     func snapshot() {

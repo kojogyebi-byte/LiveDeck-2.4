@@ -342,16 +342,27 @@ struct MixerConsole: View {
     var body: some View {
         let channels = engine.sources.filter { !$0.isPlaceholder }
         GeometryReader { geo in
-            let h = max(geo.size.height, MX.minHeight)
+            // strips never stretch beyond a comfortable console height; labels only when there is room for them
+            let h = min(max(geo.size.height - 12, MX.minHeight), MX.minHeight + 220)
+            let showLabels = !channels.isEmpty && geo.size.width >= 480
             ScrollView(.vertical, showsIndicators: geo.size.height < MX.minHeight) {
                 HStack(alignment: .top, spacing: 0) {
-                    MixerLabelColumn(height: h)
+                    if showLabels { MixerLabelColumn(height: h) }
                     if channels.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(systemName: "slider.vertical.3").font(.system(size: 28)).foregroundColor(MX.dim)
-                            Text("Add inputs to see their channels here.").font(.system(size: 12)).foregroundColor(MX.label)
+                        VStack(spacing: 10) {
+                            Image(systemName: "slider.vertical.3").font(.system(size: 26)).foregroundColor(MX.dim)
+                            Text("No audio channels yet").font(.system(size: 12, weight: .semibold)).foregroundColor(MX.text)
+                            Text("Add a camera with a microphone, a video, an audio file or a playlist — each gets its own channel here.")
+                                .font(.system(size: 10.5)).foregroundColor(MX.label).multilineTextAlignment(.center)
+                            Menu { AddInputMenuItems() } label: { Label("Add Input", systemImage: "plus") }
+                                .menuStyle(.borderlessButton).fixedSize()
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(14)
+                        .frame(maxWidth: 260)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(MX.box))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(MX.boxLine, lineWidth: 1))
+                        .padding(10)
+                        .frame(maxWidth: .infinity, maxHeight: h, alignment: .center)
                     } else {
                         ScrollView(.horizontal, showsIndicators: true) {
                             HStack(alignment: .top, spacing: 8) {
@@ -365,6 +376,7 @@ struct MixerConsole: View {
                 }
                 .frame(height: h)
                 .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .background(MX.bg)

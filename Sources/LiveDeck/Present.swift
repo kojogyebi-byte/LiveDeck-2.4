@@ -45,6 +45,9 @@ final class PresentModel: ObservableObject {
     // Live control
     @Published var targetID: UUID?
     @Published var liveKey: String?
+    /// Slides currently being stepped through, and the position (for the stage display).
+    var liveSlides: [SlideContent] { liveList }
+    var liveSlideIndex: Int { liveIndex }
     private var liveList: [SlideContent] = []
     private var livePrefix = ""
     private var liveIndex = -1
@@ -241,6 +244,70 @@ final class PresentModel: ObservableObject {
 
     func runSearch() {
         searchResults = currentStore?.search(searchText, limit: 200) ?? []
+    }
+
+    // MARK: Bible search assistant
+
+    @Published var suggestions: [BibleSuggestion] = []
+    @Published var liveResults: [BibleVerse] = []
+    @Published var liveBookFilter: Int?
+    @Published var assistQuery = ""
+    @Published var assistSelection = -1
+    private var assistWork: DispatchWorkItem?
+    private var suppressText: String?
+
+    /// Called as the operator types in the Bible box: instant book/reference completions, then (debounced)
+    /// matching verses and phrase completions.
+    func updateAssist(_ text: String) {
+        assistWork?.cancel()
+        if let s = suppressText, s == text { suppressText = nil; return }
+        suppressText = nil
+        let q = text.trimmingCharacters(in: .whitespaces)
+        assistQuery = q
+        guard !q.isEmpty else { suggestions = []; liveResults = []; liveBookFilter = nil; return }
+        let extra = currentStore?.bookNameMap ?? [:]
+        let isRef = BibleAssist.looksLikeReference(q, extraNames: extra)
+        var base = BibleAssist.referenceSuggestions(q, extraNames: extra)
+        if !isRef { base += BibleAssist.themeSuggestions(q) }
+        suggestions = base
+        let hasDigits = q.contains { $0.isNumber }
+        let wantsWords = q.count >= 3 && (!isRef || (!hasDigits && q.split(separator: " ").count >= 2))
+        guard wantsWords else { liveResults = []; liveBookFilter = nil; return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.assistQuery == q else { return }
+            let res = self.currentStore?.liveSearch(q, limit: 120) ?? []
+            let phrases = BibleAssist.phraseCompletions(query: q, in: res)
+            self.liveResults = res
+            if let f = self.liveBookFilter, !res.contains(where: { $0.book == f }) { self.liveBookFilter = nil }
+            var seen = Set(base.map { $0.text.lowercased() })
+            self.suggestions = base + phrases.filter { seen.insert($0.text.lowercased()).inserted }
+        }
+        assistWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+    }
+
+    func applySuggestion(_ s: BibleSuggestion) {
+        switch s.kind {
+        case .book, .phrase:
+            reference = s.text
+            updateAssist(s.text)
+        case .reference, .popular:
+            reference = s.text
+            lookUp()
+            clearAssist()
+        }
+    }
+
+    func openVerse(_ v: BibleVerse, following: Int = 0, wholeChapter: Bool = false) {
+        let name = currentStore?.bookName(v.book) ?? BibleBookInfo.byNumber(v.book)?.name ?? ""
+        reference = wholeChapter ? "\(name) \(v.chapter)" : (following > 0 ? "\(name) \(v.chapter):\(v.verse)-\(v.verse + following)" : "\(name) \(v.chapter):\(v.verse)")
+        lookUp()
+        clearAssist()
+    }
+
+    func clearAssist() {
+        assistWork?.cancel(); suggestions = []; liveResults = []; liveBookFilter = nil; assistQuery = ""; assistSelection = -1
+        suppressText = reference
     }
 
     func loadCatalog() {
@@ -953,6 +1020,7 @@ struct PresentOperatorBar: View {
                 }
                 Divider()
                 Button("New Presentation input") { let s = engine.addPresentationInput(); present.targetID = s.id }
+                if let t = target { Button("Rename “\(t.name)”…") { engine.renamingSourceID = t.id } }
             } label: {
                 HStack(spacing: 4) {
                     Circle().fill(onAir ? DS.program : (keyed ? DS.amber : DS.text3)).frame(width: 7, height: 7)
@@ -1103,6 +1171,7 @@ struct SlideMenu: View {
         Button("Clear text") { present.clearText() }
         Button(source.backgroundCleared ? "Show background" : "Hide background") { present.toggleBackground() }
         Button("Format this input…") { present.targetID = source.id }
+        Button("Rename this input…") { engine.renamingSourceID = source.id }
     }
 }
 
@@ -1147,9 +1216,7 @@ struct ScriptureArea: View {
                     ForEach(present.bibles) { b in Text(b.abbreviation).tag(Optional(b.id)) }
                 }
                 .labelsHidden().frame(width: 100)
-                TextField("Reference — e.g. John 3:16-18, Ps 23, 1 Cor 13:4-7", text: $present.reference)
-                    .dsField()
-                    .onSubmit { present.lookUp() }
+                BibleSmartField()
                 Button("Go") { present.lookUp() }.buttonStyle(.ds(.primary, .regular))
                 Menu {
                     Text("Show together with \(present.currentStore?.info.abbreviation ?? "the selected version")")
@@ -1172,33 +1239,18 @@ struct ScriptureArea: View {
                 if !present.activeParallelStores.isEmpty, let t = present.currentTarget() {
                     ParallelLayoutToggle(source: t)
                 }
-                DSIconButton(symbol: "text.magnifyingglass", help: "Search words", active: showSearch) { showSearch.toggle() }
+                DSIconButton(symbol: "text.magnifyingglass", help: "Search words and phrases", active: showSearch) {
+                    showSearch.toggle()
+                    if showSearch { present.updateAssist(present.reference) } else { present.clearAssist() }
+                }
             }
             .padding(8)
             if !present.passageError.isEmpty {
                 Text(present.passageError).font(.system(size: 11)).foregroundColor(DS.amber)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10)
             }
-            if showSearch {
-                VStack(spacing: 4) {
-                    TextField("Search words in this Bible", text: $present.searchText).dsField()
-                        .onSubmit { present.runSearch() }
-                    List(present.searchResults, id: \.self) { v in
-                        Button {
-                            present.reference = "\(present.currentStore?.bookName(v.book) ?? "") \(v.chapter):\(v.verse)"
-                            present.lookUp()
-                        } label: {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("\(present.currentStore?.bookName(v.book) ?? "") \(v.chapter):\(v.verse)")
-                                    .font(.system(size: 10, weight: .bold)).foregroundColor(DS.amber)
-                                Text(v.text).font(.system(size: 11)).lineLimit(2)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(height: 150)
-                }
-                .padding(.horizontal, 8)
+            if showSearch || !present.suggestions.isEmpty || !present.liveResults.isEmpty {
+                BibleAssistPanel(onClose: { showSearch = false; present.clearAssist() })
             }
             if let t = present.currentTarget() {
                 ScriptureSlideGrid(source: t)
@@ -1206,6 +1258,195 @@ struct ScriptureArea: View {
                 NoTargetView()
             }
         }
+    }
+}
+
+/// Reference / word box with instant suggestions (↑ ↓ to choose, Return to open, Esc to close).
+struct BibleSmartField: View {
+    @EnvironmentObject var present: PresentModel
+    @FocusState private var focused: Bool
+    @State private var monitor: Any?
+    @State private var selected = -1
+
+    var body: some View {
+        TextField("Reference or words — e.g. John 3:16, Ps 23, “the Lord is my shepherd”, grace", text: $present.reference)
+            .dsField()
+            .focused($focused)
+            .onChange(of: present.reference) { v in if focused { selected = -1; present.updateAssist(v) } }
+            .onSubmit { submit() }
+            .onChange(of: focused) { f in if f { installKeys() } else { removeKeys() } }
+            .onDisappear { removeKeys() }
+    }
+
+    private var totalItems: Int { present.suggestions.count + filteredResults.count }
+    private var filteredResults: [BibleVerse] { present.liveResults.filter { present.liveBookFilter == nil || $0.book == present.liveBookFilter } }
+
+    private func submit() {
+        if selected >= 0 {
+            if selected < present.suggestions.count { present.applySuggestion(present.suggestions[selected]) }
+            else if filteredResults.indices.contains(selected - present.suggestions.count) { present.openVerse(filteredResults[selected - present.suggestions.count]) }
+            selected = -1
+            return
+        }
+        if let first = present.suggestions.first, first.kind == .reference { present.applySuggestion(first); return }
+        if let store = present.currentStore, store.parseReference(present.reference) != nil, BibleAssist.looksLikeReference(present.reference, extraNames: store.bookNameMap) {
+            present.lookUp(); present.clearAssist(); return
+        }
+        // words: show every match
+        present.liveResults = present.currentStore?.liveSearch(present.reference, limit: 300) ?? []
+        if present.liveResults.isEmpty { present.lookUp() }
+    }
+
+    private func installKeys() {
+        removeKeys()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
+            guard focused else { return ev }
+            switch ev.keyCode {
+            case 125: if totalItems > 0 { selected = min(totalItems - 1, selected + 1); present.assistSelection = selected }; return totalItems > 0 ? nil : ev
+            case 126: if selected >= 0 { selected -= 1; present.assistSelection = selected }; return selected >= -1 && totalItems > 0 ? nil : ev
+            case 53: present.clearAssist(); selected = -1; present.assistSelection = -1; return nil
+            case 48 where !present.suggestions.isEmpty:                                   // Tab completes the first suggestion
+                let s = present.suggestions[min(max(0, selected), present.suggestions.count - 1)]
+                present.reference = s.text
+                present.updateAssist(s.text)
+                return nil
+            default: return ev
+            }
+        }
+    }
+    private func removeKeys() { if let m = monitor { NSEvent.removeMonitor(m) }; monitor = nil }
+}
+
+/// Suggestions and matching verses under the Bible box.
+struct BibleAssistPanel: View {
+    @EnvironmentObject var present: PresentModel
+    let onClose: () -> Void
+
+    private var results: [BibleVerse] { present.liveResults.filter { present.liveBookFilter == nil || $0.book == present.liveBookFilter } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkle.magnifyingglass").foregroundColor(CP.icon)
+                Text(present.assistQuery.isEmpty ? "Type a reference, a book, a theme (love, healing, fear) or words from a verse"
+                     : (present.liveResults.isEmpty ? "Suggestions" : "\(present.liveResults.count)\(present.liveResults.count >= 120 ? "+" : "") verses match “\(present.assistQuery)”"))
+                    .font(.system(size: 11, weight: .semibold)).foregroundColor(CP.text).lineLimit(1)
+                Spacer()
+                Text("↑↓ choose · ↩ open · ⇥ complete · esc close").font(.system(size: 9)).foregroundColor(CP.text2)
+                Button { onClose() } label: { Image(systemName: "xmark") }.buttonStyle(.plain).foregroundColor(CP.text2)
+            }
+            if !present.suggestions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(Array(present.suggestions.enumerated()), id: \.element.id) { i, s in
+                            Button { present.applySuggestion(s) } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: icon(s.kind)).font(.system(size: 9))
+                                    Text(s.title).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                                    Text(s.detail).font(.system(size: 9)).foregroundColor(CP.text2).lineLimit(1)
+                                }
+                                .foregroundColor(CP.text)
+                                .padding(.horizontal, 8).frame(height: 24)
+                                .background(Capsule().fill(present.assistSelection == i ? CP.blue : CP.field))
+                                .overlay(Capsule().strokeBorder(CP.border, lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            if present.liveResults.count > 0 {
+                let counts = BibleAssist.bookCounts(present.liveResults)
+                if counts.count > 1 {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            chip("All books", "\(present.liveResults.count)", present.liveBookFilter == nil) { present.liveBookFilter = nil }
+                            ForEach(counts, id: \.book) { c in
+                                chip(present.currentStore?.bookName(c.book) ?? BibleBookInfo.byNumber(c.book)?.name ?? "\(c.book)", "\(c.count)", present.liveBookFilter == c.book) {
+                                    present.liveBookFilter = present.liveBookFilter == c.book ? nil : c.book
+                                }
+                            }
+                        }
+                    }
+                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(results.enumerated()), id: \.element) { idx, v in
+                            let rowIndex = present.suggestions.count + idx
+                            Button { present.openVerse(v) } label: {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("\(present.currentStore?.bookName(v.book) ?? "") \(v.chapter):\(v.verse)")
+                                        .font(.system(size: 10.5, weight: .bold)).foregroundColor(DS.amber)
+                                        .frame(width: 118, alignment: .leading)
+                                    Text(highlighted(v.text)).font(.system(size: 11.5)).foregroundColor(CP.text).lineLimit(2)
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 6).padding(.vertical, 4)
+                                .background(RoundedRectangle(cornerRadius: 5).fill(present.assistSelection == rowIndex ? CP.blueSoft : Color.clear))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("Show this verse") { present.openVerse(v) }
+                                Button("Show this verse and the next 4") { present.openVerse(v, following: 4) }
+                                Button("Show the whole chapter") { present.openVerse(v, wholeChapter: true) }
+                                Divider()
+                                Button("Copy verse") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString("\(v.text) — \(present.currentStore?.bookName(v.book) ?? "") \(v.chapter):\(v.verse)", forType: .string)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 220)
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 9).fill(CP.card))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(CP.border, lineWidth: 1))
+        .padding(.horizontal, 8).padding(.bottom, 6)
+    }
+
+    private func icon(_ k: BibleSuggestion.Kind) -> String {
+        switch k {
+        case .reference: return "arrow.right.circle.fill"
+        case .book: return "book.closed"
+        case .popular: return "star.fill"
+        case .phrase: return "text.quote"
+        }
+    }
+
+    private func chip(_ title: String, _ count: String, _ on: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Text(title).font(.system(size: 10, weight: .semibold))
+                Text(count).font(.system(size: 9)).foregroundColor(on ? .white.opacity(0.8) : CP.text2)
+            }
+            .foregroundColor(on ? .white : CP.text)
+            .padding(.horizontal, 7).frame(height: 20)
+            .background(Capsule().fill(on ? CP.blue : CP.field))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func highlighted(_ text: String) -> AttributedString {
+        var a = AttributedString(text)
+        let lower = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        for term in BibleAssist.highlightTerms(present.assistQuery) {
+            var search = lower.startIndex
+            while let r = lower.range(of: term, range: search..<lower.endIndex) {
+                let startOffset = lower.distance(from: lower.startIndex, to: r.lowerBound)
+                let len = lower.distance(from: r.lowerBound, to: r.upperBound)
+                if let s = a.characters.index(a.startIndex, offsetBy: startOffset, limitedBy: a.endIndex),
+                   let e = a.characters.index(s, offsetBy: len, limitedBy: a.endIndex) {
+                    a[s..<e].foregroundColor = DS.amber
+                    a[s..<e].font = .system(size: 11.5, weight: .bold)
+                }
+                search = r.upperBound
+            }
+        }
+        return a
     }
 }
 
@@ -1739,6 +1980,7 @@ struct DictionaryPreviewColumn: View {
                     }
                     Divider()
                     Button("New Dictionary input") { let s = engine.addDictionaryInput(); dict.targetID = s.id }
+                    if let t = target { Button("Rename “\(t.name)”…") { engine.renamingSourceID = t.id } }
                 } label: {
                     HStack(spacing: 4) {
                         Circle().fill(onAir ? DS.program : (keyed ? DS.amber : DS.text3)).frame(width: 7, height: 7)

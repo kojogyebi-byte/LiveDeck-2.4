@@ -1,4 +1,18 @@
-# LiveDeck Studio (macOS) — v4.8.1
+# LiveDeck Studio (macOS) — v4.9.0
+
+**New in 4.9:**
+- **Bible search assistant** — one box for references and words. Books and references complete as you type (“1 jo”, “ii cor”, “ps 23”), famous passages appear for a book or theme (love, healing, fear…), and words show matching verses best-first with highlights, phrase completion (“the lord is my” → “the lord is my shepherd”), book filter chips, ↑↓/Return/Tab/Esc, exact phrases in quotes, and right-click to open with the next verses or the whole chapter.
+- **Rename any input** — double-click its name on the tile, right-click → Rename…, or from the Songs & Bible / Dictionary / AI target menus.
+- **Pre-service check** (CHECK button, ⇧⌘P) — inputs, disconnected cameras, missing media and playlist files, slide backgrounds, empty Program, audio engine, muted master, camera/mic permissions, signal on the meter, disk space and hours left, recording folder, ffmpeg and stream keys, frame rate, Program Out, fade to black, automation and network — with Fix buttons.
+- **Stage display** (Outputs → Stage display) — confidence monitor for the pulpit and band: clock, current and next slide, REC/LIVE time, countdown timer (orange/red), operator messages (flash), what is on Program. Full screen on a second display or a window.
+- **Chapter markers** — press M (or MARK in the status bar) while recording; optional marker at every cut; saved as `<recording>.chapters.txt` in YouTube chapter format.
+- **Auto-save & recovery** — the whole setup is saved every minute; after a crash or power cut a banner offers Restore session.
+- **Fixes:** transition Duration now fits its column (value box + slider, right-click presets); the Audio panel no longer stretches or shows empty labels in a narrow panel and has a helpful empty state with Add Input.
+- New shortcuts: M marker, ⇧⌘P pre-service check, ⇧Esc clear stage message. `PresentationKit` adds `BibleAssist.swift` and `BibleStore.liveSearch`; **78 automated tests**.
+
+---
+
+# Previous — v4.8.1
 
 **4.8.1 (build fix):** `UI.swift` now imports `PresentationKit` (needed for the new keyboard-shortcut dispatcher: `KeyCombo`, `ShortcutCatalog`).
 

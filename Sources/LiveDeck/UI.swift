@@ -15,6 +15,7 @@ private let cBtn = DS.bg3
 private let pipNoneTag = UUID()
 
 struct MainView: View {
+    @EnvironmentObject var automation: AutomationModel
     @EnvironmentObject var backgrounds: BackgroundsModel
     @EnvironmentObject var link: LinkManager
     @EnvironmentObject var engine: Engine
@@ -22,6 +23,7 @@ struct MainView: View {
     @EnvironmentObject var dict: DictionaryModel
     @State private var showStream = false
     @State private var dropTargeted = false
+    @State private var renameText = ""
     var body: some View {
         VStack(spacing: 0) {
             TopBar(showStream: $showStream)
@@ -55,10 +57,28 @@ struct MainView: View {
         .overlay { if dropTargeted { Rectangle().stroke(DS.accent, lineWidth: 3).allowsHitTesting(false) } }
         .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
         .overlay(alignment: .topTrailing) { LinkToast().animation(.easeInOut(duration: 0.25), value: link.toast?.id) }
+        .overlay(alignment: .top) { RecoveryBanner() }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
         .sheet(isPresented: $showStream) { StreamSettingsView() }
         .sheet(isPresented: $backgrounds.showFirstRun) {
             StarterPackSheet().environmentObject(backgrounds)
+        }
+        .alert("Rename input", isPresented: Binding(get: { engine.renamingSourceID != nil }, set: { if !$0 { engine.renamingSourceID = nil } })) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                let n = renameText.trimmingCharacters(in: .whitespaces)
+                if let id = engine.renamingSourceID, !n.isEmpty, let s = engine.sources.first(where: { $0.id == id }) { s.name = n }
+                engine.renamingSourceID = nil
+            }
+            Button("Cancel", role: .cancel) { engine.renamingSourceID = nil }
+        } message: {
+            Text("The name appears on the input tile, the switcher buttons, the mixer and in presets.")
+        }
+        .onChange(of: engine.renamingSourceID) { id in
+            renameText = id.flatMap { i in engine.sources.first { $0.id == i }?.name } ?? ""
+        }
+        .sheet(isPresented: $engine.showPreflight) {
+            PreflightView().environmentObject(engine).environmentObject(present).environmentObject(link).environmentObject(automation)
         }
         .sheet(isPresented: $engine.showZoom) {
             ZoomSetupView().environmentObject(engine)
@@ -230,6 +250,13 @@ struct TopBar: View {
             Rectangle().fill(DS.line).frame(width: 1, height: 20)
             PresetsMenu()
             LinkTopBarButton()
+            Button { engine.showPreflight = true } label: {
+                Label("CHECK", systemImage: "checklist").font(.system(size: 11, weight: .semibold)).foregroundColor(DS.text2)
+                    .padding(.horizontal, 8).frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(DS.bg0))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DS.line, lineWidth: 1))
+            }
+            .buttonStyle(.plain).help("Pre-service check: inputs, audio, disk, streaming, permissions (⇧⌘P)")
             Spacer()
             Button { engine.openOutputWindow() } label: {
                 Label(engine.programWindowActive ? (engine.programOutFullscreen ? "PROGRAM OUT · FULL" : "PROGRAM OUT · WINDOW") : "PROGRAM OUT",
@@ -260,6 +287,8 @@ struct TopBar: View {
             .buttonStyle(.ds(.program, .regular, active: engine.isRecording))
             .contextMenu {
                 Button(engine.isRecording ? "Stop recording" : "Start recording") { engine.toggleRecording() }
+                Button("Add chapter marker (M)") { engine.addMarker() }.disabled(!engine.isRecording)
+                Toggle("Add a marker at every cut", isOn: $engine.markEveryCut)
                 Button("Choose recording folder…") { engine.chooseOutputFolder() }
                 Button("Reveal last recording") { engine.revealLastRecording() }
                 Button("Snapshot") { engine.snapshot() }
@@ -311,6 +340,7 @@ struct TopBar: View {
                 }
                 Divider()
                 Button("Keyboard shortcuts…") { engine.showHotkeys = true }
+                Button("Pre-service check…") { engine.showPreflight = true }
                 checkButton("Hear microphones in the Mac's speakers", engine.hearLiveInputs) { engine.hearLiveInputs.toggle() }
                 Button("Choose recording folder…") { engine.chooseOutputFolder() }
                 Button("Reveal last recording") { engine.revealLastRecording() }
@@ -612,7 +642,19 @@ struct TransitionColumn: View {
             TBarControl(value: engine.tbar) { engine.setTBar($0) }
                 .frame(minHeight: 50, maxHeight: .infinity)
                 .help("Drag down to transition manually")
-            ParamSlider(label: "Duration", value: $engine.transitionDuration, range: 0.2...2.0, defaultValue: 0.6, format: "%.1fs")
+            VStack(spacing: 3) {
+                HStack(spacing: 4) {
+                    Text("DURATION").font(.system(size: 8.5, weight: .bold)).kerning(0.6).foregroundColor(DS.text3)
+                    Spacer(minLength: 0)
+                    CPValueField(value: $engine.transitionDuration, range: 0.1...5.0, format: "%.1fs")
+                        .contextMenu {
+                            ForEach([0.3, 0.5, 0.6, 1.0, 1.5, 2.0], id: \.self) { d in Button(String(format: "%.1f s", d)) { engine.transitionDuration = d } }
+                        }
+                }
+                CPFader(value: $engine.transitionDuration, range: 0.1...3.0)
+                    .onTapGesture(count: 2) { engine.transitionDuration = 0.6 }
+            }
+            .help("Transition duration — type a value, drag, double-click the slider for 0.6 s, or right-click for presets")
             Button("FTB") { engine.toggleFTB() }.buttonStyle(.ds(.danger, .regular, active: engine.ftbOn, fullWidth: true))
                 .help("Fade to black")
             VStack(spacing: 1) {
@@ -839,6 +881,8 @@ struct InputTile: View {
                     .background(RoundedRectangle(cornerRadius: 3).fill(isProgram || isPreview || isKeyed ? tally : DS.bg4))
                 Text(source.isPlaceholder ? "Empty" : source.name).font(.system(size: 10, weight: .medium))
                     .foregroundColor(source.isPlaceholder ? DS.text3 : DS.text).lineLimit(1)
+                    .onTapGesture(count: 2) { if !source.isPlaceholder { engine.renamingSourceID = source.id } }
+                    .help(source.isPlaceholder ? "" : "Double-click to rename")
                 Spacer()
                 if !source.isPlaceholder {
                     Text(source.kindLabel).font(.system(size: 8, weight: .bold)).kerning(0.6).foregroundColor(DS.text3)
@@ -891,6 +935,7 @@ struct InputTile: View {
                 Divider()
                 Button("Remove holder", role: .destructive) { engine.removeSource(source.id) }
             } else {
+                Button("Rename…") { engine.renamingSourceID = source.id }
                 Button("Take to Program") { engine.setPreview(source.id); engine.cut() }
                 Button("Set as Preview") { select() }
                 Divider()
@@ -1912,6 +1957,16 @@ struct StatusBar: View {
                     }
             }
             Rectangle().fill(DS.line).frame(width: 1, height: 16)
+            if engine.isRecording {
+                Button { engine.addMarker() } label: { Label("MARK \(max(0, engine.markers.count - 1))", systemImage: "bookmark.fill") }
+                    .buttonStyle(.ds(.program, .small))
+                    .help("Add a chapter marker (M). Markers are saved next to the recording as a chapters file for YouTube.")
+                    .contextMenu {
+                        ForEach(engine.markers.suffix(12)) { m in Text("\(engine.markerTime(m.seconds))  \(m.label)") }
+                        Divider()
+                        Toggle("Add a marker at every cut", isOn: $engine.markEveryCut)
+                    }
+            }
             Button("Snapshot") { engine.snapshot() }.buttonStyle(.ds(.normal, .small))
                 .contextMenu {
                     Button("Take snapshot") { engine.snapshot() }
@@ -2370,6 +2425,8 @@ struct OutputsPanel: View {
                            ? "With a second display Program Out opens full screen there. Esc or double-click returns to a window; F or ⌘⇧F switches."
                            : "Only one display: Program Out opens in a window so your controls stay visible. F, double-click or ⌘⇧F switches to full screen; Esc comes back.")
                 }
+
+                StageDisplayCard()
 
                 CPCard(title: "External Displays", subtitle: "Projectors, monitors and LED walls", icon: "display.2") {
                     HStack {

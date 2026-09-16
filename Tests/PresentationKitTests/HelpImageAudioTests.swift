@@ -127,3 +127,13 @@ final class HelpV48Tests: XCTestCase {
         XCTAssertEqual(HelpIndex.search("assign keys").first?.id, "shortcuts")
     }
 }
+
+final class HelpV49Tests: XCTestCase {
+    func testV49Topics() {
+        XCTAssertEqual(HelpIndex.search("confidence monitor").first?.id, "stage-display")
+        XCTAssertEqual(HelpIndex.search("youtube chapters").first?.id, "markers")
+        XCTAssertEqual(HelpIndex.search("which verse says").first?.id, "bible-search")
+        XCTAssertEqual(HelpIndex.search("before service").first?.id, "preflight")
+        XCTAssertEqual(HelpIndex.search("crash").first?.id, "recovery")
+    }
+}
