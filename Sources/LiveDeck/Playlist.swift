@@ -150,7 +150,7 @@ final class PlaylistSource: Source {
             if itemDuration > 0 {
                 let w = rect.width * 0.6, x = rect.midX - w / 2, y = rect.midY - 160 * scale
                 ctx.setFillColor(NSColor(white: 0.25, alpha: 1).cgColor); ctx.fill(CGRect(x: x, y: y, width: w, height: 8 * scale))
-                ctx.setFillColor(NSColor.systemBlue.cgColor); ctx.fill(CGRect(x: x, y: y, width: w * CGFloat(min(1, itemElapsed / itemDuration)), height: 8 * scale))
+                ctx.setFillColor(NSColor(white: 0.85, alpha: 1).cgColor); ctx.fill(CGRect(x: x, y: y, width: w * CGFloat(min(1, itemElapsed / itemDuration)), height: 8 * scale))
             }
             return
         }
@@ -217,7 +217,7 @@ struct PlaylistEditorCard: View {
             }
             .padding(6)
             .background(RoundedRectangle(cornerRadius: 7).fill(dropTargeted ? CP.blueSoft : CP.field))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(dropTargeted ? CP.blue : CP.border, style: StrokeStyle(lineWidth: 1, dash: dropTargeted ? [6, 4] : [])))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(dropTargeted ? CP.accentLine : CP.border, style: StrokeStyle(lineWidth: 1, dash: dropTargeted ? [6, 4] : [])))
             .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
                 for p in providers where p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                     p.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in

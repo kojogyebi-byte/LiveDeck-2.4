@@ -234,7 +234,7 @@ struct AISearchColumn: View {
                         .textFieldStyle(.plain).font(.system(size: 12)).foregroundColor(CP.text)
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 7).fill(CP.field))
-                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(focused ? CP.blue : CP.border, lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(focused ? CP.accentLine : CP.border, lineWidth: 1))
                         .focused($focused)
                         .onSubmit { ai.ask() }
                         .padding(.vertical, 6)

@@ -7,29 +7,31 @@ import AppKit
 // red = on air / program, green = preview / ready, blue = selection, amber = warning / armed.
 
 enum DS {
-    static let bg0 = Color(rgb: 0x0B0C0F)      // window background
-    static let bg1 = Color(rgb: 0x121418)      // panels
-    static let bg2 = Color(rgb: 0x181B20)      // panel headers, bars
-    static let bg3 = Color(rgb: 0x20242B)      // controls
-    static let bg4 = Color(rgb: 0x2A2F37)      // hover / pressed
-    static let line = Color(rgb: 0x2B3039)
-    static let lineSoft = Color(rgb: 0x1E2228)
-    static let text = Color(rgb: 0xE6E8EB)
-    static let text2 = Color(rgb: 0x9BA2AD)
-    static let text3 = Color(rgb: 0x5F6670)
+    static let bg0 = Color(rgb: 0x0E0E0F)      // window background
+    static let bg1 = Color(rgb: 0x151516)      // panels
+    static let bg2 = Color(rgb: 0x1B1B1D)      // panel headers, bars
+    static let bg3 = Color(rgb: 0x242426)      // controls
+    static let bg4 = Color(rgb: 0x2F2F32)      // hover / pressed
+    static let line = Color(rgb: 0x323235)
+    static let lineSoft = Color(rgb: 0x232325)
+    static let text = Color(rgb: 0xEBEBEC)
+    static let text2 = Color(rgb: 0xA0A0A5)
+    static let text3 = Color(rgb: 0x6A6A6F)
 
     static let program = Color(rgb: 0xE5484D)  // on air
     static let preview = Color(rgb: 0x2FB36E)  // preview / ready / OK
-    static let accent = Color(rgb: 0x3D8BFD)   // selection
+    /// Selection is neutral steel: red, green and amber stay reserved for tally and warnings (broadcast convention).
+    static let accent = Color(rgb: 0x4E535B)       // selected fills (white text on top)
+    static let accentText = Color(rgb: 0xD5D8DD)   // selected text, icons, outlines
     static let amber = Color(rgb: 0xF2A33A)    // armed / warning
     static let ok = preview
 
     static func mono(_ size: CGFloat, _ weight: Font.Weight = .medium) -> Font {
         .system(size: size, weight: weight, design: .monospaced)
     }
-    static let caption = Font.system(size: 9, weight: .bold)
-    static let label = Font.system(size: 11, weight: .medium)
-    static let small = Font.system(size: 10, weight: .medium)
+    static let caption = Font.system(size: 9.5, weight: .semibold).width(.condensed)
+    static let label = Font.system(size: 11.5, weight: .medium)
+    static let small = Font.system(size: 10.5, weight: .medium)
 }
 
 extension Color {
@@ -90,7 +92,7 @@ private struct DSButtonBody: View {
     }
     private var height: CGFloat { size == .small ? 22 : (size == .regular ? 26 : 34) }
     private var font: Font {
-        .system(size: size == .small ? 10 : (size == .regular ? 11 : 13), weight: .semibold)
+        .system(size: size == .small ? 10.5 : (size == .regular ? 11.5 : 13), weight: .medium)
     }
 
     var body: some View {
@@ -145,11 +147,9 @@ struct SectionLabel: View {
     let title: String
     init(_ title: String) { self.title = title }
     var body: some View {
-        HStack(spacing: 6) {
-            Text(title.uppercased()).font(.system(size: 9, weight: .bold)).kerning(1.1).foregroundColor(CP.text2)
-            Rectangle().fill(CP.divider).frame(height: 1)
-        }
-        .padding(.top, 6).padding(.bottom, 1)
+        Text(title.uppercased()).font(CPFont.section).kerning(0.9).foregroundColor(CP.text2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 12).padding(.bottom, 4)
     }
 }
 
@@ -159,8 +159,8 @@ struct PanelHeader<Trailing: View>: View {
     @ViewBuilder var trailing: () -> Trailing
     var body: some View {
         HStack(spacing: 8) {
-            if let icon { Image(systemName: icon).font(.system(size: 12, weight: .semibold)).foregroundColor(CP.icon) }
-            Text(title).font(.system(size: 12, weight: .semibold)).foregroundColor(CP.text)
+            if let icon { Image(systemName: icon).font(.system(size: 12, weight: .medium)).foregroundColor(CP.icon) }
+            Text(title).font(CPFont.title).foregroundColor(CP.text)
             Spacer(minLength: 4)
             trailing()
         }
@@ -182,7 +182,7 @@ struct FieldRow<Content: View>: View {
     @ViewBuilder var content: () -> Content
     var body: some View {
         HStack(spacing: 8) {
-            Text(label).font(.system(size: 11.5)).foregroundColor(CP.text).lineLimit(1).minimumScaleFactor(0.8)
+            Text(label).font(CPFont.label).foregroundColor(CP.text).lineLimit(1).minimumScaleFactor(0.8)
                 .frame(width: labelWidth, alignment: .leading)
             content().controlSize(.small)
         }
@@ -208,15 +208,15 @@ struct DSTabBar: View {
                 let on = selection == item.id
                 Button { selection = item.id } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: item.icon).font(.system(size: 10, weight: .semibold))
-                        if !compact || on { Text(item.title).font(.system(size: 11, weight: .semibold)).lineLimit(1) }
+                        Image(systemName: item.icon).font(.system(size: 10.5, weight: .medium))
+                        if !compact || on { Text(item.title).font(.system(size: 11.5, weight: on ? .semibold : .medium)).lineLimit(1) }
                     }
                     .foregroundColor(on ? DS.text : DS.text2)
                     .padding(.horizontal, 9)
                     .frame(maxWidth: compact ? nil : .infinity, minHeight: 26)
                     .background(RoundedRectangle(cornerRadius: 5).fill(on ? DS.bg4 : Color.clear))
                     .overlay(alignment: .bottom) {
-                        if on { Rectangle().fill(DS.accent).frame(height: 2).padding(.horizontal, 6) }
+                        if on { Rectangle().fill(DS.accentText).frame(height: 2).padding(.horizontal, 6) }
                     }
                     .contentShape(Rectangle())
                 }
@@ -239,18 +239,19 @@ struct DSSegmented<T: Hashable>: View {
             ForEach(Array(options.enumerated()), id: \.offset) { _, opt in
                 let on = selection == opt.0
                 Button { selection = opt.0 } label: {
-                    Text(opt.1).font(.system(size: 10.5, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                        .foregroundColor(on ? .white : CP.text2)
+                    Text(opt.1).font(.system(size: 11, weight: on ? .semibold : .regular)).lineLimit(1).minimumScaleFactor(0.8)
+                        .foregroundColor(on ? CP.text : CP.text2)
                         .frame(maxWidth: .infinity, minHeight: 22)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(on ? CP.blue : Color.clear))
+                        .background(RoundedRectangle(cornerRadius: 4).fill(on ? CP.selected : Color.clear))
+                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(on ? Color.white.opacity(0.08) : Color.clear, lineWidth: 1))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(2)
-        .background(RoundedRectangle(cornerRadius: 7).fill(CP.field))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(CP.border, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 6).fill(CP.field))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(CP.border, lineWidth: 1))
     }
 }
 
@@ -332,11 +333,11 @@ extension View {
     func dsPanel() -> some View { modifier(DSPanel()) }
     func dsField() -> some View {
         self.textFieldStyle(.plain)
-            .font(.system(size: 11.5))
+            .font(CPFont.body)
             .foregroundColor(CP.text)
-            .padding(.horizontal, 7).frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 6).fill(CP.field))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(CP.border, lineWidth: 1))
+            .padding(.horizontal, 8).frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 5).fill(CP.field))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(CP.border, lineWidth: 1))
     }
 }
 
@@ -383,54 +384,73 @@ struct WindowChrome: NSViewRepresentable {
 
 // MARK: - Control panel (right-hand inspector) — card design
 //
-// Navy-tinted cards with icon headers, collapsible sections, blue faders with numeric value
-// boxes and per-control reset buttons.
+// Neutral graphite cards (no tint), quiet headers, condensed small-caps section labels, SF Pro Text
+// for labels and SF Mono for numbers — the look of broadcast control software. Colour is kept for
+// meaning only: red on air, green preview/OK, amber warning.
 
 enum CP {
-    static let bg = Color(rgb: 0x0B111C)          // panel background
-    static let card = Color(rgb: 0x111A28)        // card body
-    static let cardHeader = Color(rgb: 0x152034)   // card header strip
-    static let border = Color(rgb: 0x1F2B40)
-    static let divider = Color(rgb: 0x1A2436)
-    static let field = Color(rgb: 0x0A101A)
-    static let blue = Color(rgb: 0x2F7BFF)
-    static let blueSoft = Color(rgb: 0x2F7BFF, opacity: 0.16)
-    static let icon = Color(rgb: 0x4A90FF)
-    static let text = Color(rgb: 0xE8EDF5)
-    static let text2 = Color(rgb: 0x93A0B5)
-    static let track = Color(rgb: 0x243047)
+    static let bg = Color(rgb: 0x131314)          // panel background
+    static let card = Color(rgb: 0x1B1B1D)        // card body
+    static let cardHeader = Color(rgb: 0x202023)  // hover / raised strip
+    static let border = Color(rgb: 0x2A2A2D)
+    static let divider = Color(rgb: 0x252527)
+    static let field = Color(rgb: 0x0F0F10)
+    /// Selected fill (white text readable on it). Named `blue` for compatibility — it is steel grey.
+    static let blue = Color(rgb: 0x4E535B)
+    static let blueSoft = Color.white.opacity(0.06)
+    static let selected = Color(rgb: 0x38383C)    // selected segment / tab
+    static let accentLine = Color(rgb: 0xC9CCD2)  // focus rings, selection outlines, active underline
+    static let toggle = Color(rgb: 0x9DA2AA)      // switch "on", faders, progress
+    static let primaryFill = Color(rgb: 0xE4E5E8) // primary buttons (dark text)
+    static let primaryText = Color(rgb: 0x111113)
+    static let icon = Color(rgb: 0xA3A5AA)
+    static let text = Color(rgb: 0xECECEE)
+    static let text2 = Color(rgb: 0x9A9AA0)
+    static let track = Color(rgb: 0x333336)
 }
 
-/// Large icon-over-label tab bar (selected tab filled blue).
+/// Type scale for the panels and dialogs (SF Pro Text / SF Mono, as in broadcast control apps).
+enum CPFont {
+    static let body = Font.system(size: 12)
+    static let label = Font.system(size: 12)
+    static let emphasis = Font.system(size: 12, weight: .medium)
+    static let title = Font.system(size: 12.5, weight: .semibold)
+    static let subtitle = Font.system(size: 10.5)
+    static let caption = Font.system(size: 10.5)
+    static let section = Font.system(size: 10, weight: .semibold).width(.condensed)
+    static let tab = Font.system(size: 10.5, weight: .medium).width(.condensed)
+    static let value = Font.system(size: 11, weight: .medium, design: .monospaced)
+    static let button = Font.system(size: 11.5, weight: .medium)
+}
+
+/// Icon-over-label tab bar: flat, neutral, with a light underline on the selected tab.
 struct CPTabBar: View {
     @Binding var selection: Int
     let items: [DSTabItem]
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(items) { item in
                 let on = selection == item.id
                 Button { selection = item.id } label: {
                     VStack(spacing: 3) {
-                        Image(systemName: item.icon).font(.system(size: 13, weight: .medium))
-                        Text(item.title).font(.system(size: 9.5, weight: on ? .semibold : .medium)).lineLimit(1).minimumScaleFactor(0.75)
+                        Image(systemName: item.icon).font(.system(size: 13, weight: on ? .semibold : .regular))
+                        Text(item.title).font(CPFont.tab).lineLimit(1).minimumScaleFactor(0.75)
                     }
-                    .foregroundColor(on ? .white : CP.text2)
+                    .foregroundColor(on ? CP.text : CP.text2)
                     .frame(maxWidth: .infinity, minHeight: 40)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9)
-                            .fill(on ? LinearGradient(colors: [Color(rgb: 0x3A86FF), Color(rgb: 0x1F5FE0)], startPoint: .top, endPoint: .bottom)
-                                     : LinearGradient(colors: [Color.clear, Color.clear], startPoint: .top, endPoint: .bottom))
-                            .shadow(color: on ? CP.blue.opacity(0.45) : .clear, radius: 6, y: 2)
-                    )
+                    .background(RoundedRectangle(cornerRadius: 5).fill(on ? CP.selected : Color.clear))
+                    .overlay(alignment: .bottom) {
+                        if on { Rectangle().fill(CP.accentLine).frame(height: 2).padding(.horizontal, 10) }
+                    }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(item.title)
             }
         }
-        .padding(5)
-        .background(RoundedRectangle(cornerRadius: 12).fill(CP.card))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(CP.border, lineWidth: 1))
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 7).fill(CP.card))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(CP.border, lineWidth: 1))
     }
 }
 
@@ -442,7 +462,7 @@ struct CPResetButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "arrow.counterclockwise")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 9.5, weight: .medium))
                 .foregroundColor(hover ? CP.text : CP.text2)
                 .frame(width: 20, height: 20)
                 .background(Circle().fill(hover ? CP.cardHeader : Color.clear))
@@ -453,7 +473,7 @@ struct CPResetButton: View {
     }
 }
 
-/// Collapsible section card: icon · title + subtitle · reset · chevron.
+/// Collapsible section card: icon · title + subtitle · reset · chevron. Open/closed is remembered per card.
 struct CPCard<Content: View>: View {
     let title: String
     var subtitle: String = ""
@@ -462,40 +482,49 @@ struct CPCard<Content: View>: View {
     var onReset: (() -> Void)? = nil
     @ViewBuilder var content: () -> Content
     @State private var expanded = true
+    @State private var hover = false
+
+    private var storageKey: String { "cp.card." + title }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: 9) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(iconColor)
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(title).font(.system(size: 12, weight: .semibold)).foregroundColor(CP.text).lineLimit(1)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(CPFont.title).foregroundColor(CP.text).lineLimit(1)
                     if !subtitle.isEmpty {
-                        Text(subtitle).font(.system(size: 9.5)).foregroundColor(CP.text2).lineLimit(1)
+                        Text(subtitle).font(CPFont.subtitle).foregroundColor(CP.text2).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 4)
                 if let onReset { CPResetButton(help: "Reset \(title.lowercased())", action: onReset) }
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 9, weight: .bold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(CP.text2)
-                    .rotationEffect(.degrees(expanded ? 0 : 180))
+                    .rotationEffect(.degrees(expanded ? 0 : -90))
             }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(CP.cardHeader)
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(hover ? CP.cardHeader : Color.clear)
             .contentShape(Rectangle())
-            .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } }
+            .onHover { hover = $0 }
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.16)) { expanded.toggle() }
+                UserDefaults.standard.set(expanded, forKey: storageKey)
+            }
 
             if expanded {
+                Rectangle().fill(CP.divider).frame(height: 1)
                 VStack(alignment: .leading, spacing: 0) { content() }
-                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 8)
             }
         }
         .background(CP.card)
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(CP.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(CP.border, lineWidth: 1))
+        .onAppear { if let v = UserDefaults.standard.object(forKey: storageKey) as? Bool { expanded = v } }
     }
 }
 
@@ -515,12 +544,12 @@ struct CPFader: View {
             let w = max(1, g.size.width)
             let f = CGFloat((min(max(value, range.lowerBound), range.upperBound) - range.lowerBound) / span)
             ZStack(alignment: .leading) {
-                Capsule().fill(CP.track).frame(height: 4)
-                Capsule().fill(LinearGradient(colors: [Color(rgb: 0x1F5FE0), CP.blue], startPoint: .leading, endPoint: .trailing))
-                    .frame(width: max(0, f * w), height: 4)
-                Circle().fill(Color.white)
-                    .frame(width: dragging ? 14 : 12, height: dragging ? 14 : 12)
-                    .overlay(Circle().strokeBorder(CP.blue.opacity(0.9), lineWidth: 2))
+                Capsule().fill(CP.track).frame(height: 3)
+                Capsule().fill(CP.toggle)
+                    .frame(width: max(0, f * w), height: 3)
+                Circle().fill(Color(rgb: 0xF2F2F4))
+                    .frame(width: dragging ? 13 : 11, height: dragging ? 13 : 11)
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.55), lineWidth: 1))
                     .shadow(color: .black.opacity(0.45), radius: 1.5, y: 1)
                     .offset(x: f * w - (dragging ? 7 : 6))
             }
@@ -548,12 +577,12 @@ struct CPValueField: View {
         TextField("", text: $text)
             .textFieldStyle(.plain)
             .multilineTextAlignment(.center)
-            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .font(CPFont.value)
             .foregroundColor(CP.text)
             .focused($focused)
             .frame(width: 54, height: 22)
-            .background(RoundedRectangle(cornerRadius: 5).fill(CP.field))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(focused ? CP.blue : CP.border, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 4).fill(CP.field))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(focused ? CP.accentLine : CP.border, lineWidth: 1))
             .onAppear { text = String(format: format, value) }
             .onChange(of: value) { v in if !focused { text = String(format: format, v) } }
             .onChange(of: focused) { f in if !f { commit() } }
@@ -581,8 +610,8 @@ struct CPSliderRow: View {
                 if let icon {
                     Image(systemName: icon).font(.system(size: 11, weight: .medium)).foregroundColor(CP.text2).frame(width: 16)
                 }
-                Text(label).font(.system(size: 11.5)).foregroundColor(CP.text).lineLimit(2).minimumScaleFactor(0.8)
-                    .frame(width: icon == nil ? 96 : 76, alignment: .leading)
+                Text(label).font(CPFont.label).foregroundColor(CP.text).lineLimit(2).minimumScaleFactor(0.8)
+                    .frame(width: icon == nil ? 100 : 80, alignment: .leading)
                     .help(label)
                 CPFader(value: $value, range: range)
                 CPValueField(value: $value, range: range, format: format)
@@ -592,7 +621,7 @@ struct CPSliderRow: View {
                     Color.clear.frame(width: 20, height: 20)
                 }
             }
-            .padding(.vertical, 4)
+            .frame(minHeight: 30)
             if showDivider { CPDivider() }
         }
     }
@@ -610,11 +639,11 @@ struct CPRow<Trailing: View>: View {
                 if let icon {
                     Image(systemName: icon).font(.system(size: 11, weight: .medium)).foregroundColor(CP.text2).frame(width: 16)
                 }
-                Text(label).font(.system(size: 11.5)).foregroundColor(CP.text).lineLimit(1).minimumScaleFactor(0.8)
-                Spacer(minLength: 6)
+                Text(label).font(CPFont.label).foregroundColor(CP.text).lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 8)
                 trailing().controlSize(.small)
             }
-            .padding(.vertical, 5)
+            .frame(minHeight: 32)
             if showDivider { CPDivider() }
         }
     }
@@ -637,7 +666,7 @@ struct CPPillButton: View {
             .foregroundColor(CP.text)
             .padding(.horizontal, 12).frame(height: 28)
             .background(Capsule().fill(hover ? CP.cardHeader : CP.field))
-            .overlay(Capsule().strokeBorder(expanded ? CP.blue : CP.border, lineWidth: 1))
+            .overlay(Capsule().strokeBorder(expanded ? CP.accentLine : CP.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
@@ -654,13 +683,13 @@ struct CPButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                if let icon { Image(systemName: icon).font(.system(size: 11, weight: .semibold)) }
-                Text(title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                if let icon { Image(systemName: icon).font(.system(size: 11, weight: .medium)) }
+                if !title.isEmpty { Text(title).font(CPFont.button).lineLimit(1) }
             }
-            .foregroundColor(prominent ? .white : CP.text)
-            .padding(.horizontal, 10).frame(height: 26)
-            .background(RoundedRectangle(cornerRadius: 7).fill(prominent ? CP.blue : (hover ? CP.cardHeader : CP.field)))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(prominent ? Color.clear : CP.border, lineWidth: 1))
+            .foregroundColor(prominent ? CP.primaryText : CP.text)
+            .padding(.horizontal, title.isEmpty ? 8 : 11).frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 5).fill(prominent ? (hover ? Color.white : CP.primaryFill) : (hover ? CP.cardHeader : Color(rgb: 0x26262A))))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(prominent ? Color.clear : CP.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
@@ -673,8 +702,8 @@ extension View {
         self.labelsHidden()
             .controlSize(.small)
             .padding(.horizontal, 6).frame(height: 26)
-            .background(RoundedRectangle(cornerRadius: 7).fill(CP.field))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(CP.border, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 5).fill(CP.field))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(CP.border, lineWidth: 1))
     }
 }
 
@@ -689,7 +718,7 @@ struct CPToggleRow: View {
     var showDivider = false
     var body: some View {
         CPRow(icon: icon, label: label, showDivider: showDivider) {
-            Toggle("", isOn: $isOn).toggleStyle(.switch).tint(CP.blue).labelsHidden().controlSize(.mini)
+            Toggle("", isOn: $isOn).toggleStyle(.switch).tint(CP.toggle).labelsHidden().controlSize(.mini)
         }
     }
 }
@@ -721,10 +750,10 @@ struct CPTextRow: View {
             Group {
                 if secure { SecureField(prompt, text: $text) } else { TextField(prompt, text: $text) }
             }
-            .textFieldStyle(.plain).font(.system(size: 11.5)).foregroundColor(CP.text)
-            .padding(.horizontal, 7).frame(height: 24).frame(maxWidth: 190)
-            .background(RoundedRectangle(cornerRadius: 6).fill(CP.field))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(CP.border, lineWidth: 1))
+            .textFieldStyle(.plain).font(CPFont.body).foregroundColor(CP.text)
+            .padding(.horizontal, 8).frame(height: 26).frame(maxWidth: 200)
+            .background(RoundedRectangle(cornerRadius: 5).fill(CP.field))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(CP.border, lineWidth: 1))
         }
     }
 }
@@ -734,10 +763,10 @@ struct CPNote: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
-        Text(text).font(.system(size: 10)).foregroundColor(CP.text2)
+        Text(text).font(CPFont.caption).foregroundColor(CP.text2).lineSpacing(1.5)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
+            .padding(.vertical, 5)
     }
 }
 
@@ -746,10 +775,11 @@ struct CPInspector<Content: View>: View {
     @ViewBuilder var content: () -> Content
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) { content() }
-                .padding(8)
+            VStack(alignment: .leading, spacing: 10) { content() }
+                .padding(10)
         }
         .background(CP.bg)
+        .font(CPFont.body)
     }
 }
 

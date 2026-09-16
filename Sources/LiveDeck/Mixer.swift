@@ -123,7 +123,7 @@ struct ConsoleValueField: View {
             .focused($focused)
             .frame(width: width, height: 24)
             .background(RoundedRectangle(cornerRadius: 5).fill(MX.field))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(focused ? Color(rgb: 0x3D8BFD) : Color.black, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(focused ? CP.accentLine : Color.black, lineWidth: 1))
             .onAppear { text = display(value) }
             .onChange(of: value) { v in if !focused { text = display(v) } }
             .onChange(of: focused) { f in if !f { commit() } }

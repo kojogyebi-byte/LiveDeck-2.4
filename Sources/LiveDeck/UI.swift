@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 private let cBG = DS.bg0
 private let cPanel = DS.bg1
 private let cBar = DS.bg2
-private let cPreview = DS.accent      // selection / active accent
+private let cPreview = DS.accentText  // selection outline
 private let cProgram = DS.ok          // "on / OK" green (tally colours are DS.program / DS.preview)
 private let cBtn = DS.bg3
 
@@ -57,7 +57,7 @@ struct MainView: View {
         }
         .background(DS.bg0).preferredColorScheme(.dark)
         .background(WindowChrome())
-        .overlay { if dropTargeted { Rectangle().stroke(DS.accent, lineWidth: 3).allowsHitTesting(false) } }
+        .overlay { if dropTargeted { Rectangle().stroke(DS.accentText, lineWidth: 3).allowsHitTesting(false) } }
         .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
         .overlay(alignment: .topTrailing) { LinkToast() }
         .overlay(alignment: .top) { RecoveryBanner() }
@@ -822,41 +822,10 @@ let videoFileTypes = ["public.movie", "public.video", "public.audiovisual-conten
                       "public.mpeg", "public.mpeg-2-transport-stream",
                       "org.matroska.mkv", "com.microsoft.windows-media-wmv"]
 
-/// Items that fill a specific (blank) holder.
+/// Items that fill a specific (blank) holder — the same list as the Add Input menu.
 struct InputAssignMenuItems: View {
-    @EnvironmentObject var engine: Engine
-    @EnvironmentObject var present: PresentModel
-    @EnvironmentObject var dict: DictionaryModel
     var slotID: UUID
-    var body: some View {
-        Menu("Cameras & Capture Devices") {
-            let devices = VideoDevices.all()
-            ForEach(devices, id: \.uniqueID) { d in
-                Button(d.localizedName) { engine.replaceSource(slotID, with: CameraSource(device: d)) }
-            }
-            if devices.isEmpty { Text("No devices found") }
-        }
-        Button("Screen Capture") { engine.replaceSource(slotID, with: ScreenSource()) }
-        Button("Video File…") { pickFile(types: videoFileTypes) { engine.replaceSource(slotID, with: FileSource(url: $0)) } }
-        Button("Image…") { pickFile(types: ["public.image"]) { engine.replaceSource(slotID, with: ImageSource(url: $0)) } }
-        Divider()
-        Button("Songs & Bible (Presentation)") {
-            let s = PresentationSource(); engine.replaceSource(slotID, with: s)
-            present.targetID = s.id; present.deck = DeckTab.present.rawValue
-        }
-        Button("Dictionary") {
-            let s = DictionarySource(); engine.replaceSource(slotID, with: s)
-            dict.targetID = s.id; present.deck = DeckTab.dictionary.rawValue
-        }
-        Divider()
-        Button("Network Stream (HLS / URL)…") { engine.openAddStream(1) }
-        Button("RTMP / RTSP / SRT (ffmpeg)…") { engine.openAddStream(2) }
-        Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
-        Button("Web Page…") { engine.openAddStream(4) }
-        Divider()
-        Button("Colour") { engine.replaceSource(slotID, with: ColorSource()) }
-        Button("Test Pattern (Bars)") { engine.replaceSource(slotID, with: BarsSource()) }
-    }
+    var body: some View { AddInputMenuItems(slotID: slotID) }
 }
 
 struct InputAssignMenu<Label: View>: View {
@@ -877,7 +846,7 @@ struct TileTransport<S: MediaPlayback>: View {
                 Image(systemName: source.paused ? "play.fill" : "pause.fill").font(.system(size: 15))
             }.buttonStyle(.plain).foregroundColor(DS.text)
             Button { source.loop.toggle() } label: {
-                Image(systemName: "repeat").font(.system(size: 12)).foregroundColor(source.loop ? DS.accent : DS.text3)
+                Image(systemName: "repeat").font(.system(size: 12)).foregroundColor(source.loop ? DS.accentText : DS.text3)
             }.buttonStyle(.plain)
         }
     }
@@ -1061,42 +1030,61 @@ struct SourceThumb: NSViewRepresentable {
     func updateNSView(_ v: SourceThumbNSView, context: Context) { v.source = source }
 }
 
-/// Items shared by the "Add Input" button menu and the right-click menu of the input area.
+/// The one Add Input list, used by the Add Input button, the input area and every empty holder.
+/// With `slotID` the new input fills that holder; otherwise the first empty holder (or a new one).
 struct AddInputMenuItems: View {
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
+    var slotID: UUID? = nil
+
+    private func place(_ s: Source) {
+        if let slot = slotID, engine.sources.first(where: { $0.id == slot })?.isPlaceholder == true {
+            engine.replaceSource(slot, with: s)
+        } else {
+            engine.placeInput(s)
+        }
+    }
+    /// For inputs added later from a dialog: remember which holder was chosen.
+    private func later(_ open: () -> Void) {
+        engine.pendingSlotID = slotID
+        open()
+    }
+
     var body: some View {
         Menu("Cameras & Capture Devices") {
             let devices = VideoDevices.all()
-            ForEach(devices, id: \.uniqueID) { d in Button(d.localizedName) { engine.addCamera(d) } }
+            ForEach(devices, id: \.uniqueID) { d in Button(d.localizedName) { place(CameraSource(device: d)) } }
             if devices.isEmpty { Text("No devices found") }
         }
-        Button("Screen Capture") { engine.addScreen() }
-        Button("Zoom Meeting / App Window…") { engine.showZoom = true }
-        Button("NDI® Source…") { engine.showNDIPicker = true }
+        Button("Screen Capture") { place(ScreenSource()) }
+        Button("Zoom Meeting / App Window…") { later { engine.showZoom = true } }
+        Button("NDI® Source…") { later { engine.showNDIPicker = true } }
+        Divider()
+        Button("Video File…") { pickFile(types: videoFileTypes) { place(FileSource(url: $0)) } }
+        Button("Image…") { pickFile(types: ["public.image"]) { place(ImageSource(url: $0)) } }
         Button("Playlist (videos, audio, images)") {
-            let p = PlaylistSource(); engine.placeInput(p); engine.selectedSourceID = p.id; engine.rightTab = 1
+            let p = PlaylistSource(); place(p); engine.selectedSourceID = p.id; engine.rightTab = 1
         }
-        Button("Video File…") { pickFile(types: videoFileTypes) { engine.addFile(url: $0) } }
-        Button("Image…") { pickFile(types: ["public.image"]) { engine.addImage(url: $0) } }
         Divider()
         Button("Songs & Bible (Presentation)") {
-            let s = engine.addPresentationInput(); present.targetID = s.id; present.deck = DeckTab.present.rawValue
+            let s = PresentationSource(); place(s); present.targetID = s.id; present.deck = DeckTab.present.rawValue
         }
         Button("Dictionary") {
-            let s = engine.addDictionaryInput(); dict.targetID = s.id; present.deck = DeckTab.dictionary.rawValue
+            let s = DictionarySource(); place(s); dict.targetID = s.id; present.deck = DeckTab.dictionary.rawValue
         }
         Divider()
-        Button("Network Stream (HLS / URL)…") { engine.openAddStream(1) }
-        Button("RTMP / RTSP / SRT (ffmpeg)…") { engine.openAddStream(2) }
-        Button("YouTube / Twitch / Facebook link…") { engine.openAddStream(3) }
-        Button("Web Page…") { engine.openAddStream(4) }
+        Button("Network Stream (HLS / URL)…") { later { engine.openAddStream(1) } }
+        Button("RTMP / RTSP / SRT (ffmpeg)…") { later { engine.openAddStream(2) } }
+        Button("YouTube / Twitch / Facebook link…") { later { engine.openAddStream(3) } }
+        Button("Web Page…") { later { engine.openAddStream(4) } }
         Divider()
-        Button("Colour") { engine.addColor() }
-        Button("Test Pattern (Bars)") { engine.addBars() }
-        Divider()
-        Button("Blank Input") { engine.addBlankInput() }
+        Button("Colour") { place(ColorSource()) }
+        Button("Test Pattern (Bars)") { place(BarsSource()) }
+        if slotID == nil {
+            Divider()
+            Button("Blank Input") { engine.addBlankInput() }
+        }
     }
 }
 
@@ -1158,7 +1146,7 @@ struct ScenesPanel: View {
                     ForEach(ProgramLayout.allCases) { l in
                         Button { engine.setLayout(l) } label: {
                             LayoutThumb(layout: l)
-                                .overlay(RoundedRectangle(cornerRadius: 3).stroke(engine.programLayout == l ? CP.blue : .clear, lineWidth: 2))
+                                .overlay(RoundedRectangle(cornerRadius: 3).stroke(engine.programLayout == l ? CP.accentLine : .clear, lineWidth: 2))
                         }
                         .buttonStyle(.plain).help(l.label)
                         .contextMenu {
@@ -1237,7 +1225,7 @@ struct RightPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
-                Text("PANEL").font(.system(size: 8, weight: .bold)).kerning(1).foregroundColor(CP.text2)
+                Text("CONTROL PANEL").font(CPFont.section).kerning(0.9).foregroundColor(CP.text2)
                 Spacer()
                 sizeButton("sidebar.right", 1, "Narrow panel")
                 sizeButton("rectangle.split.2x1", 2, "Half the window")
@@ -1278,9 +1266,9 @@ struct RightPanel: View {
     private func sizeButton(_ icon: String, _ mode: Int, _ help: String) -> some View {
         Button { withAnimation(.easeInOut(duration: 0.2)) { engine.rightPanelSize = mode } } label: {
             Image(systemName: icon).font(.system(size: 11, weight: .medium))
-                .foregroundColor(engine.rightPanelSize == mode ? .white : CP.text2)
+                .foregroundColor(engine.rightPanelSize == mode ? CP.text : CP.text2)
                 .frame(width: 26, height: 20)
-                .background(RoundedRectangle(cornerRadius: 5).fill(engine.rightPanelSize == mode ? CP.blue : CP.field))
+                .background(RoundedRectangle(cornerRadius: 4).fill(engine.rightPanelSize == mode ? CP.selected : Color.clear))
         }
         .buttonStyle(.plain).help(help)
     }
@@ -1387,7 +1375,7 @@ struct InputAdjust: View {
                 CPCard(title: "Display", subtitle: "Songs, scripture or dictionary", icon: "text.below.photo") {
                     CPRow(icon: "square.2.layers.3d.top.filled", label: "Key over Program") {
                         Toggle("", isOn: Binding(get: { engine.isKeyed(slide.id) }, set: { _ in engine.toggleKey(slide.id) }))
-                            .toggleStyle(.switch).tint(CP.blue).labelsHidden()
+                            .toggleStyle(.switch).tint(CP.toggle).labelsHidden()
                     }
                     CPRow(icon: "textformat", label: "Hide text") {
                         SlideVisibilityToggles(source: slide)
@@ -1441,7 +1429,7 @@ struct SlideVisibilityToggles: View {
             Toggle("", isOn: $source.textCleared).toggleStyle(.switch).tint(DS.amber).labelsHidden().help("Hide text")
             Text("BG").font(.system(size: 10, weight: .semibold)).foregroundColor(CP.text2)
             Toggle("", isOn: Binding(get: { !source.backgroundCleared }, set: { source.backgroundCleared = !$0 }))
-                .toggleStyle(.switch).tint(CP.blue).labelsHidden().help("Show background")
+                .toggleStyle(.switch).tint(CP.toggle).labelsHidden().help("Show background")
         }
     }
 }
@@ -1988,6 +1976,89 @@ struct DiskReadout: View {
     }
 }
 
+/// Status-bar "Outputs": opens a quick panel to turn every output on or off.
+struct OutputsQuickButton: View {
+    @EnvironmentObject var engine: Engine
+    @EnvironmentObject var ndi: NDIOutputs
+    @EnvironmentObject var stage: StageModel
+    @EnvironmentObject var present: PresentModel
+    @State private var open = false
+    var body: some View {
+        let count = (engine.programWindowActive ? 1 : 0) + engine.activeScreens.count + (ndi.programEnabled ? 1 : 0) + (ndi.previewEnabled ? 1 : 0) + (stage.windowOpen ? 1 : 0)
+        Button(count > 0 ? "Outputs · \(count)" : "Outputs") { open.toggle() }
+            .buttonStyle(.ds(.normal, .small, active: count > 0))
+            .help("Turn Program Out, displays, NDI and the stage display on or off")
+            .popover(isPresented: $open, arrowEdge: .top) {
+                OutputsQuickPanel(close: { open = false })
+                    .environmentObject(engine).environmentObject(ndi).environmentObject(stage).environmentObject(present)
+            }
+    }
+}
+
+struct OutputsQuickPanel: View {
+    @EnvironmentObject var engine: Engine
+    @EnvironmentObject var ndi: NDIOutputs
+    @EnvironmentObject var stage: StageModel
+    @EnvironmentObject var present: PresentModel
+    let close: () -> Void
+
+    var body: some View {
+        let screens = engine.availableScreens()
+        VStack(alignment: .leading, spacing: 0) {
+            Text("OUTPUTS").font(CPFont.section).kerning(0.9).foregroundColor(CP.text2).padding(.bottom, 6)
+            row("Program Out", engine.programWindowActive ? (engine.programOutFullscreen ? "Full screen" : "Window") : "Off",
+                on: engine.programWindowActive) {
+                if engine.programWindowActive { engine.closeOutputWindow() } else { engine.openOutputWindow() }
+            }
+            if engine.programWindowActive {
+                HStack {
+                    Spacer()
+                    Button(engine.programOutFullscreen ? "Show in a window" : "Show full screen") { engine.toggleProgramOutFullscreen() }
+                        .buttonStyle(.ds(.ghost, .small))
+                }
+            }
+            CPDivider()
+            ForEach(screens, id: \.index) { sc in
+                row(sc.name + (sc.index == 0 ? " (main)" : ""), engine.activeScreens.contains(sc.index) ? "Showing" : "Off",
+                    on: engine.activeScreens.contains(sc.index)) { engine.toggleScreenOutput(sc.index) }
+            }
+            if screens.count <= 1 {
+                Text("Connect a projector or monitor to use display outputs.").font(CPFont.caption).foregroundColor(CP.text2).padding(.vertical, 4)
+            }
+            CPDivider()
+            row("NDI Program", ndi.runtimeAvailable ? (ndi.programEnabled ? "\(ndi.programConnections) receiver(s)" : "Off") : "NDI not loaded",
+                on: ndi.programEnabled) { ndi.programEnabled.toggle() }
+            row("NDI Preview", ndi.previewEnabled ? "\(ndi.previewConnections) receiver(s)" : "Off", on: ndi.previewEnabled) { ndi.previewEnabled.toggle() }
+            CPDivider()
+            row("Stage display", stage.windowOpen ? "Open" : "Off", on: stage.windowOpen) {
+                if stage.windowOpen { stage.close() } else { stage.open(on: nil, engine: engine, present: present) }
+            }
+            row("Multiview", "Window", on: false) { engine.openMultiviewWindow() }
+            HStack {
+                Spacer()
+                Button("All output settings…") { engine.rightTab = 4; close() }.buttonStyle(.ds(.normal, .small))
+            }
+            .padding(.top, 8)
+        }
+        .padding(14)
+        .frame(width: 320)
+        .background(CP.bg)
+    }
+
+    private func row(_ title: String, _ state: String, on: Bool, _ action: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(on ? DS.ok : CP.border).frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title).font(CPFont.emphasis).foregroundColor(CP.text).lineLimit(1)
+                Text(state).font(CPFont.caption).foregroundColor(CP.text2).lineLimit(1)
+            }
+            Spacer()
+            Toggle("", isOn: Binding(get: { on }, set: { _ in action() })).toggleStyle(.switch).tint(CP.toggle).labelsHidden().controlSize(.mini)
+        }
+        .frame(minHeight: 34)
+    }
+}
+
 struct StatusBar: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
@@ -2026,8 +2097,7 @@ struct StatusBar: View {
                     Button("Take snapshot") { engine.snapshot() }
                     Button("Choose folder…") { engine.chooseOutputFolder() }
                 }
-            Button("Outputs") { engine.rightTab = 4 }.buttonStyle(.ds(.normal, .small, active: !engine.activeScreens.isEmpty))
-                .contextMenu { ProgramOutMenuItems() }
+            OutputsQuickButton()
             Button("Multiview") { engine.openMultiviewWindow() }.buttonStyle(.ds(.normal, .small))
             Button("Guides") { engine.showSafeGuides.toggle() }.buttonStyle(.ds(.normal, .small, active: engine.showSafeGuides))
         }
@@ -2196,7 +2266,7 @@ struct VariantsView: View {
                                     .foregroundColor(CP.text)
                                     .padding(.horizontal, 8).frame(height: 24)
                                     .background(RoundedRectangle(cornerRadius: 6).fill(layer.activeVariant == idx ? CP.blueSoft : CP.field))
-                                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(layer.activeVariant == idx ? CP.blue : CP.border, lineWidth: 1))
+                                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(layer.activeVariant == idx ? CP.accentLine : CP.border, lineWidth: 1))
                             }.buttonStyle(.plain)
                             .contextMenu {
                                 Button("Apply") { layer.applyVariant(idx) }
@@ -2443,7 +2513,7 @@ struct OutputsPanel: View {
         parts.append(s.scaling.rawValue)
         if s.hasCrop { parts.append("cropped") }
         if s.outputWidth > 0 { parts.append("scaled to \(s.outputWidth)×\(s.outputHeight)") }
-        return "Output settings — " + parts.joined(separator: " · ")
+        return "Output settings · " + parts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -2453,7 +2523,7 @@ struct OutputsPanel: View {
                        icon: "rectangle.inset.filled", iconColor: engine.programWindowActive ? DS.program : CP.icon) {
                     CPRow(icon: "power", label: "Program Out") {
                         Toggle("", isOn: Binding(get: { engine.programWindowActive }, set: { _ in engine.openOutputWindow() }))
-                            .toggleStyle(.switch).tint(CP.blue).labelsHidden()
+                            .toggleStyle(.switch).tint(CP.toggle).labelsHidden()
                     }
                     CPRow(icon: "macwindow", label: "Mode") {
                         DSSegmented(selection: Binding(get: { engine.programOutFullscreen }, set: { engine.showProgramOut(fullscreen: $0) }),
@@ -2478,7 +2548,6 @@ struct OutputsPanel: View {
                            : "Only one display: Program Out opens in a window so your controls stay visible. F, double-click or ⌘⇧F switches to full screen; Esc comes back.")
                 }
 
-                StageDisplayCard()
 
                 CPCard(title: "External Displays", subtitle: "Projectors, monitors and LED walls", icon: "display.2") {
                     HStack {
@@ -2499,14 +2568,18 @@ struct OutputsPanel: View {
                             Toggle("", isOn: Binding(
                                 get: { engine.activeScreens.contains(sc.index) },
                                 set: { _ in engine.toggleScreenOutput(sc.index) }))
-                                .toggleStyle(.switch).tint(CP.blue).labelsHidden()
+                                .toggleStyle(.switch).tint(CP.toggle).labelsHidden()
                         }
                         DisclosureGroup {
                             ScreenOutputEditor(index: sc.index)
+                                .padding(.horizontal, 10).padding(.bottom, 6)
+                                .background(RoundedRectangle(cornerRadius: 5).fill(CP.field.opacity(0.55)))
+                                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(CP.divider, lineWidth: 1))
+                                .padding(.top, 4)
                         } label: {
-                            Text(outputSummary(sc.index)).font(.system(size: 10)).foregroundColor(CP.text2).lineLimit(1)
+                            Text(outputSummary(sc.index)).font(CPFont.caption).foregroundColor(CP.text2).lineLimit(1)
                         }
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 4)
                         if engine.activeScreens.contains(sc.index) {
                             CPRow(icon: "arrow.turn.down.right", label: "Send") {
                                 Picker("", selection: Binding(
@@ -2522,6 +2595,8 @@ struct OutputsPanel: View {
                 }
 
                 NDIOutputCard()
+
+                StageDisplayCard()
             }
             .padding(10)
         }

@@ -791,7 +791,14 @@ final class Engine: ObservableObject {
         placeSource(src)
     }
 
+    /// Holder chosen from an empty tile's menu for an input that is added later (stream, Zoom, NDI dialogs).
+    var pendingSlotID: UUID?
+
     private func placeSource(_ src: Source) {
+        if let p = pendingSlotID {
+            pendingSlotID = nil
+            if sources.first(where: { $0.id == p })?.isPlaceholder == true { replaceSource(p, with: src); return }
+        }
         if let slot = sources.first(where: { $0.isPlaceholder }) {
             replaceSource(slot.id, with: src)
         } else {
@@ -960,6 +967,7 @@ final class Engine: ObservableObject {
     func addBars() { let s = BarsSource(); placeOrAppend(s) }
 
     private func placeOrAppend(_ s: Source) {
+        if pendingSlotID != nil { placeSource(s); return }
         if let slot = sources.first(where: { $0.isPlaceholder }) { replaceSource(slot.id, with: s) }
         else { sources.append(s); stageFirst(s.id) }
     }

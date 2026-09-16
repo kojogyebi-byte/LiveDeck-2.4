@@ -289,7 +289,7 @@ struct AutomationDeck: View {
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 6).fill(auto.selectedID == r.id ? DS.accent.opacity(0.16) : DS.bg2))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(auto.selectedID == r.id ? DS.accent : Color.clear, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(auto.selectedID == r.id ? DS.accentText : Color.clear, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture { auto.selectedID = r.id }
         .contextMenu {
@@ -370,7 +370,7 @@ struct AutomationEditor: View {
                             .font(DS.small)
                     }
                 }
-                Text(auto.describe(rule)).font(.system(size: 11)).foregroundColor(DS.accent).fixedSize(horizontal: false, vertical: true)
+                Text(auto.describe(rule)).font(.system(size: 11)).foregroundColor(DS.accentText).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button("Run now") { auto.runNow(rule) }.buttonStyle(.ds(.primary, .small))
                     Button("Duplicate") { auto.duplicate(rule) }.buttonStyle(.ds(.normal, .small))

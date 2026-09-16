@@ -300,7 +300,7 @@ struct MediaDeck: View {
             if dropTargeted {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8).fill(CP.blue.opacity(0.12))
-                    RoundedRectangle(cornerRadius: 8).strokeBorder(CP.blue, style: StrokeStyle(lineWidth: 2, dash: [8, 5]))
+                    RoundedRectangle(cornerRadius: 8).strokeBorder(CP.accentLine, style: StrokeStyle(lineWidth: 2, dash: [8, 5]))
                     Label("Drop to add to your media library", systemImage: "square.and.arrow.down.on.square")
                         .font(.system(size: 15, weight: .semibold)).foregroundColor(.white)
                         .padding(12).background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.6)))
@@ -513,7 +513,7 @@ struct LocalBackgroundCard: View {
         }
         .background(DS.bg2)
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? DS.accent : DS.lineSoft, lineWidth: selected ? 2 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? DS.accentText : DS.lineSoft, lineWidth: selected ? 2 : 1))
         .contentShape(Rectangle())
         .onAppear { bg.thumbnail(item) }
     }
@@ -527,7 +527,7 @@ struct StarterPackSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                Image(systemName: "photo.stack.fill").font(.system(size: 28)).foregroundColor(DS.accent)
+                Image(systemName: "photo.stack.fill").font(.system(size: 28)).foregroundColor(DS.accentText)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Free backgrounds for your services").font(.system(size: 17, weight: .bold))
                     Text("Download a starter set now — you can always add more from the Backgrounds library.").font(.system(size: 11)).foregroundColor(DS.text2)

@@ -2222,7 +2222,7 @@ struct LyricsFinderView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "globe").foregroundColor(DS.accent)
+                Image(systemName: "globe").foregroundColor(DS.accentText)
                 Text("Find lyrics online").font(.system(size: 13, weight: .bold)).foregroundColor(DS.text)
                 DSSegmented(selection: $finder.mode, options: [(LyricsFinder.Mode.databases, "Lyrics databases"), (LyricsFinder.Mode.websites, "Web sites")])
                     .frame(width: 250)
@@ -2308,7 +2308,7 @@ struct LyricsFinderView: View {
                             }
                             .padding(8)
                             .background(RoundedRectangle(cornerRadius: 6).fill(finder.site == site ? DS.accent.opacity(0.18) : DS.bg2))
-                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(finder.site == site ? DS.accent : DS.lineSoft, lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(finder.site == site ? DS.accentText : DS.lineSoft, lineWidth: 1))
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)

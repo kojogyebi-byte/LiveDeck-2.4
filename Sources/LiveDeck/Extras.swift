@@ -54,7 +54,7 @@ struct HelpCenter: View {
             // search + list
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    Image(systemName: "questionmark.circle.fill").font(.system(size: 20)).foregroundColor(DS.accent)
+                    Image(systemName: "questionmark.circle.fill").font(.system(size: 20)).foregroundColor(DS.accentText)
                     VStack(alignment: .leading, spacing: 0) {
                         Text("LiveDeck Help").font(.system(size: 15, weight: .bold)).foregroundColor(DS.text)
                         Text("Find a tool or learn how to use it").font(.system(size: 10)).foregroundColor(DS.text2)
@@ -73,7 +73,7 @@ struct HelpCenter: View {
                 }
                 .padding(.horizontal, 10).frame(height: 34)
                 .background(RoundedRectangle(cornerRadius: 8).fill(DS.bg0))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(searchFocused ? DS.accent : DS.line, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(searchFocused ? DS.accentText : DS.line, lineWidth: 1))
 
                 if engine.helpQuery.trimmingCharacters(in: .whitespaces).isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -96,12 +96,12 @@ struct HelpCenter: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(t.title).font(.system(size: 12, weight: .semibold)).foregroundColor(DS.text).lineLimit(1)
                                     Text(t.summary).font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(2)
-                                    Text(t.category).font(.system(size: 9, weight: .semibold)).foregroundColor(DS.accent)
+                                    Text(t.category).font(.system(size: 9, weight: .semibold)).foregroundColor(DS.accentText)
                                 }
                                 .padding(8)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(RoundedRectangle(cornerRadius: 6).fill(selectedID == t.id ? DS.accent.opacity(0.18) : DS.bg2))
-                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selectedID == t.id ? DS.accent : Color.clear, lineWidth: 1))
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selectedID == t.id ? DS.accentText : Color.clear, lineWidth: 1))
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -125,7 +125,7 @@ struct HelpCenter: View {
                 if let t = selected {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text(t.category.uppercased()).font(.system(size: 10, weight: .bold)).kerning(1.2).foregroundColor(DS.accent)
+                            Text(t.category.uppercased()).font(.system(size: 10, weight: .bold)).kerning(1.2).foregroundColor(DS.accentText)
                             Text(t.title).font(.system(size: 22, weight: .bold)).foregroundColor(DS.text)
                             Text(t.summary).font(.system(size: 13)).foregroundColor(DS.text2).fixedSize(horizontal: false, vertical: true)
                             if t.target != nil {
@@ -152,7 +152,7 @@ struct HelpCenter: View {
                                 Text("RELATED").font(.system(size: 10, weight: .bold)).kerning(1.2).foregroundColor(DS.text3)
                                 ForEach(related) { r in
                                     Button { selectedID = r.id } label: {
-                                        Label(r.title, systemImage: "doc.text").font(.system(size: 12)).foregroundColor(DS.accent)
+                                        Label(r.title, systemImage: "doc.text").font(.system(size: 12)).foregroundColor(DS.accentText)
                                     }
                                     .buttonStyle(.plain)
                                 }
@@ -612,7 +612,7 @@ struct VideoResultCard: View {
         }
         .background(DS.bg2)
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? DS.accent : DS.lineSoft, lineWidth: selected ? 2 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? DS.accentText : DS.lineSoft, lineWidth: selected ? 2 : 1))
         .contentShape(Rectangle())
     }
 }
@@ -642,7 +642,7 @@ struct ImageResultCard: View {
         }
         .background(DS.bg2)
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? DS.accent : DS.lineSoft, lineWidth: selected ? 2 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? DS.accentText : DS.lineSoft, lineWidth: selected ? 2 : 1))
         .contentShape(Rectangle())
     }
 }
@@ -1164,7 +1164,7 @@ struct PresetsPanel: View {
             Image(systemName: icon).font(.system(size: 12)).foregroundColor(CP.text2).frame(width: 18)
             Text(label).font(.system(size: 12)).foregroundColor(CP.text)
             Spacer()
-            Toggle("", isOn: on).toggleStyle(.switch).tint(CP.blue).labelsHidden().controlSize(.small)
+            Toggle("", isOn: on).toggleStyle(.switch).tint(CP.toggle).labelsHidden().controlSize(.small)
         }
     }
 }

@@ -1,4 +1,12 @@
-# LiveDeck Studio (macOS) — v4.10.0
+# LiveDeck Studio (macOS) — v4.11.0
+
+**4.11.0 — Professional panel design & fixes.**
+- **New look:** all blue tint removed. Neutral graphite panels and dialogs; selection is steel grey with a light underline, so red / green / amber stay reserved for tally, preview and warnings (broadcast convention). Primary buttons are light with dark text. Faders, switches and progress bars are neutral steel.
+- **Typography:** SF Pro Text 12 pt for labels and fields, 12.5 pt semibold card titles, condensed small caps for section labels and tabs, SF Mono for every number — the style of broadcast control software.
+- **Calmer layout:** flat card headers with a single divider, 30–32 pt rows, more breathing room, no heavy header bands. Every card remembers whether it is open or closed. Outputs panel reordered: Program Out → External Displays → NDI Output → Stage display; display output settings sit in their own inset box.
+- **Fixed:** the status-bar **Outputs** button now opens a quick outputs panel (Program Out, each display, NDI Program/Preview, stage display, multiview, link to all settings) and shows how many outputs are on.
+- **Fixed:** the empty-holder “+” menu and the **Add Input** menu are now the same list (cameras, screen, Zoom, NDI, video, image, playlist, presentation, dictionary, streams, web page, colour, bars). Inputs added from a dialog (Zoom, NDI, streams) land in the holder you clicked.
+
 
 **4.10.0 — NDI® is active.** Built with the NDI SDK v6.3.2 for Apple (universal arm64 + x86_64).
 - **NDI output:** Outputs → NDI Output → *Send Program over NDI* (name, Program audio on/off) and optional *Send Preview over NDI*. Sent at the switcher resolution and exact frame rate (NTSC fractions, interlaced as woven fields). Receivers count and downstream tally (ON AIR / PREVIEW) shown in the card and the status bar.

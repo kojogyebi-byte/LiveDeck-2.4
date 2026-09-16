@@ -1019,7 +1019,7 @@ struct ChatBubble: View {
                     .font(.system(size: 8.5, weight: .semibold)).foregroundColor(CP.text2)
                 Text(message.text).font(.system(size: 11.5)).foregroundColor(message.attention ? .black : CP.text)
                     .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(message.attention ? DS.amber : (message.mine ? CP.blue.opacity(0.55) : CP.cardHeader)))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(message.attention ? DS.amber : (message.mine ? CP.blue : CP.cardHeader)))
                     .textSelection(.enabled)
                 Text(message.date.formatted(date: .omitted, time: .shortened)).font(.system(size: 8)).foregroundColor(CP.text2)
             }
@@ -1052,7 +1052,7 @@ struct TransferRow: View {
                 }
             }
             if transfer.state == .sending || transfer.state == .receiving {
-                ProgressView(value: transfer.fraction).tint(CP.blue)
+                ProgressView(value: transfer.fraction).tint(CP.toggle)
             }
         }
         .padding(.vertical, 5)
