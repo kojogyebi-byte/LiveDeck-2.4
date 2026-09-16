@@ -237,17 +237,30 @@ struct SystemStatsView: View {
     }
 }
 
+/// App logo (the app icon) + "LiveDeck" wordmark in the logo's colours.
+struct AppLogoMark: View {
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable().interpolation(.high)
+                .frame(width: 26, height: 26)
+            HStack(spacing: 0) {
+                Text("Live").foregroundColor(.white)
+                Text("Deck").foregroundStyle(LinearGradient(colors: [Color(rgb: 0x22C1F5), Color(rgb: 0x5B6CF6), Color(rgb: 0xC84CF2)],
+                                                             startPoint: .leading, endPoint: .trailing))
+            }
+            .font(.system(size: 16, weight: .heavy, design: .rounded))
+        }
+        .help("LiveDeck Studio — Create · Switch · Stream")
+    }
+}
+
 struct TopBar: View {
     @EnvironmentObject var engine: Engine
     @Binding var showStream: Bool
     var body: some View {
         HStack(spacing: 10) {
-            HStack(spacing: 0) {
-                Text("LIVE").font(.system(size: 15, weight: .black)).foregroundColor(DS.text)
-                Text("DECK").font(.system(size: 15, weight: .black)).foregroundColor(DS.program)
-            }
-            .kerning(0.5)
-            Text("STUDIO").font(.system(size: 8, weight: .bold)).kerning(2).foregroundColor(DS.text3)
+            AppLogoMark()
             Rectangle().fill(DS.line).frame(width: 1, height: 20)
             DSIconButton(symbol: "folder", help: "Open show…") { engine.loadShow() }
             DSIconButton(symbol: "square.and.arrow.down", help: "Save show…") { engine.saveShow() }
@@ -1079,6 +1092,21 @@ struct AddInputMenuItems: View {
         Button("YouTube / Twitch / Facebook link…") { later { engine.openAddStream(3) } }
         Button("Web Page…") { later { engine.openAddStream(4) } }
         Divider()
+        Menu("Overlay as an input") {
+            if engine.layers.isEmpty { Text("No overlays yet") }
+            ForEach(engine.layers) { l in
+                Menu(l.name) {
+                    Button("Transparent background (for keying)") { place(OverlaySource(layer: l, background: .transparent)) }
+                    Button("Black background") { place(OverlaySource(layer: l, background: .color)) }
+                }
+            }
+            Divider()
+            Button("New countdown input") {
+                engine.addLayer(.countdown)
+                if let l = engine.layers.first { let s = OverlaySource(layer: l, background: .color); place(s); engine.selectedSourceID = s.id }
+            }
+        }
+        Divider()
         Button("Colour") { place(ColorSource()) }
         Button("Test Pattern (Bars)") { place(BarsSource()) }
         if slotID == nil {
@@ -1296,6 +1324,7 @@ struct InputSettingsPanel: View {
                 InputChannelCard()
                 if let s = engine.sources.first(where: { $0.id == engine.selectedSourceID }), !s.isPlaceholder {
                     if let pl = s as? PlaylistSource { PlaylistEditorCard(source: pl).id("pl-" + s.id.uuidString) }
+                    if let ov = s as? OverlaySource { OverlayInputCard(source: ov).id("ov-" + s.id.uuidString) }
                     CaptureStatusCard(source: s)
                     InputAdjust(source: s).id(s.id)
                 } else {
@@ -1936,6 +1965,8 @@ struct LayerRow: View {
             Button("Move up") { engine.moveLayer(layer.id, by: -1) }
             Button("Move down") { engine.moveLayer(layer.id, by: 1) }
             Divider()
+            OverlayAsInputMenu(layer: layer)
+            Divider()
             Button("Automate this overlay…") {
                 auto.add(0)
                 if let i = auto.selectedIndex {
@@ -2165,15 +2196,7 @@ struct LayerInspector: View {
             CPTextRow(label: "Ticker text", text: $layer.text1)
             adjSlider("Speed", $layer.number1, 20...300)
         case .countdown:
-            CPTextRow(label: "Label", text: $layer.text1)
-            adjSlider("Minutes", $layer.number1, 1...180)
-            HStack(spacing: 6) {
-                CPButton(icon: "play.fill", title: "Start", prominent: true) { if layer.remaining <= 0 { layer.remaining = layer.number1 * 60 }; layer.lastTick = 0; layer.isRunning = true }
-                CPButton(icon: "pause.fill", title: "Pause") { layer.isRunning = false }
-                CPButton(icon: "arrow.counterclockwise", title: "Reset") { layer.isRunning = false; layer.remaining = layer.number1 * 60 }
-            }
-            .padding(.vertical, 4)
-            CPColorRow(label: "Accent", color: $layer.accent)
+            CountdownEditor(layer: layer)
         case .clock:
             CPToggleRow(label: "24-hour", isOn: $layer.use24h)
         case .scoreboard:

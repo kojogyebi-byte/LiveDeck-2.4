@@ -2,6 +2,8 @@ import Foundation
 import AppKit
 import SwiftUI
 import CoreImage
+import CoreText
+import PresentationKit
 
 // MARK: - Layer model
 
@@ -76,6 +78,62 @@ final class Layer: ObservableObject, Identifiable {
     var remaining: Double = 300
     @Published var isRunning = false
     var lastTick: CFTimeInterval = 0
+
+    // Countdown formatting and behaviour
+    @Published var cd = CountdownStyle()
+    var elapsed: Double = 0
+    private var endHandled = false
+
+    /// Seconds to show: time left (duration / to a clock time; negative past zero) or elapsed (count up).
+    var displaySeconds: Double {
+        switch cd.mode {
+        case .duration: return remaining
+        case .toTime: return CountdownClock.secondsUntil(hour: cd.targetHour, minute: cd.targetMinute)
+        case .countUp: return elapsed
+        }
+    }
+
+    /// Advances a running countdown. Called once per frame by the engine (whether or not it is on air).
+    func tick() {
+        guard kind == .countdown else { return }
+        let now = CACurrentMediaTime()
+        defer { lastTick = isRunning ? now : 0 }
+        if cd.mode == .toTime {
+            if displaySeconds <= 0 { handleEnd() } else { endHandled = false }
+            return
+        }
+        guard isRunning, lastTick > 0 else { return }
+        let dt = now - lastTick
+        if cd.mode == .countUp { elapsed += dt; return }
+        remaining -= dt
+        if remaining <= 0 {
+            if cd.endBehavior != .overtime { remaining = 0; isRunning = false }
+            handleEnd()
+        }
+    }
+
+    private func handleEnd() {
+        guard !endHandled else { return }
+        endHandled = true
+        if cd.endBehavior == .hide { isLive = false }
+    }
+
+    func startCountdown() {
+        if cd.mode == .duration && remaining <= 0 && cd.endBehavior != .overtime { remaining = number1 * 60 }
+        endHandled = false
+        lastTick = 0
+        isRunning = true
+    }
+    func pauseCountdown() { isRunning = false }
+    func resetCountdown() {
+        isRunning = false
+        remaining = number1 * 60
+        elapsed = 0
+        endHandled = false
+    }
+    func nudgeCountdown(_ seconds: Double) {
+        if cd.mode == .countUp { elapsed = max(0, elapsed + seconds) } else { remaining = max(0, remaining + seconds) }
+    }
 
     var logoImage: CGImage?
     var qrCache: CGImage?
@@ -179,9 +237,28 @@ private func coverDraw(_ img: CGImage, in rect: CGRect, ctx: CGContext) {
 
 enum LayerRenderer {
 
+    /// Draws a layer with its transform (offset, scale, rotation, opacity). `visibility` overrides the
+    /// on-air animation (1 = fully shown), used when an overlay is shown as a standalone input.
+    static func renderComposited(_ layer: Layer, in ctx: CGContext, width: Int, height: Int, time: CFTimeInterval,
+                                 visibility: Double? = nil, sourceImage: (UUID) -> CGImage?) {
+        ctx.saveGState()
+        ctx.translateBy(x: CGFloat(layer.offsetX) * CGFloat(width), y: CGFloat(layer.offsetY) * CGFloat(height))
+        if layer.scaleAdj != 1 || layer.rotationAdj != 0 {
+            ctx.translateBy(x: CGFloat(width) / 2, y: CGFloat(height) / 2)
+            if layer.rotationAdj != 0 { ctx.rotate(by: CGFloat(layer.rotationAdj) * .pi / 180) }
+            ctx.scaleBy(x: CGFloat(layer.scaleAdj), y: CGFloat(layer.scaleAdj))
+            ctx.translateBy(x: -CGFloat(width) / 2, y: -CGFloat(height) / 2)
+        }
+        let useGroup = layer.opacity < 0.999
+        if useGroup { ctx.setAlpha(CGFloat(layer.opacity)); ctx.beginTransparencyLayer(auxiliaryInfo: nil) }
+        render(layer, in: ctx, width: width, height: height, time: time, visibility: visibility, sourceImage: sourceImage)
+        if useGroup { ctx.endTransparencyLayer() }
+        ctx.restoreGState()
+    }
+
     static func render(_ layer: Layer, in ctx: CGContext, width: Int, height: Int,
-                       time: CFTimeInterval, sourceImage: (UUID) -> CGImage?) {
-        let k = ease(layer.liveT)
+                       time: CFTimeInterval, visibility: Double? = nil, sourceImage: (UUID) -> CGImage?) {
+        let k = visibility.map { ease($0) } ?? ease(layer.liveT)
         guard k > 0 else { return }
         let W = CGFloat(width), H = CGFloat(height)
         ctx.saveGState()
@@ -270,23 +347,8 @@ enum LayerRenderer {
             }
 
         case .countdown:
-            if layer.isRunning {
-                let now = CACurrentMediaTime()
-                if layer.lastTick > 0 { layer.remaining = max(0, layer.remaining - (now - layer.lastTick)) }
-                layer.lastTick = now
-                if layer.remaining == 0 { DispatchQueue.main.async { layer.isRunning = false } }
-            }
-            let m = Int(layer.remaining) / 60, s = Int(layer.remaining) % 60
             ctx.setAlpha(k)
-            let cx = W / 2, cy = H * 0.55
-            ctx.setFillColor(NSColor(red: 0.04, green: 0.05, blue: 0.06, alpha: 0.75).cgColor)
-            ctx.fill(CGRect(x: cx - 220, y: cy - 100, width: 440, height: 200))
-            draw(layer.text1.uppercased(), at: CGPoint(x: cx, y: cy + 50),
-                 font: NSFont.boldSystemFont(ofSize: H * 0.035),
-                 color: NSColor(layer.accent), in: ctx, centered: true)
-            draw(String(format: "%02d:%02d", m, s), at: CGPoint(x: cx, y: cy - 70),
-                 font: NSFont.monospacedDigitSystemFont(ofSize: H * 0.14, weight: .heavy),
-                 color: .white, in: ctx, centered: true)
+            CountdownRenderer.draw(layer, in: ctx, W: W, H: H, time: time)
 
         case .clock:
             let date = Date(); let cal = Calendar.current
@@ -473,6 +535,7 @@ struct ShowLayer: Codable {
     var keyEnabled: Bool = false
     var keyR: Double = 0, keyG: Double = 0.78, keyB: Double = 0
     var keySimilarity: Double = 0.12, keySmoothness: Double = 0.08
+    var countdown: CountdownStyle? = nil
 }
 
 struct ShowScene: Codable {
@@ -517,7 +580,8 @@ extension Layer {
                          bgR: bc.0, bgG: bc.1, bgB: bc.2, bgOpacity: bgOpacity,
                          fontScale: fontScale, align: align,
                          keyEnabled: keyEnabled, keyR: kc.0, keyG: kc.1, keyB: kc.2,
-                         keySimilarity: keySimilarity, keySmoothness: keySmoothness)
+                         keySimilarity: keySimilarity, keySmoothness: keySmoothness,
+                         countdown: kind == .countdown ? cd : nil)
     }
 
     static func from(_ s: ShowLayer) -> Layer? {
@@ -536,7 +600,7 @@ extension Layer {
         l.keyEnabled = s.keyEnabled
         l.keyColor = Color(.sRGB, red: s.keyR, green: s.keyG, blue: s.keyB, opacity: 1)
         l.keySimilarity = s.keySimilarity; l.keySmoothness = s.keySmoothness
-        if kind == .countdown { l.remaining = s.number1 * 60 }
+        if kind == .countdown { l.remaining = s.number1 * 60; if let c = s.countdown { l.cd = c } }
         return l
     }
 }
@@ -680,5 +744,137 @@ enum ChromaKey {
             h /= 6; if h < 0 { h += 1 }
         }
         return (h, mx == 0 ? 0 : d / mx, mx)
+    }
+}
+
+
+// MARK: - Countdown drawing (stacked, measured layout — the label never overlaps the digits)
+
+enum CountdownRenderer {
+    static func font(_ choice: CountdownFont, size: CGFloat, weight: Int, digits: Bool) -> NSFont {
+        let w: NSFont.Weight = [.regular, .semibold, .bold, .heavy, .black][min(4, max(0, weight))]
+        var f: NSFont
+        switch choice {
+        case .condensed: f = NSFont.systemFont(ofSize: size, weight: w, width: .condensed)
+        case .mono: f = NSFont.monospacedSystemFont(ofSize: size, weight: w)
+        default: f = NSFont.systemFont(ofSize: size, weight: w)
+        }
+        let design: NSFontDescriptor.SystemDesign? = choice == .rounded ? .rounded : (choice == .serif ? .serif : nil)
+        if let design, let d = f.fontDescriptor.withDesign(design), let nf = NSFont(descriptor: d, size: size) { f = nf }
+        if digits && choice != .mono {
+            let features: [[NSFontDescriptor.FeatureKey: Int]] = [[.typeIdentifier: kNumberSpacingType, .selectorIdentifier: kMonospacedNumbersSelector]]
+            let d = f.fontDescriptor.addingAttributes([.featureSettings: features])
+            if let nf = NSFont(descriptor: d, size: size) { f = nf }
+        }
+        return f
+    }
+
+    private struct Item { let text: NSAttributedString; let size: CGSize }
+
+    static func draw(_ layer: Layer, in ctx: CGContext, W: CGFloat, H: CGFloat, time: CFTimeInterval) {
+        let st = layer.cd
+        let scale = CGFloat(max(0.3, layer.fontScale))
+        let state = CountdownClock.state(seconds: layer.displaySeconds, style: st)
+        let digitsColor: NSColor
+        let digitsText: String
+        var blinking = false
+        let warn = NSColor(srgbRed: CGFloat(st.warnRGB.count > 0 ? st.warnRGB[0] : 1), green: CGFloat(st.warnRGB.count > 1 ? st.warnRGB[1] : 0.27),
+                           blue: CGFloat(st.warnRGB.count > 2 ? st.warnRGB[2] : 0.23), alpha: 1)
+        switch state {
+        case .running(let s): digitsText = s; digitsColor = NSColor(layer.textColor)
+        case .warning(let s):
+            digitsText = s; digitsColor = warn
+            blinking = st.flash && st.mode != .countUp && layer.displaySeconds <= st.flashSeconds
+        case .ended(let s): digitsText = s; digitsColor = st.endBehavior == .endText ? NSColor(layer.textColor) : warn; blinking = st.flash && st.endBehavior != .endText
+        case .overtime(let s): digitsText = s; digitsColor = warn
+        }
+        var isEndText = false
+        if case .ended = state, st.endBehavior == .endText { isEndText = true }
+        let kern = CGFloat(st.letterSpacing) * H * 0.002
+
+        let digitsFont = font(st.font, size: H * (isEndText ? 0.085 : 0.14) * CGFloat(st.digitsScale) * scale, weight: st.weight, digits: true)
+        let labelFont = font(st.font, size: H * 0.034 * CGFloat(st.labelScale) * scale, weight: max(1, st.weight - 1), digits: false)
+        let subFont = font(st.font, size: H * 0.026 * CGFloat(st.labelScale) * scale, weight: 0, digits: false)
+
+        func item(_ s: String, _ f: NSFont, _ c: NSColor) -> Item? {
+            guard !s.isEmpty else { return nil }
+            let a = NSAttributedString(string: s, attributes: [.font: f, .foregroundColor: c, .kern: kern])
+            let r = a.boundingRect(with: CGSize(width: 10000, height: 10000), options: [.usesLineFragmentOrigin, .usesFontLeading])
+            return Item(text: a, size: CGSize(width: ceil(r.width), height: ceil(r.height)))
+        }
+        let labelString = st.uppercaseLabel ? layer.text1.uppercased() : layer.text1
+        let label = st.labelPosition == .hidden ? nil : item(labelString, labelFont, NSColor(layer.accent))
+        let digits = item(digitsText, digitsFont, blinking && Int(time * 2) % 2 == 1 ? digitsColor.withAlphaComponent(0.25) : digitsColor)
+        let sub = st.showSubtext ? item(layer.text2, subFont, NSColor(layer.textColor).withAlphaComponent(0.8)) : nil
+        guard let digitsItem = digits else { return }
+
+        let gap = H * 0.012 * CGFloat(st.padding)
+        let padY = H * 0.028 * CGFloat(st.padding)
+        let padX = padY * 1.6
+        let inline = st.labelPosition == .left && label != nil
+        var rows: [[Item]] = []
+        if inline { rows.append([label!, digitsItem]) }
+        else if st.labelPosition == .below { rows.append([digitsItem]); if let l = label { rows.append([l]) } }
+        else { if let l = label { rows.append([l]) }; rows.append([digitsItem]) }
+        if let s = sub { rows.append([s]) }
+
+        let rowSizes = rows.map { r -> CGSize in
+            CGSize(width: r.map { $0.size.width }.reduce(0, +) + CGFloat(max(0, r.count - 1)) * gap * 2,
+                   height: r.map { $0.size.height }.max() ?? 0)
+        }
+        let contentW = rowSizes.map { $0.width }.max() ?? 0
+        let contentH = rowSizes.map { $0.height }.reduce(0, +) + CGFloat(max(0, rows.count - 1)) * gap
+        let boxW = contentW + padX * 2, boxH = contentH + padY * 2
+        let margin = H * 0.06
+        let cx: CGFloat, cy: CGFloat
+        switch st.placement {
+        case .center: cx = W / 2; cy = H / 2
+        case .top: cx = W / 2; cy = H - margin - boxH / 2
+        case .bottom: cx = W / 2; cy = margin + boxH / 2
+        case .topLeft: cx = margin + boxW / 2; cy = H - margin - boxH / 2
+        case .topRight: cx = W - margin - boxW / 2; cy = H - margin - boxH / 2
+        case .bottomLeft: cx = margin + boxW / 2; cy = margin + boxH / 2
+        case .bottomRight: cx = W - margin - boxW / 2; cy = margin + boxH / 2
+        }
+        let box = CGRect(x: cx - boxW / 2, y: cy - boxH / 2, width: boxW, height: boxH)
+
+        let bg = NSColor(layer.bgColor).withAlphaComponent(CGFloat(layer.bgOpacity))
+        switch st.box {
+        case .box:
+            ctx.setFillColor(bg.cgColor); ctx.fill(box)
+        case .rounded, .pill:
+            let r = st.box == .pill ? boxH / 2 : H * 0.018
+            ctx.addPath(CGPath(roundedRect: box, cornerWidth: min(r, boxW / 2), cornerHeight: min(r, boxH / 2), transform: nil))
+            ctx.setFillColor(bg.cgColor); ctx.fillPath()
+        case .outline:
+            let r = H * 0.018
+            ctx.addPath(CGPath(roundedRect: box.insetBy(dx: 2, dy: 2), cornerWidth: r, cornerHeight: r, transform: nil))
+            ctx.setStrokeColor(NSColor(layer.accent).cgColor); ctx.setLineWidth(max(2, H * 0.004)); ctx.strokePath()
+        case .none:
+            break
+        }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        if st.shadow {
+            let sh = NSShadow()
+            sh.shadowColor = NSColor.black.withAlphaComponent(st.box == .none ? 0.8 : 0.45)
+            sh.shadowBlurRadius = H * 0.008
+            sh.shadowOffset = NSSize(width: 0, height: -H * 0.002)
+            sh.set()
+        }
+        var top = box.maxY - padY
+        for (i, row) in rows.enumerated() {
+            let rs = rowSizes[i]
+            var x = cx - rs.width / 2
+            for it in row {
+                // vertically centre each item in its row
+                let y = top - rs.height + (rs.height - it.size.height) / 2
+                it.text.draw(with: CGRect(x: x, y: y, width: it.size.width + 2, height: it.size.height), options: [.usesLineFragmentOrigin, .usesFontLeading])
+                x += it.size.width + gap * 2
+            }
+            top -= rs.height + gap
+        }
+        NSGraphicsContext.restoreGraphicsState()
     }
 }

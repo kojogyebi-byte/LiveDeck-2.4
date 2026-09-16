@@ -43,6 +43,7 @@ struct LiveDeckApp: App {
                     automation.engine = engine
                     ai.engine = engine
                     link.engine = engine
+                    OverlaySource.engine = engine
                     link.backgrounds = backgrounds
                     link.present = present
                     link.presets = presets

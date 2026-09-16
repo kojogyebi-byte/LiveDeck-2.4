@@ -1182,25 +1182,12 @@ final class Engine: ObservableObject {
 
         // overlays / layers on top of program
         for layer in layers.reversed() {
+            layer.tick()
             layer.liveT += (layer.isLive ? 1 : -1) * dt / 0.45
             layer.liveT = max(0, min(1, layer.liveT))
             if layer.liveT > 0 {
-                ctx.saveGState()
-                // transform: offset, then scale+rotate about centre
-                ctx.translateBy(x: CGFloat(layer.offsetX) * CGFloat(width),
-                                y: CGFloat(layer.offsetY) * CGFloat(height))
-                if layer.scaleAdj != 1 || layer.rotationAdj != 0 {
-                    ctx.translateBy(x: CGFloat(width) / 2, y: CGFloat(height) / 2)
-                    if layer.rotationAdj != 0 { ctx.rotate(by: CGFloat(layer.rotationAdj) * .pi / 180) }
-                    ctx.scaleBy(x: CGFloat(layer.scaleAdj), y: CGFloat(layer.scaleAdj))
-                    ctx.translateBy(x: -CGFloat(width) / 2, y: -CGFloat(height) / 2)
-                }
-                let useGroup = layer.opacity < 0.999
-                if useGroup { ctx.setAlpha(CGFloat(layer.opacity)); ctx.beginTransparencyLayer(auxiliaryInfo: nil) }
-                LayerRenderer.render(layer, in: ctx, width: width, height: height, time: now,
-                                     sourceImage: { [weak self] id in self?.sources.first(where: { $0.id == id })?.currentImage() })
-                if useGroup { ctx.endTransparencyLayer() }
-                ctx.restoreGState()
+                LayerRenderer.renderComposited(layer, in: ctx, width: width, height: height, time: now,
+                                               sourceImage: { [weak self] id in self?.sources.first(where: { $0.id == id })?.currentImage() })
             }
         }
         if ftbT > 0 { ctx.setFillColor(NSColor.black.withAlphaComponent(CGFloat(ftbT)).cgColor); ctx.fill(full) }

@@ -1,4 +1,13 @@
-# LiveDeck Studio (macOS) — v4.11.0
+# LiveDeck Studio (macOS) — v4.12.0
+
+**4.12.0 — Overlay inputs & countdown formatting.**
+- **Overlays as inputs:** right-click an overlay → *Use as an input* (transparent for keying, black, or image background), or Add Input → *Overlay as an input* / *New countdown input*. Input panel: choose the overlay, background (Transparent / Colour / Image) and whether it follows the overlay's on-air switch. Saved in presets.
+- **Countdown:** modes *Count down* (minutes, Start/Pause/Reset, ±1 min), *To a time* (e.g. 10:00) and *Count up*; label + sub-text; label above / below / left / hidden; time formats Auto, MM:SS, HH:MM:SS, M:SS, seconds, MM:SS.t; typeface (System, Rounded, Monospaced, Serif, Condensed), weight, overall / digits / label size, letter spacing, colours, shadow; box styles Box / Rounded / Pill / Outline / Text only with colour, opacity and padding; seven screen positions; warning colour and flashing near the end; at zero: stop, end text, overtime or hide. The timer keeps running while the overlay is off air.
+- **Fixed:** the countdown label no longer overlaps the digits — label, digits and sub-text are measured and stacked inside the box.
+- **97 automated tests.**
+
+
+**4.11.1 — New logo.** `Resources/AppIcon-1024.png` is the new LiveDeck logo (play-layers mark, LIVE badge, “Create · Switch · Stream”), prepared as a macOS icon: transparent outside the rounded square, 824 px artwork on the 1024 px icon grid with a soft shadow. The top bar shows the icon with a “LiveDeck” wordmark in the logo colours.
 
 **4.11.0 — Professional panel design & fixes.**
 - **New look:** all blue tint removed. Neutral graphite panels and dialogs; selection is steel grey with a light underline, so red / green / amber stay reserved for tally, preview and warnings (broadcast convention). Primary buttons are light with dark text. Faders, switches and progress bars are neutral steel.

@@ -840,6 +840,7 @@ final class PresetStore: ObservableObject {
         case is AISource: return "ai"
         case is PlaylistSource: return "playlist"
         case is NDISource: return "ndi"
+        case is OverlaySource: return "overlay"
         case is RTMPListenSource: return "rtmpListen"
         default: return "empty"
         }
@@ -854,7 +855,8 @@ final class PresetStore: ObservableObject {
                     color = [Double(rgb.redComponent), Double(rgb.greenComponent), Double(rgb.blueComponent), Double(rgb.alphaComponent)]
                 }
                 return PresetInput(kind: kind(of: s), name: s.name,
-                                   location: s.sourceURLString ?? s.originLocation,
+                                   location: (s as? OverlaySource).flatMap { o in (try? JSONEncoder().encode(o.spec)).flatMap { String(data: $0, encoding: .utf8) } }
+                                       ?? s.sourceURLString ?? s.originLocation,
                                    color: color, look: (s as? SlideSource)?.look,
                                    adjust: [s.zoom, s.panX, s.panY, s.rotation, s.cropL, s.cropR, s.cropT, s.cropB, s.brightness, s.contrast, s.saturation],
                                    audio: PresetAudio(s), generator: (s as? GeneratorSource)?.settings, playlist: (s as? PlaylistSource)?.playlist)
@@ -1010,6 +1012,9 @@ final class PresetStore: ObservableObject {
         case "ai": return AISource(name: spec.name, look: spec.look ?? AISource.defaultLook)
         case "playlist": return PlaylistSource(playlist: spec.playlist ?? Playlist(), name: spec.name)
         case "ndi": let s = NDISource(sourceName: loc); s.name = spec.name; return s
+        case "overlay":
+            let ospec = (try? JSONDecoder().decode(OverlayInputSpec.self, from: Data(loc.utf8))) ?? OverlayInputSpec(layerName: spec.name)
+            return OverlaySource(spec: ospec, name: spec.name)
         case "rtmpListen":
             let parts = loc.split(separator: "|").map(String.init)
             return RTMPListenSource(port: Int(parts.first ?? "") ?? 1935, streamKey: parts.count > 1 ? parts[1] : "zoom", name: spec.name)

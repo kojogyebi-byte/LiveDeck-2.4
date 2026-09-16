@@ -172,3 +172,10 @@ final class HelpV410Tests: XCTestCase {
         XCTAssertEqual(HelpIndex.search("ndi camera").first?.id, "ndi-input")
     }
 }
+
+final class HelpV412Tests: XCTestCase {
+    func testOverlayTopics() {
+        XCTAssertEqual(HelpIndex.search("overlay input").first?.id, "overlay-input")
+        XCTAssertEqual(HelpIndex.search("count up").first?.id, "countdown-format")
+    }
+}
