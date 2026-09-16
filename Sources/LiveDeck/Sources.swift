@@ -581,55 +581,6 @@ final class AudioCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate
     }
 }
 
-// MARK: - NDI runtime detection (safe; no guessed ABI)
-//
-// The two .pkg files install the NDI *runtime* (libndi) onto this Mac. We do NOT
-// link or bundle it (that needs the licensed NDI SDK and would violate redistribution
-// terms). Instead we dlopen the installed runtime at launch and read its version via
-// the one stable, argument-free symbol `NDIlib_version`. Actual frame-sending needs the
-// SDK's exact C struct definitions (Processing.NDI.*.h) to be safe, so `sendFrame` is a
-// deliberate stub until those headers are wired in.
-
-
-final class NDIBridge {
-    static let shared = NDIBridge()
-    private(set) var isAvailable = false
-    private(set) var versionString = ""
-    private var handle: UnsafeMutableRawPointer?
-
-    private typealias VersionFn = @convention(c) () -> UnsafePointer<CChar>?
-
-    init() { detect() }
-
-    func detect() {
-        let candidates = [
-            "/usr/local/lib/libndi.dylib",
-            "/usr/local/lib/libndi.4.dylib",
-            "/usr/local/lib/libndi.5.dylib",
-            "/Library/NDI SDK for Apple/lib/macOS/libndi.dylib",
-            ProcessInfo.processInfo.environment["NDI_RUNTIME_DIR_V6"].map { $0 + "/libndi.dylib" } ?? "",
-            ProcessInfo.processInfo.environment["NDI_RUNTIME_DIR_V5"].map { $0 + "/libndi.dylib" } ?? ""
-        ].filter { !$0.isEmpty }
-
-        for path in candidates {
-            if let h = dlopen(path, RTLD_NOW) {
-                handle = h
-                if let sym = dlsym(h, "NDIlib_version") {
-                    let fn = unsafeBitCast(sym, to: VersionFn.self)
-                    if let cstr = fn() { versionString = String(cString: cstr) }
-                }
-                isAvailable = true
-                return
-            }
-        }
-        isAvailable = false
-    }
-
-    /// Placeholder until the NDI SDK headers are wired in. Intentionally does nothing
-    /// so it can never crash the live app. Returns false to indicate "not yet active".
-    func sendFrame(_ buffer: CVPixelBuffer) -> Bool { false }
-}
-
 // MARK: - Audio DSP (biquad EQ + gate + compressor) for the recorded mix
 
 struct Biquad {
@@ -956,7 +907,7 @@ final class StreamOutput {
 
     static func muxer(for url: String) -> String { url.lowercased().hasPrefix("srt://") ? "mpegts" : "flv" }
 
-    func start(urls: [String], width: Int, height: Int, fps: Double, rate: String, interlaced: Bool, bitrateKbps: Int, audioBitrateKbps: Int = 160, audio: Bool) -> Bool {
+    func start(urls: [String], width: Int, height: Int, fps: Double, rate: String, interlaced: Bool, bitrateKbps: Int, audioBitrateKbps: Int = 160, audio: Bool, videoFilter: String? = nil) -> Bool {
         let targets = urls.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard !isStreaming else { return false }
         guard let ff = StreamOutput.ffmpegPath() else { lastError = "ffmpeg not found."; return false }
@@ -982,6 +933,9 @@ final class StreamOutput {
         }
         args += [
             "-map", "0:v:0", "-map", "1:a:0",
+        ]
+        if let vf = videoFilter { args += ["-vf", vf] }      // stream resolution / shape
+        args += [
             "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p",
             "-b:v", "\(bitrateKbps)k", "-maxrate", "\(bitrateKbps)k", "-bufsize", "\(bitrateKbps * 2)k",
             "-g", "\(max(2, Int((fps * 2).rounded())))", "-keyint_min", "\(max(2, Int((fps * 2).rounded())))", "-sc_threshold", "0",

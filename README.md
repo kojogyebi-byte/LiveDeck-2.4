@@ -1,4 +1,14 @@
-# LiveDeck Studio (macOS) — v4.9.7
+# LiveDeck Studio (macOS) — v4.10.0
+
+**4.10.0 — NDI® is active.** Built with the NDI SDK v6.3.2 for Apple (universal arm64 + x86_64).
+- **NDI output:** Outputs → NDI Output → *Send Program over NDI* (name, Program audio on/off) and optional *Send Preview over NDI*. Sent at the switcher resolution and exact frame rate (NTSC fractions, interlaced as woven fields). Receivers count and downstream tally (ON AIR / PREVIEW) shown in the card and the status bar.
+- **NDI input:** Add Input → *NDI® Source…* lists sources on the network (cameras, NDI Screen Capture, OBS, vMix, other LiveDeck computers); added sources work like cameras, their audio goes to the mixer (resampled to 48 kHz), tally is sent back, and lost sources reconnect. Low-bandwidth option. Saved in presets.
+- **How it is built:** `Sources/CNDI` is a small C target (the SDK's MIT-licensed headers + `cndi.c`) that loads `libndi.dylib` with `dlopen` and looks up each function by name, so the app still starts if NDI is missing. The runtime is stored compressed at `Resources/NDI/libndi.dylib.gz` (4.5 MB) and the GitHub workflow unpacks it into `LiveDeck.app/Contents/Frameworks/libndi.dylib` with its licence file. Local `swift run` from the repo folder unpacks it to Application Support automatically; an installed NDI SDK/Tools runtime is also found.
+- Pre-service check and keep-awake cover NDI. NDI® is a registered trademark of Vizrt NDI AB (https://ndi.video). **93 automated tests** plus a C/Swift bridge test against a stub runtime.
+
+
+**4.9.8 — Stream resolution.** Stream settings → Quality & audio → Resolution: Same as Program, landscape 2160p / 1440p / 1080p / 900p / 720p / 540p / 480p / 360p / 240p, vertical 1080×1920 and 720×1280 (Reels, Shorts, TikTok), square 1080 and 720, and 4:3 (1440×1080, 960×720, SD PAL 720×576, SD NTSC 720×480). When the shape differs from Program choose Letterbox, Crop to fill or Squeeze. Scaling is done by ffmpeg (Lanczos; interlace-aware for interlaced streams) so recording, Program Out and displays keep the Program resolution. Bitrate guidance follows the stream size. **92 automated tests.**
+
 
 **4.9.7 — Stream bitrate split into video and audio.** Stream settings → Quality & audio: video bitrate from **128 kb/s** up to 51 Mb/s (24 steps or any typed value), AAC stereo audio bitrate **128 / 160 / 192 / 256 / 320 kb/s**, the usual range for the current format, advice when too low/high, total per destination and the upload speed needed (all destinations + 50% headroom). Stream details show video and audio targets separately. **90 automated tests.**
 

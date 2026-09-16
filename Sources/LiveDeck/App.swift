@@ -20,6 +20,7 @@ struct LiveDeckApp: App {
             MainView()
                 .environmentObject(engine)
                 .environmentObject(engine.telemetry)
+                .environmentObject(engine.ndiOutputs)
                 .environmentObject(engine.sysMon)
                 .environmentObject(present)
                 .environmentObject(dictionary)

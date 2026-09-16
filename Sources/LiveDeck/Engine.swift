@@ -155,6 +155,9 @@ final class Engine: ObservableObject {
     @Published var showHotkeys = false
     @Published var showHelp = false
     @Published var showZoom = false
+    @Published var showNDIPicker = false
+    /// NDI® Program / Preview outputs (their own observable model).
+    let ndiOutputs = NDIOutputs()
     @Published var showPreflight = false
 
     // MARK: on-air status (status bar above Program)
@@ -178,6 +181,7 @@ final class Engine: ObservableObject {
     /// recording and Program Out keep running with nobody touching the Mac.
     func updatePowerGuard() {
         let busy = isStreaming || isRecording || streamReconnecting || programWindowActive || !activeScreens.isEmpty
+            || ndiOutputs.programSender != nil || ndiOutputs.previewSender != nil
         let want = keepAwakeMode == 1 || (keepAwakeMode == 0 && busy)
         power.set(want, reason: isStreaming ? "Streaming live" : (isRecording ? "Recording" : "Program output on screen"))
         if keepingAwake != want { keepingAwake = want }
@@ -243,6 +247,7 @@ final class Engine: ObservableObject {
             if abs(free - telemetry.diskFreeBytes) > 50_000_000 { telemetry.diskFreeBytes = free }
         }
         updatePowerGuard()
+        ndiOutputs.poll()
     }
     /// Input whose name is being edited (MainView shows the rename box).
     @Published var renamingSourceID: UUID?
@@ -321,6 +326,16 @@ final class Engine: ObservableObject {
     @Published var streamAudio = true { didSet { persistSettings() } }
     /// Stream video bitrate (kb/s).
     @Published var streamBitrateKbps = StreamBitrates.defaultVideo { didSet { persistSettings() } }
+    /// Stream resolution (independent of Program) and how a different shape is handled.
+    @Published var streamResolutionID: String = UserDefaults.standard.string(forKey: "stream.resolution") ?? StreamResolution.sameAsProgram.id {
+        didSet { UserDefaults.standard.set(streamResolutionID, forKey: "stream.resolution") }
+    }
+    @Published var streamScaleMode: StreamScaleMode = StreamScaleMode(rawValue: UserDefaults.standard.string(forKey: "stream.scaleMode") ?? "") ?? .fit {
+        didSet { UserDefaults.standard.set(streamScaleMode.rawValue, forKey: "stream.scaleMode") }
+    }
+    var streamResolution: StreamResolution { StreamResolution.byID(streamResolutionID) }
+    var streamOutputSize: (width: Int, height: Int) { streamResolution.outputSize(programWidth: width, programHeight: height) }
+
     /// Stream audio bitrate (kb/s, AAC stereo).
     @Published var streamAudioBitrateKbps = StreamBitrates.defaultAudio { didSet { persistSettings() } }
     static let streamBitrates = StreamBitrates.video
@@ -395,7 +410,9 @@ final class Engine: ObservableObject {
         let interlacedStream = ff.interlaced && !streamInterlacedAsProgressive
         let ok = streamer.start(urls: targets.map { $0.composedURL }, width: width, height: height,
                                 fps: ff.framesPerSecond, rate: ff.ffmpegRate, interlaced: interlacedStream,
-                                bitrateKbps: streamBitrateKbps, audioBitrateKbps: streamAudioBitrateKbps, audio: streamAudio)
+                                bitrateKbps: streamBitrateKbps, audioBitrateKbps: streamAudioBitrateKbps, audio: streamAudio,
+                                videoFilter: streamResolution.ffmpegFilter(programWidth: width, programHeight: height, mode: streamScaleMode)
+                                    .map { interlacedStream ? $0.replacingOccurrences(of: "flags=lanczos", with: "flags=lanczos:interl=1") : $0 })
         isStreaming = streamer.isStreaming
         if ok {
             streamError = ""
@@ -505,6 +522,7 @@ final class Engine: ObservableObject {
                 pl.updateOnAir(anyOnAir(pl.id))
                 if let item = pl.audioItem { audio.attachMedia(item, to: c) { [weak pl] ok in pl?.audioRouted = ok } }
             }
+            if let ns = s as? NDISource { ns.setTally(program: anyOnAir(ns.id), preview: previewID == ns.id) }
             if let la = liveAudio, la.audioSink == nil {
                 let ring = c.liveRing
                 la.audioSink = { l, r, n in ring.write(l, r, frames: n) }
@@ -542,6 +560,7 @@ final class Engine: ObservableObject {
     /// Render thread: program mix → stream FIFO and recording file.
     private func consumeProgramAudio(_ l: UnsafePointer<Float>, _ r: UnsafePointer<Float>, _ n: Int, _ time: CMTime) {
         streamer.pushStereo(l, r, n)
+        ndiOutputs.pushAudio(l, r, n)
         audioWriterLock.lock()
         let input = liveAudioWriterInput
         audioWriterLock.unlock()
@@ -1202,6 +1221,14 @@ final class Engine: ObservableObject {
                 topField = nil
             }
         }
+        if let ndiProgram = ndiOutputs.programSender {
+            let ff = frameFormat
+            if ff.interlaced {
+                if let frame = framePB { ndiProgram.sendVideo(frame, rateN: ff.rateNumerator, rateD: ff.rateDenominator, interlaced: true) }
+            } else {
+                ndiProgram.sendVideo(pb, rateN: ff.rateNumerator, rateD: ff.rateDenominator, interlaced: false)
+            }
+        }
         if isRecording, let frame = framePB, let input = videoInput, input.isReadyForMoreMediaData, let adaptor = adaptor {
             adaptor.append(frame, withPresentationTime: CMClockGetTime(CMClockGetHostTimeClock()))
         }
@@ -1217,7 +1244,7 @@ final class Engine: ObservableObject {
         if !previewConsumers.allObjects.isEmpty && (previewID != nil || !previewKeys.isEmpty) {
             if let ctx2 = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                     space: CGColorSpaceCreateDeviceRGB(),
-                                    bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) {
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
                 ctx2.setFillColor(NSColor.black.cgColor); ctx2.fill(full)
                 if let pv = previewID, let s = sources.first(where: { $0.id == pv }) { s.draw(in: ctx2, rect: full) }
                 // what Program will look like after the take: Program keys stay, Preview keys join them
@@ -1229,6 +1256,13 @@ final class Engine: ObservableObject {
                     ctx2.restoreGState()
                 }
                 if let img = ctx2.makeImage() { for v in previewConsumers.allObjects { v.show(img) } }
+                // NDI Preview output (BGRA, one frame per full frame for interlaced formats)
+                if let ndiPreview = ndiOutputs.previewSender, let raw = ctx2.data, !frameFormat.interlaced || fieldIndex % 2 == 0 {
+                    let ff = frameFormat
+                    let bytes = Data(bytes: raw, count: ctx2.bytesPerRow * height)
+                    ndiPreview.sendVideo(bytes: bytes, width: width, height: height, stride: ctx2.bytesPerRow,
+                                         rateN: ff.rateNumerator, rateD: ff.rateDenominator)
+                }
             }
         }
 

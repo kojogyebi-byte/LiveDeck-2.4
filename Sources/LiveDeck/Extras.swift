@@ -839,6 +839,7 @@ final class PresetStore: ObservableObject {
         case is GeneratorSource: return "generator"
         case is AISource: return "ai"
         case is PlaylistSource: return "playlist"
+        case is NDISource: return "ndi"
         case is RTMPListenSource: return "rtmpListen"
         default: return "empty"
         }
@@ -1008,6 +1009,7 @@ final class PresetStore: ObservableObject {
         case "generator": return GeneratorSource(settings: spec.generator ?? GeneratorSettings(), name: spec.name)
         case "ai": return AISource(name: spec.name, look: spec.look ?? AISource.defaultLook)
         case "playlist": return PlaylistSource(playlist: spec.playlist ?? Playlist(), name: spec.name)
+        case "ndi": let s = NDISource(sourceName: loc); s.name = spec.name; return s
         case "rtmpListen":
             let parts = loc.split(separator: "|").map(String.init)
             return RTMPListenSource(port: Int(parts.first ?? "") ?? 1935, streamKey: parts.count > 1 ? parts[1] : "zoom", name: spec.name)

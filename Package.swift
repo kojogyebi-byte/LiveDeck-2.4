@@ -10,9 +10,16 @@ let package = Package(
             name: "PresentationKit",
             path: "Sources/PresentationKit"
         ),
+        // C bridge to the NDI® runtime (loaded at run time with dlopen; headers from the NDI SDK v6 for Apple)
+        .target(
+            name: "CNDI",
+            path: "Sources/CNDI",
+            exclude: ["ndi"],
+            publicHeadersPath: "include"
+        ),
         .executableTarget(
             name: "LiveDeck",
-            dependencies: ["PresentationKit"],
+            dependencies: ["PresentationKit", "CNDI"],
             path: "Sources/LiveDeck"
         ),
         .testTarget(

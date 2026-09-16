@@ -73,6 +73,7 @@ struct OnAirStatusBar: View {
             }
 
             // outputs
+            NDIStatusChip()
             chip { label("PGM OUT", engine.programWindowActive ? (engine.programOutFullscreen ? "Full screen" : "Window") : "Off",
                          color: engine.programWindowActive ? DS.ok : DS.text3) }
                 .onTapGesture { engine.openOutputWindow() }
@@ -265,6 +266,7 @@ struct StreamDetailPopover: View {
             if engine.isStreaming {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
                     row("Live for", StatusFormat.duration(tele.streamSeconds))
+                    row("Resolution", "\(engine.streamOutputSize.width)×\(engine.streamOutputSize.height)" + (engine.streamResolution.isSameAsProgram ? " (Program)" : ""))
                     row("Sending", "\(StatusFormat.bitrate(p.bitrateKbps)) total")
                     row("Video target", StreamBitrates.label(engine.streamBitrateKbps))
                     row("Audio target", engine.streamAudio ? StreamBitrates.label(engine.streamAudioBitrateKbps) + " AAC" : "silent")
@@ -320,8 +322,35 @@ struct StreamBitrateCard: View {
         let dests = max(1, engine.liveDestinations.count)
         let upload = StreamBitrates.uploadNeeded(videoKbps: engine.streamBitrateKbps, audioKbps: engine.streamAudioBitrateKbps,
                                                  audioOn: engine.streamAudio, destinations: dests)
-        let rec = StreamBitrates.recommendedVideo(height: engine.height, fps: engine.frameFormat.framesPerSecond)
-        CPCard(title: "Quality & audio", subtitle: "Video \(StreamBitrates.label(engine.streamBitrateKbps)) + audio \(engine.streamAudio ? StreamBitrates.label(engine.streamAudioBitrateKbps) : "off")", icon: "slider.horizontal.3") {
+        let out = engine.streamOutputSize
+        let res = engine.streamResolution
+        let shortSide = min(out.width, out.height)
+        let rec = StreamBitrates.recommendedVideo(height: shortSide, fps: engine.frameFormat.framesPerSecond)
+        let shapeDiffers = abs(Double(out.width) / Double(max(1, out.height)) - Double(engine.width) / Double(max(1, engine.height))) > 0.01
+        CPCard(title: "Quality & audio", subtitle: "\(out.width)×\(out.height) · video \(StreamBitrates.label(engine.streamBitrateKbps)) + audio \(engine.streamAudio ? StreamBitrates.label(engine.streamAudioBitrateKbps) : "off")", icon: "slider.horizontal.3") {
+            SectionLabel("Resolution")
+            CPRow(label: "Stream resolution") {
+                Picker("", selection: $engine.streamResolutionID) {
+                    Text("Same as Program (\(engine.width)×\(engine.height))").tag(StreamResolution.sameAsProgram.id)
+                    ForEach(StreamAspect.allCases) { aspect in
+                        Section(aspect.rawValue) {
+                            ForEach(StreamResolution.all.filter { $0.aspect == aspect }) { r in Text(r.label).tag(r.id) }
+                        }
+                    }
+                }
+                .cpPickerChrome().frame(maxWidth: 230)
+                .disabled(engine.isStreaming)
+            }
+            if shapeDiffers {
+                CPRow(label: "Different shape") {
+                    DSSegmented(selection: $engine.streamScaleMode, options: StreamScaleMode.allCases.map { ($0, $0.rawValue) })
+                        .frame(width: 240).disabled(engine.isStreaming)
+                }
+                CPNote(engine.streamScaleMode == .fit ? "The whole Program picture is kept with black bars." :
+                       (engine.streamScaleMode == .crop ? "The picture fills the frame; the sides (or top and bottom) are cut off." : "The picture is stretched or squeezed to the new shape."))
+            }
+            CPNote("Program \(engine.width)×\(engine.height) → stream \(out.width)×\(out.height) (\(res.scaleDescription(programWidth: engine.width, programHeight: engine.height))). Recording, Program Out and displays keep the Program resolution.")
+
             SectionLabel("Video")
             CPRow(label: "Video bitrate") {
                 HStack(spacing: 6) {
@@ -344,8 +373,8 @@ struct StreamBitrateCard: View {
                 }
                 .disabled(engine.isStreaming)
             }
-            CPNote("Usual for \(engine.frameFormat.name(height: engine.height)): \(StreamBitrates.label(rec.lowerBound))–\(StreamBitrates.label(rec.upperBound)).")
-            if let advice = StreamBitrates.advice(videoKbps: engine.streamBitrateKbps, height: engine.height, fps: engine.frameFormat.framesPerSecond) {
+            CPNote("Usual for \(engine.frameFormat.name(height: shortSide)): \(StreamBitrates.label(rec.lowerBound))–\(StreamBitrates.label(rec.upperBound)).")
+            if let advice = StreamBitrates.advice(videoKbps: engine.streamBitrateKbps, height: shortSide, fps: engine.frameFormat.framesPerSecond) {
                 Text(advice).font(.system(size: 10.5)).foregroundColor(DS.amber).fixedSize(horizontal: false, vertical: true).padding(.bottom, 4)
             }
 

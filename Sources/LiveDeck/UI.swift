@@ -81,6 +81,9 @@ struct MainView: View {
             renameText = id.flatMap { i in engine.sources.first { $0.id == i }?.name } ?? ""
         }
         .background(PreflightSheetHost())
+        .sheet(isPresented: $engine.showNDIPicker) {
+            NDISourcePicker().environmentObject(engine)
+        }
         .sheet(isPresented: $engine.showZoom) {
             ZoomSetupView().environmentObject(engine)
         }
@@ -1071,6 +1074,7 @@ struct AddInputMenuItems: View {
         }
         Button("Screen Capture") { engine.addScreen() }
         Button("Zoom Meeting / App Window…") { engine.showZoom = true }
+        Button("NDI® Source…") { engine.showNDIPicker = true }
         Button("Playlist (videos, audio, images)") {
             let p = PlaylistSource(); engine.placeInput(p); engine.selectedSourceID = p.id; engine.rightTab = 1
         }
@@ -2426,12 +2430,9 @@ struct AddStreamView: View {
 struct OutputsPanel: View {
     @EnvironmentObject var engine: Engine
     @State private var screens: [(index: Int, name: String)] = []
-    @State private var ndiAvailable = false
-    @State private var ndiVersion = ""
 
     private func refresh() {
-        screens = engine.availableScreens(); NDIBridge.shared.detect()
-        ndiAvailable = NDIBridge.shared.isAvailable; ndiVersion = NDIBridge.shared.versionString
+        screens = engine.availableScreens(); engine.ndiOutputs.rebuild()
     }
 
     private func outputSummary(_ index: Int) -> String {
@@ -2520,21 +2521,7 @@ struct OutputsPanel: View {
                     }
                 }
 
-                CPCard(title: "NDI Output", subtitle: "Network video", icon: "network") {
-                    HStack(spacing: 10) {
-                        Image(systemName: ndiAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundColor(ndiAvailable ? DS.ok : DS.amber)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(ndiAvailable ? "NDI runtime detected\(ndiVersion.isEmpty ? "" : " — \(ndiVersion)")" : "NDI runtime not found")
-                                .font(.system(size: 12)).foregroundColor(CP.text)
-                            Text(ndiAvailable ? "Frame sending arrives once the NDI SDK headers are added to the build."
-                                              : "Install libNDI for Mac, then click Refresh.")
-                                .font(.system(size: 10.5)).foregroundColor(CP.text2)
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 10)
-                }
+                NDIOutputCard()
             }
             .padding(10)
         }

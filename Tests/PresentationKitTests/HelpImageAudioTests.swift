@@ -161,3 +161,14 @@ final class HelpV496Tests: XCTestCase {
 final class HelpV497Tests: XCTestCase {
     func testBitrateTopic() { XCTAssertEqual(HelpIndex.search("audio bitrate").first?.id, "stream") }
 }
+
+final class HelpV498Tests: XCTestCase {
+    func testStreamResolutionTopic() { XCTAssertEqual(HelpIndex.search("stream resolution").first?.id, "stream") }
+}
+
+final class HelpV410Tests: XCTestCase {
+    func testNDITopics() {
+        XCTAssertEqual(HelpIndex.search("ndi output").first?.id, "ndi-output")
+        XCTAssertEqual(HelpIndex.search("ndi camera").first?.id, "ndi-input")
+    }
+}

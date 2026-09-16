@@ -109,6 +109,20 @@ enum Preflight {
             out.append(PreflightItem(title: "No stream destinations enabled", detail: "Only needed if you are going live.", level: .info))
         }
 
+        // NDI
+        let ndi = engine.ndiOutputs
+        if (ndi.programEnabled || ndi.previewEnabled) && !ndi.runtimeAvailable {
+            out.append(PreflightItem(title: "NDI output is on but the NDI runtime did not load", detail: NDIBridge.shared.lastError, level: .fail,
+                                     fixTitle: "Try again", fix: { ndi.rebuild() }))
+        } else if ndi.programEnabled {
+            out.append(PreflightItem(title: ndi.programConnections > 0 ? "NDI Program: \(ndi.programConnections) receiver(s)" : "NDI Program is on (no receivers yet)",
+                                     detail: "Source name: \(ndi.programName)", level: ndi.programConnections > 0 ? .ok : .info))
+        }
+        let ndiInputs = inputs.compactMap { $0 as? NDISource }.filter { !$0.status.hasPrefix("Receiving") }
+        if !ndiInputs.isEmpty {
+            out.append(PreflightItem(title: "NDI input not receiving", detail: ndiInputs.map { "\($0.name): \($0.status)" }.joined(separator: " · "), level: .warn))
+        }
+
         // Performance & outputs
         let fps = engine.telemetry.fps
         let rate = Int(engine.frameFormat.renderRate.rounded())

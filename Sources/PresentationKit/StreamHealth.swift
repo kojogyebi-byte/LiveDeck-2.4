@@ -157,3 +157,92 @@ public enum StreamBitrates {
         return total * max(1, destinations) * 3 / 2
     }
 }
+
+// MARK: - Stream resolution (independent of the Program resolution)
+
+public enum StreamAspect: String, Codable, Sendable, CaseIterable, Identifiable {
+    case landscape = "Landscape 16:9"
+    case vertical = "Vertical 9:16"
+    case square = "Square 1:1"
+    case standard = "Standard 4:3"
+    public var id: String { rawValue }
+}
+
+public enum StreamScaleMode: String, Codable, Sendable, CaseIterable, Identifiable {
+    case fit = "Letterbox"
+    case crop = "Crop to fill"
+    case stretch = "Squeeze"
+    public var id: String { rawValue }
+}
+
+public struct StreamResolution: Hashable, Identifiable, Sendable {
+    public let id: String
+    public let label: String
+    public let width: Int      // 0 = same as Program
+    public let height: Int
+    public let aspect: StreamAspect?
+
+    public init(_ id: String, _ label: String, _ width: Int, _ height: Int, _ aspect: StreamAspect?) {
+        self.id = id; self.label = label; self.width = width; self.height = height; self.aspect = aspect
+    }
+
+    public var isSameAsProgram: Bool { width == 0 || height == 0 }
+
+    public static let sameAsProgram = StreamResolution("program", "Same as Program", 0, 0, nil)
+    public static let all: [StreamResolution] = [
+        sameAsProgram,
+        StreamResolution("2160p", "2160p 4K UHD (3840×2160)", 3840, 2160, .landscape),
+        StreamResolution("1440p", "1440p QHD (2560×1440)", 2560, 1440, .landscape),
+        StreamResolution("1080p", "1080p Full HD (1920×1080)", 1920, 1080, .landscape),
+        StreamResolution("900p", "900p (1600×900)", 1600, 900, .landscape),
+        StreamResolution("720p", "720p HD (1280×720)", 1280, 720, .landscape),
+        StreamResolution("540p", "540p (960×540)", 960, 540, .landscape),
+        StreamResolution("480p", "480p (854×480)", 854, 480, .landscape),
+        StreamResolution("360p", "360p (640×360)", 640, 360, .landscape),
+        StreamResolution("240p", "240p (426×240)", 426, 240, .landscape),
+        StreamResolution("v1080", "Vertical 1080×1920 (Reels, Shorts, TikTok)", 1080, 1920, .vertical),
+        StreamResolution("v720", "Vertical 720×1280", 720, 1280, .vertical),
+        StreamResolution("sq1080", "Square 1080×1080", 1080, 1080, .square),
+        StreamResolution("sq720", "Square 720×720", 720, 720, .square),
+        StreamResolution("4x3-1440", "4:3 1440×1080", 1440, 1080, .standard),
+        StreamResolution("4x3-960", "4:3 960×720", 960, 720, .standard),
+        StreamResolution("576p", "SD PAL 4:3 (720×576)", 720, 576, .standard),
+        StreamResolution("480i-ntsc", "SD NTSC 4:3 (720×480)", 720, 480, .standard)
+    ]
+
+    public static func byID(_ id: String) -> StreamResolution { all.first { $0.id == id } ?? sameAsProgram }
+
+    /// Final stream size (even numbers, as H.264 4:2:0 requires).
+    public func outputSize(programWidth: Int, programHeight: Int) -> (width: Int, height: Int) {
+        let w = isSameAsProgram ? programWidth : width
+        let h = isSameAsProgram ? programHeight : height
+        return (max(2, w - w % 2), max(2, h - h % 2))
+    }
+
+    /// ffmpeg video filter converting the Program frame to this size, or nil when nothing changes.
+    public func ffmpegFilter(programWidth: Int, programHeight: Int, mode: StreamScaleMode) -> String? {
+        let out = outputSize(programWidth: programWidth, programHeight: programHeight)
+        if out.width == programWidth && out.height == programHeight { return nil }
+        let sameShape = abs(Double(out.width) / Double(out.height) - Double(programWidth) / Double(programHeight)) < 0.01
+        let w = out.width, h = out.height
+        if sameShape || mode == .stretch {
+            return "scale=\(w):\(h):flags=lanczos,setsar=1"
+        }
+        switch mode {
+        case .fit:
+            return "scale=\(w):\(h):force_original_aspect_ratio=decrease:flags=lanczos,pad=\(w):\(h):(ow-iw)/2:(oh-ih)/2:black,setsar=1"
+        case .crop:
+            return "scale=\(w):\(h):force_original_aspect_ratio=increase:flags=lanczos,crop=\(w):\(h),setsar=1"
+        case .stretch:
+            return "scale=\(w):\(h):flags=lanczos,setsar=1"
+        }
+    }
+
+    /// "downscaled 0.67×", "same size", "upscaled 2.00×"
+    public func scaleDescription(programWidth: Int, programHeight: Int) -> String {
+        let out = outputSize(programWidth: programWidth, programHeight: programHeight)
+        let k = min(Double(out.width) / Double(max(1, programWidth)), Double(out.height) / Double(max(1, programHeight)))
+        if abs(k - 1) < 0.005 && out.width == programWidth && out.height == programHeight { return "same size as Program" }
+        return (k >= 1 ? "upscaled " : "downscaled ") + String(format: "%.2f×", k)
+    }
+}

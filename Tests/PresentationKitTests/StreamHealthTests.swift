@@ -52,3 +52,22 @@ final class StreamBitrateTests: XCTestCase {
         XCTAssertEqual(StreamBitrates.uploadNeeded(videoKbps: 4500, audioKbps: 160, audioOn: true, destinations: 2), 13980)
     }
 }
+
+final class StreamResolutionTests: XCTestCase {
+    func testResolutionsAndFilters() {
+        XCTAssertEqual(Set(StreamResolution.all.map { $0.id }).count, StreamResolution.all.count)
+        let same = StreamResolution.sameAsProgram
+        XCTAssertNil(same.ffmpegFilter(programWidth: 1920, programHeight: 1080, mode: .fit))
+        XCTAssertEqual(same.outputSize(programWidth: 1920, programHeight: 1080).width, 1920)
+        let r720 = StreamResolution.byID("720p")
+        XCTAssertEqual(r720.ffmpegFilter(programWidth: 1920, programHeight: 1080, mode: .crop), "scale=1280:720:flags=lanczos,setsar=1")
+        XCTAssertEqual(r720.scaleDescription(programWidth: 1920, programHeight: 1080), "downscaled 0.67×")
+        let v = StreamResolution.byID("v1080")
+        XCTAssertEqual(v.ffmpegFilter(programWidth: 1920, programHeight: 1080, mode: .crop),
+                       "scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,setsar=1")
+        XCTAssertTrue(v.ffmpegFilter(programWidth: 1920, programHeight: 1080, mode: .fit)!.contains("pad=1080:1920"))
+        XCTAssertEqual(StreamResolution.byID("480p").outputSize(programWidth: 1920, programHeight: 1080).width, 854)
+        XCTAssertEqual(StreamResolution.byID("nope").id, "program")
+        XCTAssertEqual(StreamResolution.byID("2160p").scaleDescription(programWidth: 1920, programHeight: 1080), "upscaled 2.00×")
+    }
+}
