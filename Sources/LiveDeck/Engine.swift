@@ -89,6 +89,15 @@ final class Telemetry: ObservableObject {
     @Published var levels: [UUID: Float] = [:]
     @Published var levelsL: [UUID: Float] = [:]
     @Published var levelsR: [UUID: Float] = [:]
+    // on-air status — kept here (not on Engine) so frequent updates never refresh the whole window
+    @Published var recordSeconds = 0
+    @Published var streamHealth = StreamHealth(level: .off, bars: 0, advice: "")
+    @Published var streamProgress = FFmpegProgress()
+    @Published var streamSeconds = 0
+    @Published var recordBytes: Int64 = 0
+    @Published var diskFreeBytes: Int64 = 0
+    @Published var lastClip: Date?
+    @Published var lastSignal = Date()
 }
 
 final class Engine: ObservableObject {
@@ -114,7 +123,8 @@ final class Engine: ObservableObject {
     @Published var ftbOn = false
 
     @Published var isRecording = false
-    @Published var recordSeconds = 0
+    /// Seconds recorded (mirrored to `telemetry.recordSeconds` for the interface).
+    var recordSeconds = 0 { didSet { telemetry.recordSeconds = recordSeconds } }
     @Published var lastRecordingURL: URL?
 
     @Published var audioDevices: [AudioDeviceInfo] = []
@@ -136,13 +146,60 @@ final class Engine: ObservableObject {
     @Published var showPreflight = false
 
     // MARK: on-air status (status bar above Program)
-    @Published var streamHealth = StreamHealth(level: .off, bars: 0, advice: "")
-    @Published var streamProgress = FFmpegProgress()
-    @Published var streamSeconds = 0
-    @Published var recordBytes: Int64 = 0
-    @Published var diskFreeBytes: Int64 = 0
-    @Published var lastClip: Date?
-    @Published var lastSignal = Date()
+    /// 0 = keep the Mac awake while streaming, recording or outputs are on · 1 = always while LiveDeck is open · 2 = never
+    @Published var keepAwakeMode: Int = UserDefaults.standard.integer(forKey: "power.keepAwake") {
+        didSet { UserDefaults.standard.set(keepAwakeMode, forKey: "power.keepAwake"); updatePowerGuard() }
+    }
+    @Published var keepingAwake = false
+    @Published var autoReconnectStream: Bool = UserDefaults.standard.object(forKey: "stream.autoReconnect") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(autoReconnectStream, forKey: "stream.autoReconnect") }
+    }
+    @Published var streamReconnecting = false
+    @Published var streamReconnectAttempt = 0
+    private let power = PowerGuard()
+    private var streamWanted = false
+    private var streamTargets: [StreamDestination] = []
+    private var reconnectWork: DispatchWorkItem?
+    private var wakeObservers: [NSObjectProtocol] = []
+
+    /// Prevents idle sleep, display sleep, the screen saver and App Nap while it matters, so streaming,
+    /// recording and Program Out keep running with nobody touching the Mac.
+    func updatePowerGuard() {
+        let busy = isStreaming || isRecording || streamReconnecting || programWindowActive || !activeScreens.isEmpty
+        let want = keepAwakeMode == 1 || (keepAwakeMode == 0 && busy)
+        power.set(want, reason: isStreaming ? "Streaming live" : (isRecording ? "Recording" : "Program output on screen"))
+        if keepingAwake != want { keepingAwake = want }
+    }
+
+    func observeSleepAndWake() {
+        guard wakeObservers.isEmpty else { return }
+        let nc = NSWorkspace.shared.notificationCenter
+        wakeObservers.append(nc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.handleWake()
+        })
+        wakeObservers.append(nc.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.audio.start()
+        })
+    }
+
+    /// After the Mac wakes: restart audio output and bring a dropped stream back.
+    private func handleWake() {
+        audio.start()
+        if streamWanted && !isStreaming && autoReconnectStream { scheduleReconnect(after: 3) }
+    }
+
+    private func scheduleReconnect(after seconds: Double) {
+        reconnectWork?.cancel()
+        streamReconnecting = true
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.streamWanted, !self.isStreaming else { self?.streamReconnecting = false; return }
+            self.streamReconnectAttempt += 1
+            self.startStream(self.streamTargets, userInitiated: false)
+        }
+        reconnectWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
     private var dropHistory: [(time: Double, drops: Int)] = []
     private var statusTimer: Timer?
     private var statusTick = 0
@@ -156,22 +213,24 @@ final class Engine: ObservableObject {
             dropHistory.append((now, s.progress.dropFrames))
             dropHistory.removeAll { now - $0.time > 6 }
             let recentDrops = max(0, s.progress.dropFrames - (dropHistory.first?.drops ?? s.progress.dropFrames))
-            streamProgress = s.progress
-            streamSeconds = Int(s.seconds)
-            streamHealth = StreamHealth.evaluate(streaming: true, seconds: s.seconds, speed: s.progress.speed,
-                                                 backlogSeconds: s.backlogSeconds, droppedRecently: recentDrops,
-                                                 fps: fpsTarget, receivedProgress: s.received)
-        } else if streamHealth.level != .off {
-            streamHealth = StreamHealth(level: .off, bars: 0, advice: ""); streamSeconds = 0; dropHistory = []
+            telemetry.streamProgress = s.progress
+            telemetry.streamSeconds = Int(s.seconds)
+            telemetry.streamHealth = StreamHealth.evaluate(streaming: true, seconds: s.seconds, speed: s.progress.speed,
+                                                           backlogSeconds: s.backlogSeconds, droppedRecently: recentDrops,
+                                                           fps: fpsTarget, receivedProgress: s.received)
+            if s.seconds > 30 && streamReconnectAttempt != 0 { streamReconnectAttempt = 0 }
+        } else if telemetry.streamHealth.level != .off {
+            telemetry.streamHealth = StreamHealth(level: .off, bars: 0, advice: ""); telemetry.streamSeconds = 0; dropHistory = []
         }
         if isRecording, let url = writer?.outputURL,
            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value {
-            recordBytes = size
-        } else if !isRecording && recordBytes != 0 { recordBytes = 0 }
+            telemetry.recordBytes = size
+        } else if !isRecording && telemetry.recordBytes != 0 { telemetry.recordBytes = 0 }
         if statusTick % 5 == 1,
            let free = try? outputFolder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
-            diskFreeBytes = free
+            if abs(free - telemetry.diskFreeBytes) > 50_000_000 { telemetry.diskFreeBytes = free }
         }
+        updatePowerGuard()
     }
     /// Input whose name is being edited (MainView shows the rename box).
     @Published var renamingSourceID: UUID?
@@ -294,21 +353,51 @@ final class Engine: ObservableObject {
     }
 
     func toggleStream(_ dest: StreamDestination?) {
-        if isStreaming { stopStream(); return }
+        if isStreaming || streamReconnecting { stopStream(); return }
         let targets: [StreamDestination] = dest.map { [$0] } ?? liveDestinations
         guard !targets.isEmpty else { streamError = "Add (and enable) a stream destination first."; return }
         guard streamer.available else { streamError = "ffmpeg not found. Install it (brew install ffmpeg)."; return }
+        streamReconnectAttempt = 0
+        startStream(targets, userInitiated: true)
+    }
+
+    private func startStream(_ targets: [StreamDestination], userInitiated: Bool) {
+        streamTargets = targets
+        streamWanted = true
         streamer.onUnexpectedExit = { [weak self] msg in
             guard let self else { return }
             self.streamError = msg
             self.isStreaming = false
+            // network drop, sleep, platform hiccup: try again (every 5 s, then every 15 s)
+            if self.streamWanted && self.autoReconnectStream {
+                self.scheduleReconnect(after: self.streamReconnectAttempt < 6 ? 5 : 15)
+            } else {
+                self.streamReconnecting = false
+            }
+            self.updatePowerGuard()
         }
         let ok = streamer.start(urls: targets.map { $0.composedURL }, width: width, height: height,
                                 fps: fpsTarget, bitrateKbps: streamBitrateKbps, audio: streamAudio)
-        streamError = ok ? "" : streamer.lastError
         isStreaming = streamer.isStreaming
+        if ok {
+            streamError = ""
+            streamReconnecting = false
+        } else {
+            streamError = streamer.lastError
+            if userInitiated { streamWanted = false; streamReconnecting = false }
+            else if autoReconnectStream { scheduleReconnect(after: 15) }
+        }
+        updatePowerGuard()
     }
-    func stopStream() { streamer.stop(); isStreaming = false }
+
+    func stopStream() {
+        streamWanted = false
+        reconnectWork?.cancel()
+        streamReconnecting = false
+        streamer.stop()
+        isStreaming = false
+        updatePowerGuard()
+    }
 
     private var transFrom: UUID?
     private var transitioning = false
@@ -368,6 +457,7 @@ final class Engine: ObservableObject {
         if let v = UserDefaults.standard.object(forKey: "audio.monitorDB") as? Double { monitorLevelDB = v }
         hearLiveInputs = UserDefaults.standard.bool(forKey: "audio.hearLive")
         audio.programSink = { [weak self] l, r, n, time in self?.consumeProgramAudio(l, r, n, time) }
+        observeSleepAndWake()
         let st = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.updateOnAirStatus() }
         RunLoop.main.add(st, forMode: .common)
         statusTimer = st
@@ -473,8 +563,8 @@ final class Engine: ObservableObject {
         if meterML < 0.0005 { meterML = 0 }
         if meterMR < 0.0005 { meterMR = 0 }
         let mm = max(meterML, meterMR)
-        if max(m.master.0, m.master.1) >= 0.98 { lastClip = Date() }
-        if max(m.master.0, m.master.1) > 0.003, Date().timeIntervalSince(lastSignal) > 0.5 { lastSignal = Date() }
+        if max(m.master.0, m.master.1) >= 0.98, Date().timeIntervalSince(telemetry.lastClip ?? .distantPast) > 0.5 { telemetry.lastClip = Date() }
+        if max(m.master.0, m.master.1) > 0.003, Date().timeIntervalSince(telemetry.lastSignal) > 1 { telemetry.lastSignal = Date() }
         if abs(mm - telemetry.master) > 0.002 || (mm == 0 && telemetry.master != 0) {
             telemetry.master = mm; telemetry.masterL = meterML; telemetry.masterR = meterMR
         }
@@ -1428,4 +1518,26 @@ final class SourceThumbNSView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { t?.invalidate() }
+}
+
+
+// MARK: - Keep the Mac awake while live
+
+/// Holds a latency-critical activity: no idle system sleep, no display sleep or screen saver,
+/// and no App Nap throttling of the render and audio timers.
+final class PowerGuard {
+    private var activity: NSObjectProtocol?
+
+    func set(_ on: Bool, reason: String) {
+        if on && activity == nil {
+            activity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .idleSystemSleepDisabled, .idleDisplaySleepDisabled, .latencyCritical],
+                reason: "LiveDeck: \(reason)")
+        } else if !on, let a = activity {
+            ProcessInfo.processInfo.endActivity(a)
+            activity = nil
+        }
+    }
+
+    deinit { if let a = activity { ProcessInfo.processInfo.endActivity(a) } }
 }

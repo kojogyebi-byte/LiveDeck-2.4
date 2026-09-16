@@ -1047,7 +1047,6 @@ final class PresetStore: ObservableObject {
 
 struct PresetsPanel: View {
     @EnvironmentObject var engine: Engine
-    @EnvironmentObject var link: LinkManager
     @EnvironmentObject var presets: PresetStore
     @State private var name = ""
     @State private var includes = PresetIncludes()
@@ -1127,7 +1126,7 @@ struct PresetsPanel: View {
                                 Button("Update with current setup") { presets.update(p, from: engine) }
                                 Button("Rename…") { renameText = p.name; renaming = p.id }
                                 Button("Export…") { presets.export(p) }
-                                LinkSendMenu(title: "Send to computer") { pid in link.sharePreset(p, to: pid) }
+                                LinkSendMenu(title: "Send to computer") { pid, link in link.sharePreset(p, to: pid) }
                                 Divider()
                                 Button("Delete", role: .destructive) { presets.delete(p) }
                             }

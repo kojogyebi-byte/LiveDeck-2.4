@@ -144,3 +144,9 @@ final class HelpV493Tests: XCTestCase {
         XCTAssertEqual(HelpIndex.search("dropped frames").first?.id, "status-bar")
     }
 }
+
+final class HelpV495Tests: XCTestCase {
+    func testKeepAwakeTopic() {
+        XCTAssertEqual(HelpIndex.search("screen saver").first?.id, "keep-awake")
+    }
+}

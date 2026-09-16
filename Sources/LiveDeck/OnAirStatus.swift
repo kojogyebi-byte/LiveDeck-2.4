@@ -67,6 +67,11 @@ struct OnAirStatusBar: View {
 
             Spacer(minLength: 6)
 
+            if engine.keepingAwake {
+                chip { label("POWER", "Staying awake", color: DS.ok) }
+                    .help("LiveDeck is keeping the Mac awake (no sleep, screen saver or display sleep) while it is streaming, recording or showing outputs. Gear menu → Keep Mac awake to change.")
+            }
+
             // outputs
             chip { label("PGM OUT", engine.programWindowActive ? (engine.programOutFullscreen ? "Full screen" : "Window") : "Off",
                          color: engine.programWindowActive ? DS.ok : DS.text3) }
@@ -94,7 +99,7 @@ struct OnAirStatusBar: View {
         .background(Color(rgb: 0x0E0F12))
         .overlay(Rectangle().fill(DS.lineSoft).frame(height: 1), alignment: .bottom)
         .onReceive(tick) { d in now = d; blink.toggle() }
-        .popover(isPresented: $showStream, arrowEdge: .bottom) { StreamDetailPopover().environmentObject(engine) }
+        .popover(isPresented: $showStream, arrowEdge: .bottom) { StreamDetailPopover().environmentObject(engine).environmentObject(tele) }
     }
 
     private var keyNames: String {
@@ -107,8 +112,8 @@ struct OnAirStatusBar: View {
 
     private var audioChip: some View {
         let db = meterDB(tele.master)
-        let clipping = engine.lastClip.map { now.timeIntervalSince($0) < 2 } ?? false
-        let silent = (engine.isRecording || engine.isStreaming) && now.timeIntervalSince(engine.lastSignal) > 8
+        let clipping = tele.lastClip.map { now.timeIntervalSince($0) < 2 } ?? false
+        let silent = (engine.isRecording || engine.isStreaming) && now.timeIntervalSince(tele.lastSignal) > 8
         let muted = engine.masterBus.muted
         let color: Color = muted || clipping ? DS.program : (silent ? DS.amber : (tele.master > 0.001 ? DS.ok : DS.text3))
         let text = muted ? "MUTED" : (clipping ? "CLIP" : (silent ? "SILENT" : (tele.master > 0.001 ? String(format: "%.0f dB", db) : "—")))
@@ -144,16 +149,16 @@ struct OnAirStatusBar: View {
     // MARK: recording
 
     private var recChip: some View {
-        let hours = StatusFormat.hoursLeft(freeBytes: engine.diskFreeBytes, mbps: Double(engine.recBitrateMbps) + 0.2)
-        let lowDisk = engine.diskFreeBytes > 0 && hours < 1
+        let hours = StatusFormat.hoursLeft(freeBytes: tele.diskFreeBytes, mbps: Double(engine.recBitrateMbps) + 0.2)
+        let lowDisk = tele.diskFreeBytes > 0 && hours < 1
         return chip(tint: engine.isRecording ? DS.program : (lowDisk ? DS.amber : nil)) {
             HStack(spacing: 6) {
                 Circle().fill(engine.isRecording ? DS.program : DS.text3).frame(width: 8, height: 8)
                     .opacity(engine.isRecording && !blink ? 0.35 : 1)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(engine.isRecording ? "REC " + StatusFormat.duration(engine.recordSeconds) : "REC OFF")
+                    Text(engine.isRecording ? "REC " + StatusFormat.duration(tele.recordSeconds) : "REC OFF")
                         .font(.system(size: 11.5, weight: .bold, design: .monospaced)).foregroundColor(engine.isRecording ? DS.program : DS.text3)
-                    Text(engine.isRecording ? "\(StatusFormat.bytes(engine.recordBytes)) · \(hoursText(hours)) left" : (engine.diskFreeBytes > 0 ? "\(hoursText(hours)) of space" : ""))
+                    Text(engine.isRecording ? "\(StatusFormat.bytes(tele.recordBytes)) · \(hoursText(hours)) left" : (tele.diskFreeBytes > 0 ? "\(hoursText(hours)) of space" : ""))
                         .font(.system(size: 8.5, weight: .semibold)).foregroundColor(lowDisk ? DS.amber : DS.text3)
                 }
             }
@@ -167,7 +172,7 @@ struct OnAirStatusBar: View {
     // MARK: stream
 
     private var streamChip: some View {
-        let h = engine.streamHealth
+        let h = tele.streamHealth
         let color: Color = {
             switch h.level {
             case .off: return DS.text3
@@ -177,24 +182,26 @@ struct OnAirStatusBar: View {
             case .poor: return DS.program
             }
         }()
-        let failed = !engine.isStreaming && !engine.streamError.isEmpty
+        let failed = !engine.isStreaming && !engine.streamReconnecting && !engine.streamError.isEmpty
         return chip(tint: engine.isStreaming ? (h.level == .poor ? DS.program : DS.program.opacity(0.7)) : (failed ? DS.program : nil)) {
             HStack(spacing: 7) {
                 HStack(spacing: 3) {
                     Circle().fill(engine.isStreaming ? DS.program : (failed ? DS.program : DS.text3)).frame(width: 8, height: 8)
                         .opacity(engine.isStreaming && !blink ? 0.35 : 1)
-                    Text(engine.isStreaming ? "LIVE" : (failed ? "STREAM ERROR" : "OFF AIR"))
+                    Text(engine.isStreaming ? "LIVE" : (engine.streamReconnecting ? "RECONNECTING" : (failed ? "STREAM ERROR" : "OFF AIR")))
                         .font(.system(size: 11.5, weight: .heavy)).foregroundColor(engine.isStreaming || failed ? DS.program : DS.text3)
                 }
                 SignalBars(bars: h.bars, color: color)
                 if engine.isStreaming {
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(StatusFormat.duration(engine.streamSeconds)).font(.system(size: 11.5, weight: .bold, design: .monospaced)).foregroundColor(DS.text)
-                        Text("\(StatusFormat.bitrate(engine.streamProgress.bitrateKbps)) · \(String(format: "%.2fx", engine.streamProgress.speed)) · \(engine.streamProgress.dropFrames) dropped")
+                        Text(StatusFormat.duration(tele.streamSeconds)).font(.system(size: 11.5, weight: .bold, design: .monospaced)).foregroundColor(DS.text)
+                        Text("\(StatusFormat.bitrate(tele.streamProgress.bitrateKbps)) · \(String(format: "%.2fx", tele.streamProgress.speed)) · \(tele.streamProgress.dropFrames) dropped")
                             .font(.system(size: 8.5, weight: .semibold, design: .monospaced)).foregroundColor(color)
                     }
                     Text("→ \(engine.liveDestinations.count)").font(.system(size: 10, weight: .bold)).foregroundColor(DS.text2)
                         .help(engine.liveDestinations.map { $0.name }.joined(separator: ", "))
+                } else if engine.streamReconnecting {
+                    Text("try \(engine.streamReconnectAttempt + 1)").font(.system(size: 9.5, weight: .semibold)).foregroundColor(DS.amber)
                 } else {
                     Text(engine.liveDestinations.isEmpty ? "no destinations" : "\(engine.liveDestinations.count) ready")
                         .font(.system(size: 9.5, weight: .semibold)).foregroundColor(DS.text3)
@@ -242,9 +249,10 @@ struct SignalBars: View {
 /// Click on the stream indicator: full numbers, destinations and the latest error.
 struct StreamDetailPopover: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var tele: Telemetry
     var body: some View {
-        let p = engine.streamProgress
-        let h = engine.streamHealth
+        let p = tele.streamProgress
+        let h = tele.streamHealth
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 SignalBars(bars: h.bars, color: h.level == .poor ? DS.program : (h.level == .fair || h.level == .connecting ? DS.amber : DS.ok))
@@ -255,7 +263,7 @@ struct StreamDetailPopover: View {
             }
             if engine.isStreaming {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
-                    row("Live for", StatusFormat.duration(engine.streamSeconds))
+                    row("Live for", StatusFormat.duration(tele.streamSeconds))
                     row("Bitrate", "\(StatusFormat.bitrate(p.bitrateKbps)) (target \(StatusFormat.bitrate(Double(engine.streamBitrateKbps))))")
                     row("Speed", String(format: "%.2fx real time", p.speed))
                     row("Encoder fps", String(format: "%.1f", p.fps))
@@ -273,10 +281,14 @@ struct StreamDetailPopover: View {
             if !engine.streamError.isEmpty {
                 Text(engine.streamError).font(.system(size: 10)).foregroundColor(DS.amber).textSelection(.enabled).lineLimit(6)
             }
+            Toggle("Reconnect automatically if the stream drops", isOn: $engine.autoReconnectStream).font(.system(size: 11))
+            if engine.streamReconnecting {
+                Text("Reconnecting… attempt \(engine.streamReconnectAttempt + 1)").font(.system(size: 11, weight: .semibold)).foregroundColor(DS.amber)
+            }
             HStack {
-                Button(engine.isStreaming ? "Stop streaming" : "Go live") { engine.toggleStream(nil) }
+                Button(engine.isStreaming || engine.streamReconnecting ? "Stop streaming" : "Go live") { engine.toggleStream(nil) }
                     .buttonStyle(.ds(.program, .small, active: engine.isStreaming))
-                    .disabled(!engine.isStreaming && engine.liveDestinations.isEmpty)
+                    .disabled(!engine.isStreaming && !engine.streamReconnecting && engine.liveDestinations.isEmpty)
                 Spacer()
             }
         }

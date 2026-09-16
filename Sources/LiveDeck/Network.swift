@@ -82,7 +82,13 @@ final class LinkConnection {
     func close() { conn.cancel() }
 }
 
+/// Live status of other stations — separate so its updates (every 2 s) refresh only the station rows.
+final class LinkStatusBoard: ObservableObject {
+    @Published var statuses: [String: LinkStatus] = [:]
+}
+
 final class LinkManager: ObservableObject {
+    let board = LinkStatusBoard()
     static let serviceType = "_livedeck._tcp"
 
     weak var engine: Engine?
@@ -285,7 +291,7 @@ final class LinkManager: ObservableObject {
                 if let i = self.peers.firstIndex(where: { $0.id == id }) {
                     if case .failed = self.peers[i].state { return }
                     self.peers[i].state = msg.map { .failed($0) } ?? .found
-                    self.peers[i].status = nil
+                    self.board.statuses[id] = nil
                 }
                 for k in self.transfers.indices where self.transfers[k].peerID == id && self.transfers[k].active {
                     self.transfers[k].state = .failed("connection lost")
@@ -348,7 +354,8 @@ final class LinkManager: ObservableObject {
         case .status:
             let st = env.status
             DispatchQueue.main.async {
-                if let i = self.peers.firstIndex(where: { $0.id == peerID }) { self.peers[i].status = st; self.peers[i].name = peerName; self.peers[i].lastSeen = Date() }
+                if self.board.statuses[peerID] != st { self.board.statuses[peerID] = st }
+                if let i = self.peers.firstIndex(where: { $0.id == peerID }), self.peers[i].name != peerName { self.peers[i].name = peerName }
             }
         case .chat, .attention:
             let m = LinkChatMessage(id: env.id, from: peerID, fromName: peerName, to: env.to, toName: env.to == nil ? nil : "you",
@@ -911,6 +918,14 @@ struct NetworkPanel: View {
 struct PeerRow: View {
     @EnvironmentObject var link: LinkManager
     let peer: LinkPeerInfo
+    var body: some View { PeerRowContent(peer: peer, board: link.board) }
+}
+
+private struct PeerRowContent: View {
+    @EnvironmentObject var link: LinkManager
+    let peer: LinkPeerInfo
+    @ObservedObject var board: LinkStatusBoard
+    private var status: LinkStatus? { board.statuses[peer.id] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -922,7 +937,7 @@ struct PeerRow: View {
                 }
                 Spacer()
                 if peer.connected {
-                    if let s = peer.status {
+                    if let s = status {
                         if s.recording { badge("REC", DS.program) }
                         if s.streaming { badge("LIVE", DS.program) }
                     }
@@ -937,7 +952,7 @@ struct PeerRow: View {
                     CPButton(title: "Connect") { link.reconnect(peer.id) }
                 }
             }
-            if let s = peer.status, peer.connected {
+            if let s = status, peer.connected {
                 HStack(spacing: 6) {
                     tally("PGM", s.program, DS.program)
                     tally("PVW", s.preview, DS.preview)
@@ -1062,6 +1077,9 @@ struct LinkToast: View {
     @EnvironmentObject var link: LinkManager
     @EnvironmentObject var engine: Engine
     var body: some View {
+        toastBody.animation(.easeInOut(duration: 0.25), value: link.toast?.id)
+    }
+    @ViewBuilder private var toastBody: some View {
         if let m = link.toast {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: m.attention ? "exclamationmark.triangle.fill" : "bubble.left.fill")
@@ -1091,14 +1109,14 @@ struct LinkToast: View {
 struct LinkSendMenu: View {
     @EnvironmentObject var link: LinkManager
     let title: String
-    let send: (_ peerID: String?) -> Void
+    let send: (_ peerID: String?, _ link: LinkManager) -> Void
     var body: some View {
         if link.enabled && !link.connectedPeers.isEmpty {
             Menu(title) {
-                ForEach(link.connectedPeers) { p in Button(p.name) { send(p.id) } }
+                ForEach(link.connectedPeers) { p in Button(p.name) { send(p.id, link) } }
                 if link.connectedPeers.count > 1 {
                     Divider()
-                    Button("All connected computers") { send(nil) }
+                    Button("All connected computers") { send(nil, link) }
                 }
             }
         }

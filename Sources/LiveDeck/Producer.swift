@@ -304,7 +304,7 @@ final class StageModel: ObservableObject {
         w.title = "LiveDeck — Stage Display"
         w.isReleasedWhenClosed = false
         w.backgroundColor = .black
-        w.contentView = NSHostingView(rootView: StageDisplayView().environmentObject(self).environmentObject(engine).environmentObject(present))
+        w.contentView = NSHostingView(rootView: StageDisplayView().environmentObject(self).environmentObject(engine).environmentObject(present).environmentObject(engine.telemetry))
         if fullscreen { w.level = .normal; w.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]; w.setFrame(screen.frame, display: true) }
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
             self?.windowOpen = false; self?.window = nil
@@ -320,6 +320,7 @@ final class StageModel: ObservableObject {
 struct StageDisplayView: View {
     @EnvironmentObject var stage: StageModel
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var tele: Telemetry
     @EnvironmentObject var present: PresentModel
     @State private var now = Date()
     @State private var blink = false
@@ -342,7 +343,7 @@ struct StageDisplayView: View {
                         HStack(spacing: 10 * s) {
                             Circle().fill(Color.red).frame(width: 22 * s, height: 22 * s).opacity(blink ? 1 : 0.35)
                             Text(engine.isStreaming ? "LIVE" : "REC").font(.system(size: 44 * s, weight: .heavy)).foregroundColor(.red)
-                            Text(String(format: "%02d:%02d:%02d", engine.recordSeconds / 3600, engine.recordSeconds / 60 % 60, engine.recordSeconds % 60))
+                            Text(String(format: "%02d:%02d:%02d", tele.recordSeconds / 3600, tele.recordSeconds / 60 % 60, tele.recordSeconds % 60))
                                 .font(.system(size: 44 * s, weight: .semibold, design: .monospaced)).foregroundColor(.white.opacity(0.85))
                         }
                     }

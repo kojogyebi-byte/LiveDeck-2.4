@@ -575,7 +575,6 @@ final class CGImageBox {
 
 struct SongListPane: View {
     @EnvironmentObject var present: PresentModel
-    @EnvironmentObject var link: LinkManager
     var body: some View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
@@ -615,7 +614,7 @@ struct SongListPane: View {
                         .contextMenu {
                             Button(s.meta.favorite ? "Remove from favourites" : "Add to favourites") { present.toggleFavorite(s.id) }
                             Button("Duplicate") { present.duplicateSong(s.id) }
-                            LinkSendMenu(title: "Send to computer") { pid in link.shareSong(s, to: pid) }
+                            LinkSendMenu(title: "Send to computer") { pid, link in link.shareSong(s, to: pid) }
                             Divider()
                             Button("Delete", role: .destructive) { present.deleteSong(s.id) }
                         }

@@ -15,9 +15,7 @@ private let cBtn = DS.bg3
 private let pipNoneTag = UUID()
 
 struct MainView: View {
-    @EnvironmentObject var automation: AutomationModel
     @EnvironmentObject var backgrounds: BackgroundsModel
-    @EnvironmentObject var link: LinkManager
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
@@ -61,7 +59,7 @@ struct MainView: View {
         .background(WindowChrome())
         .overlay { if dropTargeted { Rectangle().stroke(DS.accent, lineWidth: 3).allowsHitTesting(false) } }
         .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
-        .overlay(alignment: .topTrailing) { LinkToast().animation(.easeInOut(duration: 0.25), value: link.toast?.id) }
+        .overlay(alignment: .topTrailing) { LinkToast() }
         .overlay(alignment: .top) { RecoveryBanner() }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
         .sheet(isPresented: $showStream) { StreamSettingsView() }
@@ -82,9 +80,7 @@ struct MainView: View {
         .onChange(of: engine.renamingSourceID) { id in
             renameText = id.flatMap { i in engine.sources.first { $0.id == i }?.name } ?? ""
         }
-        .sheet(isPresented: $engine.showPreflight) {
-            PreflightView().environmentObject(engine).environmentObject(present).environmentObject(link).environmentObject(automation)
-        }
+        .background(PreflightSheetHost())
         .sheet(isPresented: $engine.showZoom) {
             ZoomSetupView().environmentObject(engine)
         }
@@ -285,7 +281,7 @@ struct TopBar: View {
             Button { engine.toggleRecording() } label: {
                 HStack(spacing: 6) {
                     Image(systemName: engine.isRecording ? "stop.fill" : "record.circle")
-                    Text(engine.isRecording ? String(format: "REC %02d:%02d:%02d", engine.recordSeconds / 3600, (engine.recordSeconds % 3600) / 60, engine.recordSeconds % 60) : "REC")
+                    RecordTimeText(prefix: "REC ", idle: "REC", recording: engine.isRecording)
                         .font(DS.mono(11, .semibold))
                 }
             }
@@ -347,6 +343,12 @@ struct TopBar: View {
                 Button("Keyboard shortcuts…") { engine.showHotkeys = true }
                 Button("Pre-service check…") { engine.showPreflight = true }
                 checkButton("Hear microphones in the Mac's speakers", engine.hearLiveInputs) { engine.hearLiveInputs.toggle() }
+                Menu("Keep Mac awake") {
+                    checkButton("While streaming, recording or showing outputs", engine.keepAwakeMode == 0) { engine.keepAwakeMode = 0 }
+                    checkButton("Always while LiveDeck is open", engine.keepAwakeMode == 1) { engine.keepAwakeMode = 1 }
+                    checkButton("Never (use the Mac's energy settings)", engine.keepAwakeMode == 2) { engine.keepAwakeMode = 2 }
+                }
+                checkButton("Reconnect the stream automatically", engine.autoReconnectStream) { engine.autoReconnectStream.toggle() }
                 checkButton("Show on-air status bar", UserDefaults.standard.object(forKey: "ui.onAirBar") as? Bool ?? true) {
                     let cur = UserDefaults.standard.object(forKey: "ui.onAirBar") as? Bool ?? true
                     UserDefaults.standard.set(!cur, forKey: "ui.onAirBar")
@@ -669,7 +671,7 @@ struct TransitionColumn: View {
                 .help("Fade to black")
             VStack(spacing: 1) {
                 ClockText()
-                Text(String(format: "%02d:%02d:%02d", engine.recordSeconds / 3600, (engine.recordSeconds % 3600) / 60, engine.recordSeconds % 60))
+                RecordTimeText(prefix: "", idle: "00:00:00", recording: true)
                     .font(DS.mono(10)).foregroundColor(DS.text3)
             }
             .padding(.vertical, 5).frame(maxWidth: .infinity)
@@ -867,7 +869,6 @@ struct TileTransport<S: MediaPlayback>: View {
 struct InputTile: View {
     @EnvironmentObject var ai: AIModel
     @EnvironmentObject var engine: Engine
-    @EnvironmentObject var link: LinkManager
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
     @EnvironmentObject var gen: GeneratorModel
@@ -960,8 +961,8 @@ struct InputTile: View {
                 Button("Audio in mixer") { select(); present.deck = DeckTab.audio.rawValue }
                 if let path = source.originLocation, !(source is CameraSource), FileManager.default.fileExists(atPath: path) {
                     Divider()
-                    LinkSendMenu(title: "Send file to computer") { pid in link.offerFile(URL(fileURLWithPath: path), title: source.name, to: pid) }
-                    LinkSendMenu(title: "Send to computer as an input") { pid in link.offerFile(URL(fileURLWithPath: path), title: source.name, to: pid, addAsInput: true) }
+                    LinkSendMenu(title: "Send file to computer") { pid, link in link.offerFile(URL(fileURLWithPath: path), title: source.name, to: pid) }
+                    LinkSendMenu(title: "Send to computer as an input") { pid, link in link.offerFile(URL(fileURLWithPath: path), title: source.name, to: pid, addAsInput: true) }
                 }
                 if source.sourceURLString != nil {
                     Button("Edit address…") { engine.openEditStream(source.id) }
@@ -1215,7 +1216,6 @@ struct ScenesPanel: View {
 
 struct RightPanel: View {
     @EnvironmentObject var engine: Engine
-    @EnvironmentObject var link: LinkManager
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
@@ -1234,7 +1234,7 @@ struct RightPanel: View {
                 DSTabItem(id: 3, title: "Scenes", icon: "rectangle.split.2x2"),
                 DSTabItem(id: 4, title: "Outputs", icon: "display"),
                 DSTabItem(id: 5, title: "Presets", icon: "tray.full"),
-                DSTabItem(id: 6, title: link.unread > 0 ? "Network •\(link.unread)" : "Network", icon: "network")
+                DSTabItem(id: 6, title: "Network", icon: "network")
             ])
             .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
             Group {
@@ -1612,6 +1612,32 @@ struct AudioEffectsBody: View {
 
 struct AudioMixerPanel: View {
     var body: some View { MixerConsole() }
+}
+
+/// Recording time that updates on its own (so the top bar and its menus are not refreshed every second).
+struct RecordTimeText: View {
+    @EnvironmentObject var tele: Telemetry
+    let prefix: String
+    let idle: String
+    let recording: Bool
+    var body: some View {
+        let s = tele.recordSeconds
+        Text(recording ? prefix + String(format: "%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60) : idle)
+    }
+}
+
+/// Hosts the pre-service sheet with the models it needs, without MainView observing them.
+struct PreflightSheetHost: View {
+    @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var link: LinkManager
+    @EnvironmentObject var automation: AutomationModel
+    var body: some View {
+        Color.clear
+            .sheet(isPresented: $engine.showPreflight) {
+                PreflightView().environmentObject(engine).environmentObject(present).environmentObject(link).environmentObject(automation)
+            }
+    }
 }
 
 struct ClockText: View {

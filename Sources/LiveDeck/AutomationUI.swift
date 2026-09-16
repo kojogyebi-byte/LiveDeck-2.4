@@ -14,7 +14,6 @@ final class AutomationModel: ObservableObject {
     @Published var selectedID: UUID?
     @Published private(set) var running = false
     @Published var log: [String] = []
-    @Published var tick = 0            // refreshes countdowns
 
     init() {
         rules = library.rules
@@ -66,11 +65,9 @@ final class AutomationModel: ObservableObject {
 
     private func step() {
         execute(scheduler.tick(rules, context()))
-        tick &+= 1
     }
 
     func countdown(_ r: AutomationRule) -> String {
-        _ = tick
         if scheduler.isActive(r.id) { return "on air" }
         guard let s = scheduler.secondsUntilNext(r, context()) else {
             if !running { return "stopped" }
@@ -285,7 +282,9 @@ struct AutomationDeck: View {
                 Text(auto.describe(r)).font(.system(size: 10)).foregroundColor(DS.text2).lineLimit(1)
             }
             Spacer()
-            Text(auto.countdown(r)).font(DS.mono(11)).foregroundColor(active ? DS.program : DS.amber)
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                Text(auto.countdown(r)).font(DS.mono(11)).foregroundColor(auto.countdown(r) == "on air" ? DS.program : DS.amber)
+            }
             Button("Run") { auto.runNow(r) }.buttonStyle(.ds(.normal, .small)).help("Fire this cue now")
         }
         .padding(8)

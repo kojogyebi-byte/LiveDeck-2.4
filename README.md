@@ -1,4 +1,10 @@
-# LiveDeck Studio (macOS) — v4.9.4
+# LiveDeck Studio (macOS) — v4.9.5
+
+**4.9.5:**
+- **Menus stay open.** The status-bar numbers (record time, stream stats, audio clip/signal, disk space) moved from `Engine` to `Telemetry`, the automation countdown no longer publishes 4×/s, network station status has its own store, and the main window no longer subscribes to the network/automation models. Nothing refreshes the whole window every second any more (menus were being closed by those refreshes; this also frees CPU for rendering).
+- **Keeps running when the Mac is idle.** While streaming, recording or showing Program Out / display outputs, LiveDeck holds a latency-critical power activity: no idle sleep, no display sleep or screen saver, no App Nap throttling (gear menu → Keep Mac awake: while live · always · never). Status bar shows POWER · Staying awake.
+- **Stream auto-reconnect.** If ffmpeg exits (internet drop, platform hiccup, after waking) the stream retries every 5 s, then 15 s, until back or stopped; status bar shows RECONNECTING. After wake the audio engine restarts. Toggle in the gear menu or stream details.
+
 
 **4.9.4 (build fix):** `StreamHealth` now has a public initializer so the app target can create it.
 
