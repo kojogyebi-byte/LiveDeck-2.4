@@ -43,6 +43,7 @@ final class BackgroundsModel: ObservableObject {
         case 2: return items.filter { $0.kind == .image }
         case 3: return items.filter { $0.category == "Generated" }
         case 4: return items.filter { $0.favorite }
+        case 5: return items.filter { $0.category == "Imported" }
         default: return items
         }
     }
@@ -202,19 +203,48 @@ final class BackgroundsModel: ObservableObject {
         message = "“\(item.title)” is now the background of \(source.name)."
     }
 
+    static let imageExtensions = ["png", "jpg", "jpeg", "heic", "heif", "gif", "bmp", "tiff", "tif", "webp"]
+    static let videoExtensions = ["mp4", "mov", "m4v"]
+
     func importFiles() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [.image, .movie, .mpeg4Movie, .quickTimeMovie]
+        panel.canChooseDirectories = true
+        panel.message = "Choose images or videos (or a folder) to add to your media library"
+        panel.allowedContentTypes = [.image, .movie, .mpeg4Movie, .quickTimeMovie, .folder]
         panel.begin { [weak self] resp in
             guard resp == .OK, let self else { return }
-            for u in panel.urls {
-                let isVideo = ["mp4", "mov", "m4v"].contains(u.pathExtension.lowercased())
-                _ = try? self.catalog.add(file: u, id: "import-" + UUID().uuidString, title: u.deletingPathExtension().lastPathComponent,
-                                      kind: isVideo ? .video : .image, category: "Imported")
-            }
-            self.refresh()
+            self.importURLs(panel.urls)
         }
+    }
+
+    /// Copies images and videos (folders are searched one level deep) into the library. Returns the new items.
+    @discardableResult
+    func importURLs(_ urls: [URL]) -> [LocalBackground] {
+        var files: [URL] = []
+        for u in urls {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir), isDir.boolValue {
+                files += (try? FileManager.default.contentsOfDirectory(at: u, includingPropertiesForKeys: nil)) ?? []
+            } else { files.append(u) }
+        }
+        var added: [LocalBackground] = []
+        var skipped = 0
+        for u in files {
+            let ext = u.pathExtension.lowercased()
+            let isVideo = Self.videoExtensions.contains(ext)
+            guard isVideo || Self.imageExtensions.contains(ext) else { skipped += 1; continue }
+            if let item = try? catalog.add(file: u, id: "import-" + UUID().uuidString, title: u.deletingPathExtension().lastPathComponent,
+                                           kind: isVideo ? .video : .image, category: "Imported") {
+                added.append(item)
+            }
+        }
+        refresh()
+        filter = 5
+        selectedLocalID = added.first?.id
+        message = added.isEmpty ? "No images or videos found (supported: JPG, PNG, HEIC, GIF, WebP, MP4, MOV, M4V)."
+            : "Added \(added.count) file\(added.count == 1 ? "" : "s") to your media library" + (skipped > 0 ? " (\(skipped) skipped)." : ".")
+        return added
     }
 
     func thumbnail(_ item: LocalBackground) {
@@ -248,17 +278,56 @@ final class BackgroundsModel: ObservableObject {
 
 struct MediaDeck: View {
     @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var bg: BackgroundsModel
+    @State private var dropTargeted = false
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                DSSegmented(selection: $present.mediaSection, options: [(0, "Web images"), (1, "Backgrounds library"), (2, "Generator")])
-                    .frame(width: 420)
+            HStack(spacing: 8) {
+                DSSegmented(selection: $present.mediaSection, options: [(0, "Web search"), (1, "Library"), (2, "Generator")])
+                    .frame(width: 360)
                 Spacer()
+                Text("Drop images or videos here").font(.system(size: 10)).foregroundColor(DS.text3)
+                Button { bg.importFiles(); present.mediaSection = 1 } label: { Label("Add from computer…", systemImage: "plus.square.on.square") }
+                    .buttonStyle(.ds(.normal, .small))
+                    .help("Copy images and videos from your Mac into the media library")
             }
             .padding(.horizontal, 10).padding(.vertical, 6).background(DS.bg2)
             if present.mediaSection == 1 { BackgroundsView() }
             else if present.mediaSection == 2 { GeneratorView() }
             else { ImageSearchDeck() }
+        }
+        .overlay {
+            if dropTargeted {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8).fill(CP.blue.opacity(0.12))
+                    RoundedRectangle(cornerRadius: 8).strokeBorder(CP.blue, style: StrokeStyle(lineWidth: 2, dash: [8, 5]))
+                    Label("Drop to add to your media library", systemImage: "square.and.arrow.down.on.square")
+                        .font(.system(size: 15, weight: .semibold)).foregroundColor(.white)
+                        .padding(12).background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.6)))
+                }
+                .padding(6).allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+            var urls: [URL] = []
+            let group = DispatchGroup()
+            let lock = NSLock()
+            for p in providers where p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                group.enter()
+                p.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    var url: URL?
+                    if let d = item as? Data { url = URL(dataRepresentation: d, relativeTo: nil) }
+                    else if let u = item as? URL { url = u }
+                    if let url { lock.lock(); urls.append(url); lock.unlock() }
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) {
+                guard !urls.isEmpty else { return }
+                bg.importURLs(urls)
+                present.mediaSection = 1
+            }
+            return !providers.isEmpty
         }
     }
 }
@@ -273,8 +342,8 @@ struct BackgroundsView: View {
             // local library
             VStack(spacing: 0) {
                 HStack(spacing: 6) {
-                    DSSegmented(selection: $bg.filter, options: [(0, "All"), (1, "Videos"), (2, "Images"), (3, "Generated"), (4, "★")])
-                        .frame(width: 330)
+                    DSSegmented(selection: $bg.filter, options: [(0, "All"), (5, "My files"), (1, "Videos"), (2, "Images"), (3, "Generated"), (4, "★")])
+                        .frame(width: 400)
                     Spacer()
                     if bg.starterRunning { ProgressView().controlSize(.small); Text(bg.starterStatus).font(.system(size: 10)).foregroundColor(DS.text2) }
                     Button("Starter pack…") { bg.showFirstRun = true }.buttonStyle(.ds(.normal, .small))

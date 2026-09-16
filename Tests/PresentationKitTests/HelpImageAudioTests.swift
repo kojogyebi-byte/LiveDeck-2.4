@@ -101,3 +101,12 @@ final class HelpV45Tests: XCTestCase {
         XCTAssertTrue(HelpIndex.search("meter").contains { $0.id == "program-meter" })
     }
 }
+
+final class HelpV46Tests: XCTestCase {
+    func testV46Topics() {
+        XCTAssertEqual(HelpIndex.search("chatgpt").first?.id, "ai-search")
+        XCTAssertEqual(HelpIndex.search("drag and drop").first?.id, "local-media")
+        XCTAssertEqual(HelpIndex.search("stock video").first?.id, "web-videos")
+        XCTAssertEqual(HelpIndex.search("resize panel").first?.id, "panel-size")
+    }
+}

@@ -23,6 +23,7 @@ struct MainView: View {
     var body: some View {
         VStack(spacing: 0) {
             TopBar(showStream: $showStream)
+            GeometryReader { outer in
             HSplitView {
                 GeometryReader { geo in
                     // Monitors keep 16:9; the lower deck (inputs / songs & Bible / dictionary) fills the rest.
@@ -37,7 +38,10 @@ struct MainView: View {
                         LowerDeck().frame(maxHeight: .infinity)
                     }
                 }
-                RightPanel().frame(minWidth: 280, idealWidth: 320, maxWidth: 480)
+                .frame(minWidth: 440)
+                RightPanel()
+                    .frame(minWidth: panelMin(outer.size.width), idealWidth: 330, maxWidth: panelMax(outer.size.width))
+            }
             }
             StatusBar()
         }
@@ -54,6 +58,23 @@ struct MainView: View {
             HelpCenter().environmentObject(engine).environmentObject(present)
         }
         .onAppear { present.engine = engine; dict.engine = engine }
+    }
+    /// Right panel size: 0 free (drag the divider) · 1 narrow · 2 half · 3 wide
+    private func panelMin(_ w: CGFloat) -> CGFloat {
+        switch engine.rightPanelSize {
+        case 1: return 280
+        case 2: return max(280, w * 0.5)
+        case 3: return max(280, w - 460)
+        default: return 280
+        }
+    }
+    private func panelMax(_ w: CGFloat) -> CGFloat {
+        switch engine.rightPanelSize {
+        case 1: return 340
+        case 2: return max(300, w * 0.5)
+        case 3: return max(300, w - 440)
+        default: return max(320, w - 440)
+        }
     }
     var previewName: String { engine.sources.first { $0.id == engine.previewID }?.name ?? "Preview" }
     var programName: String { engine.sources.first { $0.id == engine.programID }?.name ?? "Program" }
@@ -623,11 +644,12 @@ struct LowerDeck: View {
                     DSTabItem(id: DeckTab.inputs.rawValue, title: "Inputs", icon: "square.grid.2x2"),
                     DSTabItem(id: DeckTab.present.rawValue, title: "Songs & Bible", icon: "music.note.list"),
                     DSTabItem(id: DeckTab.dictionary.rawValue, title: "Dictionary", icon: "character.book.closed"),
+                    DSTabItem(id: DeckTab.ai.rawValue, title: "AI Search", icon: "sparkle.magnifyingglass"),
                     DSTabItem(id: DeckTab.images.rawValue, title: "Media", icon: "photo.on.rectangle.angled"),
                     DSTabItem(id: DeckTab.audio.rawValue, title: "Audio Mixer", icon: "slider.vertical.3"),
                     DSTabItem(id: DeckTab.automation.rawValue, title: "Automation", icon: "timer")
                 ])
-                .frame(width: 760)
+                .frame(minWidth: 300, maxWidth: 880)
                 Spacer()
                 if present.deck == DeckTab.inputs.rawValue {
                     AddInputMenu()
@@ -645,6 +667,7 @@ struct LowerDeck: View {
             else if present.deck == DeckTab.images.rawValue { MediaDeck() }
             else if present.deck == DeckTab.audio.rawValue { MixerConsole() }
             else if present.deck == DeckTab.automation.rawValue { AutomationDeck() }
+            else if present.deck == DeckTab.ai.rawValue { AIDeck() }
             else { InputBus() }
         }
         .background(DS.bg1)
@@ -1056,6 +1079,15 @@ struct RightPanel: View {
     @EnvironmentObject var engine: Engine
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Text("PANEL").font(.system(size: 8, weight: .bold)).kerning(1).foregroundColor(CP.text2)
+                Spacer()
+                sizeButton("sidebar.right", 1, "Narrow panel")
+                sizeButton("rectangle.split.2x1", 2, "Half the window")
+                sizeButton("rectangle.righthalf.inset.filled", 3, "Wide — panel fills most of the window")
+                sizeButton("arrow.left.and.right", 0, "Free — drag the divider to any width")
+            }
+            .padding(.horizontal, 12).padding(.top, 6)
             CPTabBar(selection: $engine.rightTab, items: [
                 DSTabItem(id: 1, title: "Input", icon: "rectangle.and.hand.point.up.left"),
                 DSTabItem(id: 0, title: "Audio", icon: "slider.vertical.3"),
@@ -1076,6 +1108,22 @@ struct RightPanel: View {
             .frame(maxHeight: .infinity)
         }
         .background(CP.bg).overlay(Rectangle().frame(width: 1).foregroundColor(DS.line), alignment: .leading)
+        .contextMenu {
+            Button("Narrow panel") { engine.rightPanelSize = 1 }
+            Button("Half the window") { engine.rightPanelSize = 2 }
+            Button("Wide panel") { engine.rightPanelSize = 3 }
+            Button("Free size (drag the divider)") { engine.rightPanelSize = 0 }
+        }
+    }
+
+    private func sizeButton(_ icon: String, _ mode: Int, _ help: String) -> some View {
+        Button { withAnimation(.easeInOut(duration: 0.2)) { engine.rightPanelSize = mode } } label: {
+            Image(systemName: icon).font(.system(size: 11, weight: .medium))
+                .foregroundColor(engine.rightPanelSize == mode ? .white : CP.text2)
+                .frame(width: 26, height: 20)
+                .background(RoundedRectangle(cornerRadius: 5).fill(engine.rightPanelSize == mode ? CP.blue : CP.field))
+        }
+        .buttonStyle(.plain).help(help)
     }
 }
 

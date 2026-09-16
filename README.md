@@ -1,4 +1,15 @@
-# LiveDeck Studio (macOS) — v4.5.0
+# LiveDeck Studio (macOS) — v4.6.0
+
+**New in 4.6:**
+- **AI Search tab** — ask **Claude, ChatGPT, Gemini, Grok, DeepSeek, Mistral, Perplexity (web search), Groq, Ollama (local, no key) or any OpenAI-compatible server**. Choose how it writes (Answer, Bible study, Sermon points, Explain simply, Summary, Prayer points, Announcement, Quotes, Translate) plus your own extra rules. Answers are cleaned of Markdown, can be edited, are saved for reuse, and become slides on an **AI Search input** with the same Format editor as songs, scripture and the dictionary (max characters per slide, question as title, AI credit line). Operator bar and right-click: show, Preview, Program, Key PVW, Key PGM, clear. API keys are stored in the macOS Keychain; model ids are editable (defaults: claude-sonnet-5, gpt-5.5, gemini-3.8-flash).
+- **Resizable control panel** — PANEL buttons above the Input/Audio/Overlays/Scenes/Outputs/Presets tabs: Narrow, Half the window, Wide (panel fills most of the window) or Free (drag the divider to any width). Right-click the panel for the same choices; the size is remembered.
+- **Video search in Media → Web search** — Images | Videos. Videos come from NASA (public domain, no key), Pixabay or Pexels (free keys, shared with the Library). Add as input, Preview, Program, use as a Songs & Bible / Dictionary background, or save to the library.
+- **Your own images and videos** — drag files or folders from Finder onto the Media tab, or press **Add from computer…**; they are copied into **Library → My files** and can be used as inputs or slide backgrounds.
+- `PresentationKit` adds `AIAssist.swift` (providers, request building for Anthropic / OpenAI-compatible / Gemini wire formats, response parsing, Markdown clean-up, slide splitting, history); **61 automated tests**.
+
+---
+
+# Previous — v4.5.0
 
 **New in 4.5:**
 - **Right-click menus everywhere:** Preview and Program monitors (CUT/AUTO, transition, choose inputs, keys, overlays, scenes, meter, guides, Program Out, record), input tiles (keys, mute/solo, audio), slides and dictionary cards (show, Preview, Program, key on Preview/Program, clear, hide background), mixer channels and Master (mute, solo, ON/AFV, effects, presets, reset), top-bar PROGRAM OUT / STREAM / REC, transition column, overlay buttons 1–4, Snapshot/Outputs, overlay layers (including "Automate this overlay"), scenes, layouts, presets, stream destinations, generator presets.

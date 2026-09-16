@@ -492,6 +492,20 @@ final class PresentationSource: SlideSource {
     }
 }
 
+/// Answers from AI search (Claude, ChatGPT, Gemini…) shown as formatted slides.
+final class AISource: SlideSource {
+    init(name: String = "AI Search", look: SlideLook = AISource.defaultLook) {
+        super.init(name: name, kindLabel: "AI", look: look)
+    }
+    static var defaultLook: SlideLook {
+        var l = SlideLook.fullScreen
+        l.name = "AI answer"
+        l.maxCharsPerSlide = 260
+        l.showTitle = false
+        return l
+    }
+}
+
 final class DictionarySource: SlideSource {
     @Published var entry: WordEntry?
     init(name: String = "Dictionary", look: SlideLook = .dictionaryPanel) {

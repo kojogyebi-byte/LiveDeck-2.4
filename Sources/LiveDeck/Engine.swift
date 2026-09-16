@@ -190,6 +190,10 @@ final class Engine: ObservableObject {
     @Published var programWindowActive = false
     /// Program Out is currently full screen (false = in a normal window).
     @Published var programOutFullscreen = false
+    /// Right control panel size: 0 free · 1 narrow · 2 half · 3 wide
+    @Published var rightPanelSize: Int = UserDefaults.standard.integer(forKey: "ui.rightPanelSize") {
+        didSet { UserDefaults.standard.set(rightPanelSize, forKey: "ui.rightPanelSize") }
+    }
     /// Inputs keyed over the PREVIEW monitor (they join Program keys on the next CUT/AUTO).
     @Published var previewKeys: Set<UUID> = []
     @Published var rightTab = 0   // 0 Audio · 1 Input · 2 Overlays · 3 Scenes · 4 Outputs
@@ -474,6 +478,13 @@ final class Engine: ObservableObject {
     }
 
     @discardableResult
+    func addAIInput() -> AISource {
+        let n = sources.filter { $0 is AISource }.count
+        let s = AISource(name: n == 0 ? "AI Search" : "AI Search \(n + 1)")
+        placeSource(s)
+        return s
+    }
+
     func addDictionaryInput() -> DictionarySource {
         let n = sources.filter { $0 is DictionarySource }.count
         let s = DictionarySource(name: n == 0 ? "Dictionary" : "Dictionary \(n + 1)")

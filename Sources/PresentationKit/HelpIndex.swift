@@ -20,7 +20,7 @@ public struct HelpTopic: Identifiable, Hashable, Sendable {
 
 public enum HelpIndex {
     public static let categories = ["Getting started", "Switching", "Inputs", "Songs & Bible", "Dictionary", "Images",
-                                    "Audio", "Overlays & scenes", "Automation", "Outputs & streaming", "Recording", "Presets", "Keyboard & help"]
+                                    "AI search", "Audio", "Overlays & scenes", "Automation", "Outputs & streaming", "Recording", "Presets", "Keyboard & help"]
 
     static func fold(_ s: String) -> String {
         s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
@@ -71,7 +71,7 @@ public enum HelpIndex {
                   steps: ["Top bar: open/save show, Presets, PROGRAM OUT, STREAM, REC, Help (?), computer load and the settings gear.",
                           "PREVIEW (left, green) shows what goes on air next; PROGRAM (right, red) is what is on air now.",
                           "The column between them holds CUT, AUTO, the transition buttons, the T-bar, duration and FTB (fade to black).",
-                          "The lower deck has tabs: Inputs, Songs & Bible, Dictionary, Media (web images, backgrounds library, generator), Audio Mixer and Automation.",
+                          "The lower deck has tabs: Inputs, Songs & Bible, Dictionary, AI Search, Media (web search, library, generator), Audio Mixer and Automation.",
                           "The right-hand control panel has tabs: Input, Audio, Overlays, Scenes, Outputs and Presets.",
                           "The bottom status bar shows the format, frame rate, disk space, overlay channels 1–4, Snapshot, Outputs, Multiview and Guides."]),
         HelpTopic("first-service", "Run your first service (quick start)", category: "Getting started",
@@ -105,6 +105,12 @@ public enum HelpIndex {
                           "Songs & Bible and Dictionary have Key PVW / Key PGM buttons; right-click a slide for the same choices.",
                           "Right-click the Preview or Program monitor → Keys to see and clear everything that is keyed.",
                           "For clean keys use a transparent background (slides) or a transparent effect (Generator)."], target: "deck.inputs"),
+        HelpTopic("panel-size", "Make the control panel bigger", category: "Getting started",
+                  keywords: ["resize", "enlarge", "wider", "panel width", "right panel", "bigger inspector", "half screen", "sidebar"],
+                  summary: "The right-hand panel (Input, Audio, Overlays, Scenes, Outputs, Presets) can be narrow, half the window, wide, or any size.",
+                  steps: ["Use the PANEL buttons above its tabs: Narrow, Half, Wide or Free.",
+                          "In Free, drag the divider between the panel and the monitors to any width.",
+                          "Right-click the panel for the same choices. The size is remembered."], target: "right.input"),
         HelpTopic("right-click", "Right-click menus", category: "Getting started",
                   keywords: ["context menu", "right click", "control click", "shortcut menu", "quick actions"],
                   summary: "Almost everything has a right-click menu with the most useful actions.",
@@ -226,6 +232,20 @@ public enum HelpIndex {
                           "Press Get to download; the item appears in your library.",
                           "Select a background → Input, Preview, Program, or Songs & Bible / Dictionary background.",
                           "Right-click for favourites, Show in Finder or Delete; Import adds your own files."], target: "deck.backgrounds"),
+        HelpTopic("web-videos", "Search the web for free videos", category: "Images",
+                  keywords: ["video search", "stock video", "motion", "clip", "footage", "nasa video", "pixabay", "pexels"],
+                  summary: "Find free videos and use them as inputs or slide backgrounds.",
+                  steps: ["Media → Web search → Videos.",
+                          "Choose NASA (no key), Pixabay or Pexels (free API key), type a word and Search.",
+                          "Select a video → Add as input, Preview, Program, or use it as a Songs & Bible / Dictionary background.",
+                          "Videos are downloaded into your Media library first, then loop muted as inputs."], target: "deck.images"),
+        HelpTopic("local-media", "Add your own images and videos", category: "Images",
+                  keywords: ["import", "drag and drop", "drop", "local files", "my pictures", "my videos", "computer", "folder", "upload"],
+                  summary: "Bring photos and videos from your Mac into the Media library.",
+                  steps: ["Open the Media tab and drag images or videos (or a folder) from Finder onto it — or press Add from computer….",
+                          "They are copied into Library → My files.",
+                          "Double-click to put one on Preview; right-click for input, Program, slide background, favourites or delete.",
+                          "Dropping files anywhere else in the window adds them straight away as inputs."], target: "deck.backgrounds"),
         HelpTopic("generator", "Generate abstract backgrounds and effects", category: "Images",
                   keywords: ["generate", "abstract", "motion", "animated", "particles", "snow", "confetti", "sparkles", "bokeh", "aurora", "light leak", "effect"],
                   summary: "Create moving backgrounds and transparent effects without any files.",
@@ -234,6 +254,16 @@ public enum HelpIndex {
                           "Add as input, Preview or Program; effects (snow, confetti, sparkles, light leak, vignette) are transparent — use Key over Program.",
                           "The KEY / controls buttons on a generator input bring its settings back for live editing.",
                           "Save still or Export seamless loop video adds it to the Backgrounds library for slide backgrounds."], target: "deck.generator"),
+        // AI search
+        HelpTopic("ai-search", "Ask Claude, ChatGPT, Gemini and other AI", category: "AI search",
+                  keywords: ["ai", "artificial intelligence", "claude", "chatgpt", "openai", "gemini", "grok", "deepseek", "mistral", "perplexity", "ollama", "ask", "question", "api key"],
+                  summary: "Type a question; the answer becomes formatted slides you can preview, key or put on Program — like the Dictionary.",
+                  steps: ["Open the AI Search tab. Choose a provider (Claude, ChatGPT, Gemini, Grok, DeepSeek, Mistral, Perplexity, Groq, Ollama or a custom server).",
+                          "Paste your API key once (Get an API key opens the provider's page). Keys stay in the macOS Keychain. Ollama runs on your Mac and needs no key.",
+                          "Pick Write as (Answer, Bible study, Sermon points, Prayer points, Announcement…), type the question and press Ask (⌘Return).",
+                          "Check the answer — Edit answer lets you correct it; blank lines start new slides.",
+                          "Click a slide to show it on the AI Search input, then Preview, Program, Key PVW or Key PGM. Format it in the right-hand column.",
+                          "Answers are saved in the list for reuse. AI can be wrong — always check names, dates and scripture."], target: "deck.ai"),
         // Audio
         HelpTopic("mixer", "Audio mixer console", category: "Audio",
                   keywords: ["audio", "sound", "fader", "volume", "gain", "trim", "pan", "mute", "solo", "headphones", "afv", "meter", "levels"],

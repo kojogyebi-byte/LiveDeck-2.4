@@ -15,6 +15,7 @@ enum AppNavigator {
         case "deck.present": present.deck = DeckTab.present.rawValue
         case "deck.dictionary": present.deck = DeckTab.dictionary.rawValue
         case "deck.images": present.deck = DeckTab.images.rawValue; present.mediaSection = 0
+        case "deck.ai": present.deck = DeckTab.ai.rawValue
         case "deck.backgrounds": present.deck = DeckTab.images.rawValue; present.mediaSection = 1
         case "deck.generator": present.deck = DeckTab.images.rawValue; present.mediaSection = 2
         case "deck.automation": present.deck = DeckTab.automation.rawValue
@@ -204,9 +205,48 @@ final class ImageSearchModel: ObservableObject {
 
     var selected: WebImage? { results.first { $0.id == selectedID } }
 
+    // MARK: videos (NASA without a key; Pixabay / Pexels with the keys saved in Backgrounds)
+
+    /// 0 = images · 1 = videos
+    @Published var mediaType = 0
+    @Published var videoProvider: BackgroundProvider = BackgroundProvider(rawValue: UserDefaults.standard.string(forKey: "images.videoProvider") ?? "") ?? .nasa {
+        didSet { UserDefaults.standard.set(videoProvider.rawValue, forKey: "images.videoProvider") }
+    }
+    @Published var videoResults: [BackgroundItem] = []
+    @Published var selectedVideoID: String?
+    var selectedVideo: BackgroundItem? { videoResults.first { $0.id == selectedVideoID } }
+
+    func videoKey(_ p: BackgroundProvider) -> String {
+        switch p {
+        case .nasa: return ""
+        case .pixabay: return UserDefaults.standard.string(forKey: "bg.pixabayKey") ?? ""
+        case .pexels: return UserDefaults.standard.string(forKey: "bg.pexelsKey") ?? ""
+        }
+    }
+
+    func searchVideos() {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        loading = true; message = ""; videoResults = []; selectedVideoID = nil
+        BackgroundSearch.search(videoProvider, query: q, videos: true, key: videoKey(videoProvider)) { [weak self] r in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.loading = false
+                switch r {
+                case .success(let list):
+                    self.videoResults = list
+                    self.selectedVideoID = list.first?.id
+                    if list.isEmpty { self.message = "No videos found. Try other words (sky, clouds, light, ocean, city) or another source." }
+                case .failure(let e): self.message = "Video search failed: \(e.localizedDescription)"
+                }
+            }
+        }
+    }
+
     func search(more: Bool = false) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
+        if mediaType == 1 { searchVideos(); return }
         if browserMode { openBrowser(); return }
         if !more { page = 1; results = []; selectedID = nil; lastQuery = q } else { page += 1 }
         loading = true; message = ""
@@ -311,8 +351,16 @@ struct ImageSearchDeck: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                DSSegmented(selection: $images.browserMode, options: [(false, "Free image libraries"), (true, "Web browser")])
-                    .frame(width: 280)
+                DSSegmented(selection: $images.mediaType, options: [(0, "Images"), (1, "Videos")])
+                    .frame(width: 150)
+                if images.mediaType == 1 {
+                    Picker("", selection: $images.videoProvider) {
+                        ForEach(BackgroundProvider.allCases) { p in Text(p.rawValue).tag(p) }
+                    }
+                    .labelsHidden().frame(width: 190)
+                } else {
+                DSSegmented(selection: $images.browserMode, options: [(false, "Free libraries"), (true, "Web browser")])
+                    .frame(width: 210)
                 if images.browserMode {
                     Picker("", selection: $images.browserEngine) {
                         Text("DuckDuckGo Images").tag(0); Text("Google Images").tag(1); Text("Bing Images").tag(2)
@@ -328,7 +376,8 @@ struct ImageSearchDeck: View {
                     }
                     .labelsHidden().frame(width: 110)
                 }
-                TextField("Type a word — e.g. cross, sunrise, worship, Accra", text: $images.query)
+                }
+                TextField(images.mediaType == 1 ? "Type a word — e.g. clouds, worship, light, ocean" : "Type a word — e.g. cross, sunrise, worship, Accra", text: $images.query)
                     .dsField()
                     .onSubmit { images.search() }
                 Button { images.search() } label: { Label("Search", systemImage: "magnifyingglass") }.buttonStyle(.ds(.primary))
@@ -342,7 +391,8 @@ struct ImageSearchDeck: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 4)
             }
 
-            if images.browserMode { browser } else { library }
+            if images.mediaType == 1 { VideoSearchResults() }
+            else if images.browserMode { browser } else { library }
         }
         .background(DS.bg1)
     }
@@ -422,6 +472,147 @@ struct ImageSearchDeck: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+struct VideoSearchResults: View {
+    @EnvironmentObject var images: ImageSearchModel
+    @EnvironmentObject var bg: BackgroundsModel
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var dict: DictionaryModel
+
+    var body: some View {
+        HSplitView {
+            Group {
+                if images.videoResults.isEmpty && !images.loading {
+                    VStack(spacing: 10) {
+                        Image(systemName: "film.stack").font(.system(size: 36)).foregroundColor(DS.text3)
+                        Text("Type a word and press Search to find free videos.").font(DS.label).foregroundColor(DS.text2)
+                        Text("NASA videos are public domain and need no key. Pixabay and Pexels need a free API key.")
+                            .font(.system(size: 10)).foregroundColor(DS.text3)
+                        if images.videoProvider != .nasa {
+                            HStack(spacing: 6) {
+                                SecureField("\(images.videoProvider.rawValue) API key", text: images.videoProvider == .pixabay ? $bg.pixabayKey : $bg.pexelsKey)
+                                    .dsField().frame(width: 260)
+                                if let u = images.videoProvider.keySignupURL {
+                                    Button("Get free key") { NSWorkspace.shared.open(u) }.buttonStyle(.ds(.ghost, .small))
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 280), spacing: 10)], spacing: 10) {
+                            ForEach(images.videoResults) { item in
+                                VideoResultCard(item: item, selected: images.selectedVideoID == item.id, status: bg.downloads[item.id], saved: bg.catalog.contains(item.id))
+                                    .onTapGesture(count: 2) { use(item, .preview) }
+                                    .onTapGesture { images.selectedVideoID = item.id }
+                                    .contextMenu {
+                                        Button("Add as input") { use(item, .input) }
+                                        Button("Add and put on Preview") { use(item, .preview) }
+                                        Button("Add and cut to Program") { use(item, .program) }
+                                        Divider()
+                                        Button("Use as Songs & Bible background") { background(item, present.currentTarget()) }
+                                        Button("Use as Dictionary background") { background(item, dict.currentTarget()) }
+                                        Button("Save to library") { bg.download(item) }
+                                        if let page = item.pageURL { Button("Open source page") { NSWorkspace.shared.open(page) } }
+                                    }
+                            }
+                        }
+                        .padding(10)
+                    }
+                }
+            }
+            .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+
+            CPInspector {
+                if let item = images.selectedVideo {
+                    CPCard(title: item.title, subtitle: [item.provider, item.duration > 0 ? "\(Int(item.duration)) s" : "", item.width > 0 ? "\(item.width)×\(item.height)" : ""].filter { !$0.isEmpty }.joined(separator: " · "), icon: "film") {
+                        AsyncImage(url: item.thumbnailURL) { phase in
+                            if let i = phase.image { i.resizable().aspectRatio(contentMode: .fit) } else { Color.black.aspectRatio(16.0 / 9.0, contentMode: .fit) }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 6)).padding(.vertical, 6)
+                        CPNote([item.credit, item.license].filter { !$0.isEmpty }.joined(separator: " · "))
+                        if let st = bg.downloads[item.id] {
+                            Text(st).font(.system(size: 10)).foregroundColor(st.hasPrefix("Failed") ? DS.program : DS.ok)
+                        }
+                    }
+                    CPCard(title: "Use it", icon: "play.rectangle") {
+                        VStack(spacing: 6) {
+                            CPButton(icon: "plus.rectangle.on.rectangle", title: "Add as input") { use(item, .input) }
+                            HStack(spacing: 6) {
+                                Button("Preview") { use(item, .preview) }.buttonStyle(.ds(.preview, .small, fullWidth: true))
+                                Button("Program") { use(item, .program) }.buttonStyle(.ds(.program, .small, fullWidth: true))
+                            }
+                            CPButton(icon: "music.note.list", title: "Songs & Bible background") { background(item, present.currentTarget()) }
+                            CPButton(icon: "character.book.closed", title: "Dictionary background") { background(item, dict.currentTarget()) }
+                            CPButton(icon: "square.and.arrow.down", title: bg.catalog.contains(item.id) ? "Saved in library" : "Save to library") { bg.download(item) }
+                                .disabled(bg.catalog.contains(item.id))
+                        }
+                        .padding(.vertical, 6)
+                        CPNote("Videos are downloaded into your Media library first (they loop and start muted as inputs).")
+                    }
+                } else {
+                    CPNote("Select a video to see its details.")
+                }
+            }
+            .frame(minWidth: 260, idealWidth: 300, maxWidth: 380)
+        }
+    }
+
+    private func use(_ item: BackgroundItem, _ dest: BackgroundsModel.Dest) {
+        images.message = "Downloading “\(item.title)”…"
+        bg.download(item) { saved in
+            if let s = saved { bg.addAsInput(s, dest); images.message = "" }
+            else { images.message = bg.downloads[item.id] ?? "Download failed." }
+        }
+    }
+
+    private func background(_ item: BackgroundItem, _ target: SlideSource?) {
+        guard let target else { images.message = "Add a Songs & Bible or Dictionary input first."; return }
+        bg.download(item) { saved in if let s = saved { bg.useAsBackground(s, on: target) } }
+    }
+}
+
+struct VideoResultCard: View {
+    let item: BackgroundItem
+    let selected: Bool
+    let status: String?
+    let saved: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .bottomTrailing) {
+                Color.black
+                AsyncImage(url: item.thumbnailURL) { phase in
+                    switch phase {
+                    case .success(let img): img.resizable().aspectRatio(contentMode: .fill)
+                    case .failure: Image(systemName: "film").font(.system(size: 22)).foregroundColor(DS.text3)
+                    default: ProgressView().controlSize(.small)
+                    }
+                }
+                HStack(spacing: 3) {
+                    if saved { Image(systemName: "checkmark.circle.fill").foregroundColor(DS.ok) }
+                    Image(systemName: "play.fill")
+                    if item.duration > 0 { Text("\(Int(item.duration))s") }
+                }
+                .font(.system(size: 9, weight: .semibold)).foregroundColor(.white)
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(Capsule().fill(Color.black.opacity(0.6))).padding(5)
+            }
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .clipped()
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.title).font(.system(size: 11, weight: .semibold)).foregroundColor(DS.text).lineLimit(1)
+                Text(status ?? [item.provider, item.credit].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.system(size: 9)).foregroundColor(status?.hasPrefix("Failed") == true ? DS.program : DS.text3).lineLimit(1)
+            }
+            .padding(6)
+        }
+        .background(DS.bg2)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? DS.accent : DS.lineSoft, lineWidth: selected ? 2 : 1))
+        .contentShape(Rectangle())
     }
 }
 
@@ -643,6 +834,7 @@ final class PresetStore: ObservableObject {
         case is DictionarySource: return "dictionary"
         case is PresentationSource: return "presentation"
         case is GeneratorSource: return "generator"
+        case is AISource: return "ai"
         default: return "empty"
         }
     }
@@ -799,6 +991,7 @@ final class PresetStore: ObservableObject {
         case "presentation": return PresentationSource(name: spec.name, look: spec.look ?? .fullScreen)
         case "dictionary": return DictionarySource(name: spec.name, look: spec.look ?? .dictionaryPanel)
         case "generator": return GeneratorSource(settings: spec.generator ?? GeneratorSettings(), name: spec.name)
+        case "ai": return AISource(name: spec.name, look: spec.look ?? AISource.defaultLook)
         default: break
         }
         return EmptySource()

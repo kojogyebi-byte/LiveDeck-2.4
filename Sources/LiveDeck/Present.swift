@@ -6,7 +6,7 @@ import PresentationKit
 
 // MARK: - Lower deck tabs (same page as the switcher)
 
-enum DeckTab: Int { case inputs = 0, present = 1, dictionary = 2, images = 3, audio = 4, automation = 5 }
+enum DeckTab: Int { case inputs = 0, present = 1, dictionary = 2, images = 3, audio = 4, automation = 5, ai = 6 }
 
 enum PresentLibraryTab: String, CaseIterable, Identifiable {
     case songs = "Songs"
@@ -1262,12 +1262,15 @@ struct SlidePreviewGrid: View {
 
 struct LookColumn: View {
     let dictionary: Bool
+    var ai = false
     @EnvironmentObject var engine: Engine
     @EnvironmentObject var present: PresentModel
     @EnvironmentObject var dict: DictionaryModel
+    @EnvironmentObject var aiModel: AIModel
     var body: some View {
         VStack(spacing: 0) {
-            let target: SlideSource? = dictionary ? (dict.currentTarget() as SlideSource?) : (present.currentTarget() as SlideSource?)
+            let target: SlideSource? = ai ? (aiModel.currentTarget() as SlideSource?)
+                : (dictionary ? (dict.currentTarget() as SlideSource?) : (present.currentTarget() as SlideSource?))
             PanelHeader(title: "Format", icon: "paintbrush.pointed") {
                 if let t = target { Text(t.name).font(.system(size: 10)).foregroundColor(DS.text3).lineLimit(1) }
             }
@@ -1275,9 +1278,11 @@ struct LookColumn: View {
                 LookEditor(source: t)
             } else {
                 VStack(spacing: 8) {
-                    Text("Add a \(dictionary ? "Dictionary" : "Presentation") input to format its display.")
-                        .font(DS.small).foregroundColor(DS.text2).multilineTextAlignment(.center)
-                    Button("Add input") { if dictionary { _ = dict.ensureTarget() } else { _ = present.ensureTarget() } }.buttonStyle(.ds(.primary))
+                    Text("Add \(ai ? "an AI Search" : (dictionary ? "a Dictionary" : "a Presentation")) input to format its display.")
+                        .font(DS.small).foregroundColor(CP.text2).multilineTextAlignment(.center)
+                    Button("Add input") {
+                        if ai { _ = aiModel.ensureTarget() } else if dictionary { _ = dict.ensureTarget() } else { _ = present.ensureTarget() }
+                    }.buttonStyle(.ds(.primary))
                 }
                 .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -1308,11 +1313,11 @@ struct LookEditor: View {
                 TextStyleEditor(style: $source.look.body, families: families).padding(.vertical, 4)
             }
             if source is DictionarySource || source.look.showTitle {
-                CPCard(title: source is DictionarySource ? "Headword" : "Title", icon: "textformat.size.larger") {
+                CPCard(title: source is DictionarySource ? "Headword" : (source is AISource ? "Question (title)" : "Title"), icon: "textformat.size.larger") {
                     TextStyleEditor(style: $source.look.title, families: families).padding(.vertical, 4)
                 }
             }
-            CPCard(title: source is DictionarySource ? "Source line" : "Reference / credits", subtitle: source.look.footerPosition.rawValue, icon: "text.append") {
+            CPCard(title: source is DictionarySource ? "Source line" : (source is AISource ? "Credit line (AI name)" : "Reference / credits"), subtitle: source.look.footerPosition.rawValue, icon: "text.append") {
                 VStack(alignment: .leading, spacing: 4) {
                     FieldRow(label: "Position") {
                         Picker("", selection: $source.look.footerPosition) {
@@ -1468,7 +1473,11 @@ struct LookEditor: View {
     }
 
     @ViewBuilder private var contentSection: some View {
-        if source is DictionarySource {
+        if source is AISource {
+            ParamSlider(label: "Max characters per slide", value: intBinding($source.look.maxCharsPerSlide), range: 80...700, defaultValue: 260, format: "%.0f")
+            CPToggleRow(label: "Show the question as a title", isOn: $source.look.showTitle)
+            CPNote("Changing the length re-splits the answer into slides.")
+        } else if source is DictionarySource {
             ParamSlider(label: "Definitions shown", value: intBinding($source.look.maxSenses), range: 1...8, defaultValue: 3, format: "%.0f")
             CPToggleRow(label: "Show examples", isOn: $source.look.showExamples)
             CPToggleRow(label: "Show headword", isOn: $source.look.showTitle)
