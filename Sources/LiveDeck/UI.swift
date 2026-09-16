@@ -238,10 +238,12 @@ struct TopBar: View {
             PresetsMenu()
             Spacer()
             Button { engine.openOutputWindow() } label: {
-                Label(engine.programWindowActive ? "PROGRAM OUT · ON" : "PROGRAM OUT", systemImage: "rectangle.inset.filled")
+                Label(engine.programWindowActive ? (engine.programOutFullscreen ? "PROGRAM OUT · FULL" : "PROGRAM OUT · WINDOW") : "PROGRAM OUT",
+                      systemImage: engine.programOutFullscreen ? "rectangle.inset.filled" : "macwindow")
             }
             .buttonStyle(.ds(.normal, .regular, active: engine.programWindowActive))
-            .help("Full-screen Program on the second display (no title bar). Esc or double-click to close.")
+            .help("Opens full screen on a second display, or in a window when there is only one screen. Right-click for choices; ⌘⇧F switches window ↔ full screen; Esc returns to a window.")
+            .contextMenu { ProgramOutMenuItems() }
             Button { showStream = true } label: {
                 HStack(spacing: 6) {
                     Circle().fill(engine.isStreaming ? Color.white : DS.program).frame(width: 7, height: 7)
@@ -249,6 +251,11 @@ struct TopBar: View {
                 }
             }
             .buttonStyle(.ds(.program, .regular, active: engine.isStreaming))
+            .contextMenu {
+                Button("Stream settings…") { showStream = true }
+                Button(engine.isStreaming ? "Stop streaming" : "Go live to enabled destinations") { engine.toggleStream(nil) }
+                    .disabled(!engine.isStreaming && engine.liveDestinations.isEmpty)
+            }
             Button { engine.toggleRecording() } label: {
                 HStack(spacing: 6) {
                     Image(systemName: engine.isRecording ? "stop.fill" : "record.circle")
@@ -257,6 +264,12 @@ struct TopBar: View {
                 }
             }
             .buttonStyle(.ds(.program, .regular, active: engine.isRecording))
+            .contextMenu {
+                Button(engine.isRecording ? "Stop recording" : "Start recording") { engine.toggleRecording() }
+                Button("Choose recording folder…") { engine.chooseOutputFolder() }
+                Button("Reveal last recording") { engine.revealLastRecording() }
+                Button("Snapshot") { engine.snapshot() }
+            }
             Spacer()
             SystemStatsView()
             Button { engine.showHelp = true } label: {
@@ -338,6 +351,7 @@ struct TBtn: View {
 struct MonitorPane: View {
     @EnvironmentObject var engine: Engine
     var title: String; var accent: Color; var isProgram: Bool
+    @AppStorage("programMonitorMeter") private var showMeter = true
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -353,10 +367,29 @@ struct MonitorPane: View {
                 if isProgram && engine.isStreaming {
                     HStack(spacing: 4) { Circle().fill(DS.program).frame(width: 6, height: 6); Text("LIVE").font(DS.caption).foregroundColor(DS.program) }
                 }
+                let keys = isProgram ? engine.keyedSources.count : engine.previewKeys.count
+                if keys > 0 {
+                    Text("KEY \(keys)").font(.system(size: 9, weight: .heavy)).foregroundColor(.black)
+                        .padding(.horizontal, 5).frame(height: 16)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(DS.amber))
+                        .help(isProgram ? "Inputs keyed over Program" : "Inputs keyed over Preview — they go live with the next CUT/AUTO")
+                }
+                if isProgram {
+                    Button { showMeter.toggle() } label: {
+                        Image(systemName: showMeter ? "chart.bar.fill" : "chart.bar").font(.system(size: 10)).foregroundColor(showMeter ? DS.text : DS.text3)
+                    }
+                    .buttonStyle(.plain).help("Show or hide the audio meter on this monitor (never on the output)")
+                }
             }
             .padding(.horizontal, 8).frame(height: 28).background(DS.bg2)
+            .contextMenu { MonitorMenu(isProgram: isProgram, showMeter: $showMeter) }
             ZStack {
                 if isProgram { ProgramMonitorView() } else { PreviewMonitorView() }
+                Color.clear.contentShape(Rectangle())
+                    .contextMenu { MonitorMenu(isProgram: isProgram, showMeter: $showMeter) }
+                if isProgram && showMeter {
+                    ProgramMonitorMeter().allowsHitTesting(false)
+                }
                 if isProgram && engine.showSafeGuides {
                     GeometryReader { g in
                         Rectangle().stroke(Color.white.opacity(0.3), lineWidth: 1)
@@ -371,6 +404,118 @@ struct MonitorPane: View {
         .background(DS.bg1)
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(accent.opacity(0.9), lineWidth: 2))
+    }
+}
+
+/// Stereo meter drawn over the Program monitor in the app only (not part of the rendered output).
+struct ProgramMonitorMeter: View {
+    @EnvironmentObject var tele: Telemetry
+    var body: some View {
+        GeometryReader { g in
+            let h = max(40, g.size.height - 24)
+            HStack(spacing: 3) {
+                VStack(spacing: 2) {
+                    ForEach([0, -6, -12, -20, -30, -40, -60], id: \.self) { db in
+                        Text("\(db)").font(.system(size: 7, design: .monospaced)).foregroundColor(.white.opacity(0.7))
+                            .frame(height: h / 7, alignment: .top)
+                    }
+                }
+                .frame(width: 18)
+                VStack(spacing: 2) {
+                    VerticalMeter(level: tele.masterL).frame(width: 6, height: h - 12)
+                    Text("L").font(.system(size: 7, weight: .bold)).foregroundColor(.white.opacity(0.8))
+                }
+                VStack(spacing: 2) {
+                    VerticalMeter(level: tele.masterR).frame(width: 6, height: h - 12)
+                    Text("R").font(.system(size: 7, weight: .bold)).foregroundColor(.white.opacity(0.8))
+                }
+            }
+            .padding(5)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.black.opacity(0.55)))
+            .frame(width: g.size.width - 8, height: g.size.height, alignment: .trailing)
+            .padding(.vertical, 6)
+        }
+    }
+}
+
+/// Right-click menu for the Preview / Program monitors.
+struct MonitorMenu: View {
+    @EnvironmentObject var engine: Engine
+    let isProgram: Bool
+    @Binding var showMeter: Bool
+    var body: some View {
+        Button("CUT") { engine.cut() }
+        Button("AUTO (\(engine.transition.rawValue))") { engine.runTransition() }
+        Menu("Transition") {
+            ForEach(TransitionType.allCases, id: \.self) { t in
+                Button { engine.transition = t } label: {
+                    if engine.transition == t { Label(t.rawValue, systemImage: "checkmark") } else { Text(t.rawValue) }
+                }
+            }
+        }
+        Button(engine.ftbOn ? "Fade up from black" : "Fade to black") { engine.toggleFTB() }
+        Divider()
+        let real = engine.sources.filter { !$0.isPlaceholder }
+        Menu(isProgram ? "Cut input to Program" : "Put input on Preview") {
+            ForEach(real, id: \.id) { s in
+                Button(s.name) { engine.setPreview(s.id); if isProgram { engine.cut() } }
+            }
+        }
+        Menu(isProgram ? "Keys over Program" : "Keys over Preview") {
+            ForEach(real, id: \.id) { s in
+                let on = isProgram ? engine.isKeyed(s.id) : engine.isPreviewKeyed(s.id)
+                Button { isProgram ? engine.toggleKey(s.id) : engine.toggleKeyPreview(s.id) } label: {
+                    if on { Label(s.name, systemImage: "checkmark") } else { Text(s.name) }
+                }
+            }
+            Divider()
+            Button("Clear all") { if isProgram { engine.clearProgramKeys() } else { engine.previewKeys.removeAll() } }
+        }
+        if !isProgram {
+            Button("Take keys to Program now") { engine.keyedSources.formUnion(engine.previewKeys); engine.previewKeys.removeAll() }
+                .disabled(engine.previewKeys.isEmpty)
+        }
+        if isProgram {
+            Menu("Overlays") {
+                ForEach(engine.layers) { l in
+                    Button { l.isLive.toggle() } label: {
+                        if l.isLive { Label(l.name, systemImage: "checkmark") } else { Text(l.name) }
+                    }
+                }
+            }
+            if !engine.scenes.isEmpty {
+                Menu("Recall scene") { ForEach(engine.scenes) { sc in Button(sc.name) { engine.recallScene(sc) } } }
+            }
+        }
+        Divider()
+        if let id = isProgram ? engine.programID : engine.previewID {
+            Button("Adjust this input") { engine.selectedSourceID = id; engine.rightTab = 1 }
+        }
+        if isProgram {
+            Toggle("Audio meter on this monitor", isOn: $showMeter)
+            Toggle("Safe-area guides", isOn: $engine.showSafeGuides)
+            Button("Snapshot") { engine.snapshot() }
+            Divider()
+            ProgramOutMenuItems()
+            Button(engine.isRecording ? "Stop recording" : "Start recording") { engine.toggleRecording() }
+        }
+    }
+}
+
+/// Program Out choices (used in several menus).
+struct ProgramOutMenuItems: View {
+    @EnvironmentObject var engine: Engine
+    var body: some View {
+        Button(engine.programWindowActive && !engine.programOutFullscreen ? "Program Out: in a window ✓" : "Program Out in a window") {
+            engine.showProgramOut(fullscreen: false)
+        }
+        ForEach(engine.availableScreens(), id: \.index) { sc in
+            Button("Program Out full screen on \(sc.name)") { engine.showProgramOut(fullscreen: true, screenIndex: sc.index) }
+        }
+        if engine.programWindowActive {
+            Button(engine.programOutFullscreen ? "Switch Program Out to a window" : "Switch Program Out to full screen") { engine.toggleProgramOutFullscreen() }
+            Button("Close Program Out") { engine.closeOutputWindow() }
+        }
     }
 }
 
@@ -414,6 +559,23 @@ struct TransitionColumn: View {
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(DS.lineSoft, lineWidth: 1))
         }
         .frame(width: 112)
+        .contextMenu {
+            Button("CUT") { engine.cut() }
+            Button("AUTO") { engine.runTransition() }
+            Divider()
+            ForEach(TransitionType.allCases, id: \.self) { t in
+                Button { engine.transition = t } label: {
+                    if engine.transition == t { Label(t.rawValue, systemImage: "checkmark") } else { Text(t.rawValue) }
+                }
+            }
+            Menu("Duration") {
+                ForEach([0.3, 0.6, 1.0, 1.5, 2.0], id: \.self) { d in
+                    Button(String(format: "%.1f s", d)) { engine.transitionDuration = d }
+                }
+            }
+            Divider()
+            Button(engine.ftbOn ? "Fade up from black" : "Fade to black") { engine.toggleFTB() }
+        }
     }
     func trans(_ t: String, _ kind: TransitionType) -> some View {
         Button(t) { engine.quickTransition(kind) }
@@ -594,7 +756,8 @@ struct InputTile: View {
     var isProgram: Bool { engine.programID == source.id }
     var isPreview: Bool { engine.previewID == source.id }
     var isKeyed: Bool { engine.isKeyed(source.id) }
-    var tally: Color { isProgram ? DS.program : (isPreview ? DS.preview : (isKeyed ? DS.amber : DS.line)) }
+    var isPreviewKeyed: Bool { engine.isPreviewKeyed(source.id) }
+    var tally: Color { isProgram ? DS.program : (isPreview ? DS.preview : (isKeyed || isPreviewKeyed ? DS.amber : DS.line)) }
     var th: CGFloat { tileW * 9.0 / 16.0 }   // always 16:9, whatever the window size
 
     var body: some View {
@@ -646,9 +809,17 @@ struct InputTile: View {
                     Button("PGM") { engine.setPreview(source.id); engine.cut() }.buttonStyle(.ds(.program, .small, active: isProgram))
                     if let f = source as? FileSource { TileTransport(source: f) }
                     else if let a = source as? AudioFileSource { TileTransport(source: a) }
-                    else if source is SlideSource || source is GeneratorSource {
-                        Button("KEY") { engine.toggleKey(source.id) }.buttonStyle(.ds(.amber, .small, active: isKeyed))
-                            .help("Overlay on Program")
+                    if !(source is AudioFileSource) && (tileW >= 250 || !(source is FileSource)) {
+                        HStack(spacing: 0) {
+                            Button("K·P") { engine.toggleKeyPreview(source.id) }
+                                .buttonStyle(.ds(.amber, .small, active: isPreviewKeyed))
+                                .help("Key over PREVIEW (goes on air with the next CUT/AUTO)")
+                            Button("K·L") { engine.toggleKey(source.id) }
+                                .buttonStyle(.ds(.amber, .small, active: isKeyed))
+                                .help("Key over PROGRAM (live)")
+                        }
+                    }
+                    if (source is SlideSource || source is GeneratorSource) && tileW >= 230 {
                         Button { openController() } label: { Image(systemName: "slider.horizontal.3") }
                             .buttonStyle(.ds(.normal, .small)).help("Open its controls")
                     }
@@ -672,10 +843,16 @@ struct InputTile: View {
             } else {
                 Button("Take to Program") { engine.setPreview(source.id); engine.cut() }
                 Button("Set as Preview") { select() }
+                Divider()
+                Button(isPreviewKeyed ? "Remove key from Preview" : "Key over Preview") { engine.toggleKeyPreview(source.id) }
+                Button(isKeyed ? "Remove key from Program" : "Key over Program") { engine.toggleKey(source.id) }
                 if source is SlideSource || source is GeneratorSource {
-                    Button(isKeyed ? "Remove key from Program" : "Key over Program") { engine.toggleKey(source.id) }
                     Button("Open controls") { openController() }
                 }
+                Divider()
+                Button(source.muted ? "Unmute" : "Mute") { source.muted.toggle() }
+                Button(source.solo ? "Unsolo" : "Solo (headphones)") { source.solo.toggle() }
+                Button("Audio in mixer") { select(); present.deck = DeckTab.audio.rawValue }
                 if source.sourceURLString != nil {
                     Button("Edit address…") { engine.openEditStream(source.id) }
                 }
@@ -795,64 +972,82 @@ struct ScenesPanel: View {
     @EnvironmentObject var engine: Engine
     @State private var sceneName = ""
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                SectionLabel("PROGRAM LAYOUT")
-                HStack(spacing: 6) {
+        CPInspector {
+            CPCard(title: "Program layout", subtitle: engine.programLayout.label, icon: "rectangle.split.2x2") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 6)], spacing: 6) {
                     ForEach(ProgramLayout.allCases) { l in
                         Button { engine.setLayout(l) } label: {
                             LayoutThumb(layout: l)
-                                .overlay(RoundedRectangle(cornerRadius: 3).stroke(engine.programLayout == l ? cPreview : .clear, lineWidth: 2))
-                        }.buttonStyle(.plain)
+                                .overlay(RoundedRectangle(cornerRadius: 3).stroke(engine.programLayout == l ? CP.blue : .clear, lineWidth: 2))
+                        }
+                        .buttonStyle(.plain).help(l.label)
+                        .contextMenu {
+                            Button("Use \(l.label)") { engine.setLayout(l) }
+                            Button("Use and save as scene") { engine.setLayout(l); engine.saveScene(l.label) }
+                        }
                     }
                 }
-                Text(engine.programLayout.label).font(.system(size: 11, weight: .semibold))
-
+                .padding(.vertical, 6)
                 if engine.programLayout == .grid {
-                    Stepper("Cells: \(engine.gridCount)", value: Binding(
-                        get: { engine.gridCount },
-                        set: { engine.gridCount = max(2, min(10, $0)) }), in: 2...10)
-                        .font(.system(size: 11))
+                    CPRow(label: "Cells") {
+                        Stepper("\(engine.gridCount)", value: Binding(get: { engine.gridCount }, set: { engine.gridCount = max(2, min(10, $0)) }), in: 2...10)
+                            .font(.system(size: 11.5)).foregroundColor(CP.text)
+                    }
                 }
-
-                if engine.programLayout != .single {
-                    SectionLabel("SLOTS")
+            }
+            if engine.programLayout != .single {
+                CPCard(title: "Slots", subtitle: "\(engine.slotCount(engine.programLayout)) inputs", icon: "square.grid.2x2") {
                     ForEach(Array(0..<engine.slotCount(engine.programLayout)), id: \.self) { i in
-                        HStack {
-                            Text("Slot \(i + 1)").font(.system(size: 11)).foregroundColor(.secondary).frame(width: 48, alignment: .leading)
+                        CPRow(label: "Slot \(i + 1)", showDivider: i < engine.slotCount(engine.programLayout) - 1) {
                             Picker("", selection: Binding(
                                 get: { (engine.layoutSlots.indices.contains(i) ? engine.layoutSlots[i] : nil) ?? pipNoneTag },
                                 set: { engine.setSlot(i, $0 == pipNoneTag ? nil : $0) })) {
                                 Text("— none —").tag(pipNoneTag)
                                 ForEach(engine.sources.filter { !$0.isPlaceholder }) { s in Text(s.name).tag(s.id) }
-                            }.labelsHidden()
+                            }
+                            .cpPickerChrome().frame(maxWidth: 180)
                         }
                     }
                 }
-
-                Divider()
-                SectionLabel("SCENES")
-                HStack {
-                    TextField("Scene name", text: $sceneName).textFieldStyle(.roundedBorder)
-                    Button("Save") { engine.saveScene(sceneName); sceneName = "" }
+            }
+            CPCard(title: "Scenes", subtitle: engine.scenes.isEmpty ? "None saved" : "\(engine.scenes.count) saved", icon: "rectangle.stack") {
+                HStack(spacing: 6) {
+                    TextField("Scene name", text: $sceneName).dsField().onSubmit { engine.saveScene(sceneName); sceneName = "" }
+                    CPButton(icon: "plus", title: "Save", prominent: true) { engine.saveScene(sceneName); sceneName = "" }
                 }
+                .padding(.vertical, 6)
                 if engine.scenes.isEmpty {
-                    Text("Arrange a layout and its slots above, then Save it as a scene to recall later.")
-                        .font(.system(size: 9)).foregroundColor(.secondary)
+                    CPNote("Arrange a layout and its slots, then save it as a scene to recall later.")
                 }
                 ForEach(engine.scenes) { sc in
+                    CPDivider()
                     HStack(spacing: 8) {
                         LayoutThumb(layout: sc.layout)
-                        Button(sc.name) { engine.recallScene(sc) }
-                            .buttonStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
-                        Button { engine.deleteScene(sc.id) } label: { Image(systemName: "trash").font(.system(size: 10)) }
-                            .buttonStyle(.plain).foregroundColor(.secondary)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(sc.name).font(.system(size: 11.5, weight: .medium)).foregroundColor(CP.text).lineLimit(1)
+                            Text(sc.layout.label).font(.system(size: 9)).foregroundColor(CP.text2)
+                        }
+                        Spacer()
+                        CPButton(title: "Recall") { engine.recallScene(sc) }
                     }
-                    .padding(6).background(Color(white: 0.1)).cornerRadius(5)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { engine.recallScene(sc) }
+                    .contextMenu {
+                        Button("Recall") { engine.recallScene(sc) }
+                        Button("Update with current layout") {
+                            if let k = engine.scenes.firstIndex(where: { $0.id == sc.id }) {
+                                engine.scenes[k].layout = engine.programLayout
+                                engine.scenes[k].slots = engine.layoutSlots
+                                engine.scenes[k].gridCount = engine.gridCount
+                            }
+                        }
+                        Divider()
+                        Button("Delete", role: .destructive) { engine.deleteScene(sc.id) }
+                    }
                 }
-                Text("Recalling a scene cuts the Program to that layout. Choose “Single” to return to the normal switcher.")
-                    .font(.system(size: 9)).foregroundColor(.secondary).padding(.top, 4)
-            }.padding(10)
+                CPNote("Recalling a scene switches the Program to that layout. Choose Single to return to normal switching.")
+            }
         }
     }
 }
@@ -1449,27 +1644,38 @@ struct DictionaryLookup: View {
 
 struct OverlaysPanel: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var auto: AutomationModel
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("OVERLAY CHANNELS / LAYERS").font(.system(size: 9, weight: .heavy)).kerning(1).foregroundColor(.secondary)
-                Spacer()
-                Menu {
-                    Menu("Templates") {
-                        ForEach(OverlayTemplate.all) { t in
-                            Button { engine.addLayerTemplate(t) } label: { Label(t.name, systemImage: t.icon) }
+        CPInspector {
+            CPCard(title: "Overlay layers", subtitle: "\(engine.layers.count) layer\(engine.layers.count == 1 ? "" : "s") · \(engine.layers.filter { $0.isLive }.count) on air", icon: "square.stack.3d.up.fill") {
+                HStack(spacing: 6) {
+                    Menu {
+                        Menu("Templates") {
+                            ForEach(OverlayTemplate.all) { t in
+                                Button { engine.addLayerTemplate(t) } label: { Label(t.name, systemImage: t.icon) }
+                            }
                         }
-                    }
-                    Divider()
-                    ForEach(Layer.Kind.allCases) { k in Button { engine.addLayer(k) } label: { Label(k.rawValue, systemImage: k.icon) } }
-                } label: { Image(systemName: "plus.circle.fill").foregroundColor(cPreview) }
-                .menuStyle(.borderlessButton).frame(width: 28)
-            }.padding(.horizontal, 10).padding(.vertical, 6)
-            List { ForEach(engine.layers) { l in LayerRow(layer: l) } }.listStyle(.plain).frame(maxHeight: 220)
-            Divider()
-            ScrollView {
-                if let sel = engine.layers.first(where: { $0.id == engine.selectedLayerID }) { LayerInspector(layer: sel) }
-                else { Text("Select a layer to edit it.").font(.system(size: 11)).foregroundColor(.secondary).padding(12) }
+                        Divider()
+                        ForEach(Layer.Kind.allCases) { k in Button { engine.addLayer(k) } label: { Label(k.rawValue, systemImage: k.icon) } }
+                    } label: { Label("Add layer", systemImage: "plus") }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    Spacer()
+                    CPButton(icon: "eye.slash", title: "Hide all") { engine.layers.forEach { $0.isLive = false } }
+                }
+                .padding(.vertical, 6)
+                if engine.layers.isEmpty {
+                    CPNote("No overlays yet. Add a lower third, logo, ticker, clock, scoreboard, QR code or picture-in-picture.")
+                }
+                ForEach(engine.layers) { l in
+                    CPDivider()
+                    LayerRow(layer: l)
+                }
+            }
+            if let sel = engine.layers.first(where: { $0.id == engine.selectedLayerID }) {
+                LayerInspector(layer: sel)
+            } else if !engine.layers.isEmpty {
+                CPNote("Select a layer to edit it.")
             }
         }
     }
@@ -1477,23 +1683,48 @@ struct OverlaysPanel: View {
 
 struct LayerRow: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var auto: AutomationModel
     @ObservedObject var layer: Layer
     var body: some View {
+        let selected = engine.selectedLayerID == layer.id
         HStack(spacing: 8) {
-            Image(systemName: layer.kind.icon).frame(width: 18)
-            Text(layer.name).font(.system(size: 12)).lineLimit(1)
-            Spacer()
-            VStack(spacing: 0) {
-                Button { engine.moveLayer(layer.id, by: -1) } label: { Image(systemName: "chevron.up").font(.system(size: 7)) }.buttonStyle(.borderless)
-                Button { engine.moveLayer(layer.id, by: 1) } label: { Image(systemName: "chevron.down").font(.system(size: 7)) }.buttonStyle(.borderless)
+            Image(systemName: layer.kind.icon).font(.system(size: 12)).foregroundColor(selected ? CP.icon : CP.text2).frame(width: 18)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(layer.name).font(.system(size: 11.5, weight: selected ? .semibold : .regular)).foregroundColor(CP.text).lineLimit(1)
+                Text(layer.kind.rawValue).font(.system(size: 9)).foregroundColor(CP.text2)
             }
-            Toggle("", isOn: $layer.isLive).toggleStyle(.switch).tint(.red).labelsHidden()
-            Button { engine.removeLayer(layer.id) } label: { Image(systemName: "xmark").font(.system(size: 9)) }
-                .buttonStyle(.borderless).foregroundColor(.secondary)
+            Spacer()
+            if let idx = engine.layers.firstIndex(where: { $0.id == layer.id }), idx < 4 {
+                Text("\(idx + 1)").font(.system(size: 9, weight: .bold)).foregroundColor(CP.text2)
+                    .frame(width: 16, height: 16).background(RoundedRectangle(cornerRadius: 4).fill(CP.field))
+                    .help("Overlay channel \(idx + 1) in the status bar")
+            }
+            Toggle("", isOn: $layer.isLive).toggleStyle(.switch).tint(DS.program).labelsHidden().controlSize(.mini)
         }
-        .padding(.vertical, 2).contentShape(Rectangle())
+        .padding(.vertical, 5).padding(.horizontal, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? CP.blueSoft : Color.clear))
+        .contentShape(Rectangle())
         .onTapGesture { engine.selectedLayerID = layer.id }
-        .background(engine.selectedLayerID == layer.id ? cPreview.opacity(0.12) : Color.clear)
+        .contextMenu {
+            Button(layer.isLive ? "Hide (take off air)" : "Show (put on air)") { layer.isLive.toggle() }
+            Button("Edit") { engine.selectedLayerID = layer.id }
+            Divider()
+            Button("Move up") { engine.moveLayer(layer.id, by: -1) }
+            Button("Move down") { engine.moveLayer(layer.id, by: 1) }
+            Divider()
+            Button("Automate this overlay…") {
+                auto.add(0)
+                if let i = auto.selectedIndex {
+                    auto.rules[i].name = "Show \(layer.name)"
+                    auto.rules[i].target = .overlay
+                    auto.rules[i].targetID = layer.id.uuidString
+                }
+                present.deck = DeckTab.automation.rawValue
+            }
+            Divider()
+            Button("Delete", role: .destructive) { engine.removeLayer(layer.id) }
+        }
     }
 }
 
@@ -1534,11 +1765,24 @@ struct StatusBar: View {
             ForEach(0..<4) { i in
                 Button("\(i + 1)") { engine.toggleOverlay(i) }
                     .buttonStyle(.ds(.amber, .small, active: engine.layers.indices.contains(i) && engine.layers[i].isLive))
-                    .help("Toggle overlay channel \(i + 1)")
+                    .help(engine.layers.indices.contains(i) ? "Overlay \(i + 1): \(engine.layers[i].name)" : "Overlay channel \(i + 1) (empty)")
+                    .contextMenu {
+                        if engine.layers.indices.contains(i) {
+                            let l = engine.layers[i]
+                            Button(l.isLive ? "Hide \(l.name)" : "Show \(l.name)") { engine.toggleOverlay(i) }
+                            Button("Edit \(l.name)") { engine.selectedLayerID = l.id; engine.rightTab = 2 }
+                        }
+                        Button("Add overlay…") { engine.rightTab = 2 }
+                    }
             }
             Rectangle().fill(DS.line).frame(width: 1, height: 16)
             Button("Snapshot") { engine.snapshot() }.buttonStyle(.ds(.normal, .small))
+                .contextMenu {
+                    Button("Take snapshot") { engine.snapshot() }
+                    Button("Choose folder…") { engine.chooseOutputFolder() }
+                }
             Button("Outputs") { engine.rightTab = 4 }.buttonStyle(.ds(.normal, .small, active: !engine.activeScreens.isEmpty))
+                .contextMenu { ProgramOutMenuItems() }
             Button("Multiview") { engine.openMultiviewWindow() }.buttonStyle(.ds(.normal, .small))
             Button("Guides") { engine.showSafeGuides.toggle() }.buttonStyle(.ds(.normal, .small, active: engine.showSafeGuides))
         }
@@ -1552,14 +1796,21 @@ struct StatusBar: View {
 struct OverlayStyleControls: View {
     @ObservedObject var layer: Layer
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider()
-            SectionLabel("STYLING")
-            ColorPicker("Accent", selection: $layer.accent)
-            ColorPicker("Text colour", selection: $layer.textColor)
-            ColorPicker("Background", selection: $layer.bgColor)
-            adjSlider("BG opacity", $layer.bgOpacity, 0...1)
-            adjSlider("Font size", $layer.fontScale, 0.6...2.0)
+        CPColorRow(label: "Accent", color: $layer.accent)
+        CPColorRow(label: "Text colour", color: $layer.textColor)
+        CPColorRow(label: "Background", color: $layer.bgColor)
+        adjSlider("BG opacity", $layer.bgOpacity, 0...1)
+        adjSlider("Font size", $layer.fontScale, 0.6...2.0)
+    }
+}
+
+private struct CPPickerRow<Sel: Hashable, Items: View>: View {
+    let label: String
+    @Binding var selection: Sel
+    @ViewBuilder var items: () -> Items
+    var body: some View {
+        CPRow(label: label) {
+            Picker("", selection: $selection) { items() }.cpPickerChrome().frame(maxWidth: 170)
         }
     }
 }
@@ -1568,62 +1819,72 @@ struct LayerInspector: View {
     @EnvironmentObject var engine: Engine
     @ObservedObject var layer: Layer
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(layer.kind.rawValue.uppercased()).font(.system(size: 11, weight: .heavy)).kerning(1.5).foregroundColor(cPreview)
-                Spacer()
-                Circle().fill(layer.isLive ? Color.red : Color(white: 0.3)).frame(width: 9, height: 9)
+        VStack(spacing: 8) {
+            CPCard(title: layer.name.isEmpty ? layer.kind.rawValue : layer.name, subtitle: layer.kind.rawValue + (layer.isLive ? " · ON AIR" : ""),
+                   icon: layer.kind.icon, iconColor: layer.isLive ? DS.program : CP.icon) {
+                CPTextRow(label: "Name", text: $layer.name)
+                CPToggleRow(label: "On air", isOn: $layer.isLive)
             }
-            TextField("Layer name", text: $layer.name)
-            VariantsView(layer: layer)
-            LayerTransformView(layer: layer)
-            Divider()
-            switch layer.kind {
-            case .lowerThird:
-                TextField("Name line", text: $layer.text1); TextField("Title line", text: $layer.text2)
-                Picker("Style", selection: $layer.style) {
-                    Text("Accent strip").tag(0); Text("Boxed").tag(1); Text("Minimal").tag(2)
-                    Text("Two-tone").tag(3); Text("Tab header").tag(4); Text("Outline").tag(5); Text("Pill").tag(6)
-                }
-                Picker("Align", selection: $layer.align) { Text("Left").tag(0); Text("Centre").tag(1); Text("Right").tag(2) }
-                OverlayStyleControls(layer: layer)
-            case .ticker:
-                TextField("Ticker text", text: $layer.text1)
-                adjSlider("Speed", $layer.number1, 20...300)
-            case .countdown:
-                TextField("Label", text: $layer.text1)
-                HStack { Text("Minutes").font(.system(size: 11)).foregroundColor(.secondary); TextField("", value: $layer.number1, formatter: NumberFormatter()).frame(width: 60) }
-                HStack(spacing: 8) {
-                    Button("Start") { if layer.remaining <= 0 { layer.remaining = layer.number1 * 60 }; layer.lastTick = 0; layer.isRunning = true }
-                    Button("Pause") { layer.isRunning = false }
-                    Button("Reset") { layer.isRunning = false; layer.remaining = layer.number1 * 60 }
-                }
-                ColorPicker("Accent", selection: $layer.accent)
-            case .clock:
-                Toggle("24-hour", isOn: $layer.use24h)
-            case .scoreboard:
-                TextField("Team A", text: $layer.text1); TextField("Team B", text: $layer.text2)
-                ColorPicker("Team A color", selection: $layer.accent)
-                HStack(spacing: 8) {
-                    Button("A +1") { layer.scoreA += 1 }; Button("A −1") { layer.scoreA = max(0, layer.scoreA - 1) }
-                    Button("B +1") { layer.scoreB += 1 }; Button("B −1") { layer.scoreB = max(0, layer.scoreB - 1) }
-                }
-            case .title:
-                TextField("Title text", text: $layer.text1)
-                TextField("Subtitle (optional)", text: $layer.text2)
-                Picker("Align", selection: $layer.align) { Text("Left").tag(0); Text("Centre").tag(1); Text("Right").tag(2) }
-                adjSlider("Size", $layer.number1, 3...20)
-                ColorPicker("Title colour", selection: $layer.accent)
-                ColorPicker("Subtitle colour", selection: $layer.textColor)
-                Divider()
-                Toggle("Background box", isOn: Binding(get: { layer.bgOpacity > 0.01 }, set: { layer.bgOpacity = $0 ? 0.65 : 0 }))
-                    .font(.system(size: 11))
-                if layer.bgOpacity > 0.01 {
-                    ColorPicker("Box colour", selection: $layer.bgColor)
-                    adjSlider("Box opacity", $layer.bgOpacity, 0.05...1)
-                }
-            case .logo:
-                Button("Choose image…") {
+            CPCard(title: "Content", icon: "text.alignleft") { content.padding(.vertical, 2) }
+            CPCard(title: "Variants", subtitle: layer.variants.isEmpty ? "Saved states" : "\(layer.variants.count) saved", icon: "square.on.square") {
+                VariantsView(layer: layer)
+            }
+            CPCard(title: "Transform", icon: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left", onReset: { layer.resetTransform() }) {
+                LayerTransformView(layer: layer)
+            }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch layer.kind {
+        case .lowerThird:
+            CPTextRow(label: "Name line", text: $layer.text1)
+            CPTextRow(label: "Title line", text: $layer.text2)
+            CPPickerRow(label: "Style", selection: $layer.style) {
+                Text("Accent strip").tag(0); Text("Boxed").tag(1); Text("Minimal").tag(2)
+                Text("Two-tone").tag(3); Text("Tab header").tag(4); Text("Outline").tag(5); Text("Pill").tag(6)
+            }
+            CPPickerRow(label: "Align", selection: $layer.align) { Text("Left").tag(0); Text("Centre").tag(1); Text("Right").tag(2) }
+            OverlayStyleControls(layer: layer)
+        case .ticker:
+            CPTextRow(label: "Ticker text", text: $layer.text1)
+            adjSlider("Speed", $layer.number1, 20...300)
+        case .countdown:
+            CPTextRow(label: "Label", text: $layer.text1)
+            adjSlider("Minutes", $layer.number1, 1...180)
+            HStack(spacing: 6) {
+                CPButton(icon: "play.fill", title: "Start", prominent: true) { if layer.remaining <= 0 { layer.remaining = layer.number1 * 60 }; layer.lastTick = 0; layer.isRunning = true }
+                CPButton(icon: "pause.fill", title: "Pause") { layer.isRunning = false }
+                CPButton(icon: "arrow.counterclockwise", title: "Reset") { layer.isRunning = false; layer.remaining = layer.number1 * 60 }
+            }
+            .padding(.vertical, 4)
+            CPColorRow(label: "Accent", color: $layer.accent)
+        case .clock:
+            CPToggleRow(label: "24-hour", isOn: $layer.use24h)
+        case .scoreboard:
+            CPTextRow(label: "Team A", text: $layer.text1)
+            CPTextRow(label: "Team B", text: $layer.text2)
+            CPColorRow(label: "Team A colour", color: $layer.accent)
+            HStack(spacing: 6) {
+                CPButton(title: "A +1") { layer.scoreA += 1 }; CPButton(title: "A −1") { layer.scoreA = max(0, layer.scoreA - 1) }
+                CPButton(title: "B +1") { layer.scoreB += 1 }; CPButton(title: "B −1") { layer.scoreB = max(0, layer.scoreB - 1) }
+            }
+            .padding(.vertical, 4)
+        case .title:
+            CPTextRow(label: "Title", text: $layer.text1)
+            CPTextRow(label: "Subtitle", text: $layer.text2, prompt: "optional")
+            CPPickerRow(label: "Align", selection: $layer.align) { Text("Left").tag(0); Text("Centre").tag(1); Text("Right").tag(2) }
+            adjSlider("Size", $layer.number1, 3...20)
+            CPColorRow(label: "Title colour", color: $layer.accent)
+            CPColorRow(label: "Subtitle colour", color: $layer.textColor)
+            CPToggleRow(label: "Background box", isOn: Binding(get: { layer.bgOpacity > 0.01 }, set: { layer.bgOpacity = $0 ? 0.65 : 0 }))
+            if layer.bgOpacity > 0.01 {
+                CPColorRow(label: "Box colour", color: $layer.bgColor)
+                adjSlider("Box opacity", $layer.bgOpacity, 0.05...1)
+            }
+        case .logo:
+            CPRow(label: "Image") {
+                CPButton(icon: "photo", title: "Choose…") {
                     pickFile(types: ["public.image"]) { url in
                         if let nsimg = NSImage(contentsOf: url) {
                             var rect = CGRect(origin: .zero, size: nsimg.size)
@@ -1631,42 +1892,41 @@ struct LayerInspector: View {
                         }
                     }
                 }
-                Picker("Position", selection: $layer.position) { Text("Top left").tag(0); Text("Top right").tag(1); Text("Bottom left").tag(2); Text("Bottom right").tag(3) }
-                adjSlider("Scale", $layer.number1, 4...50)
-            case .qrcode:
-                TextField("URL", text: $layer.text1)
-                adjSlider("Size", $layer.number1, 80...360)
-            case .pip:
-                Picker("Source", selection: Binding(get: { layer.sourceRef ?? pipNoneTag }, set: { layer.sourceRef = ($0 == pipNoneTag ? nil : $0) })) {
-                    Text("— none —").tag(pipNoneTag)
-                    ForEach(engine.sources) { s in Text(s.name).tag(s.id) }
-                }
-                Picker("Corner", selection: $layer.position) { Text("Top left").tag(0); Text("Top right").tag(1); Text("Bottom left").tag(2); Text("Bottom right").tag(3) }
-                adjSlider("Size", $layer.number1, 8...100)
-                ColorPicker("Border", selection: $layer.accent)
-                Divider()
-                SectionLabel("CHROMA KEY")
-                Toggle("Enable chroma key", isOn: $layer.keyEnabled)
-                if layer.keyEnabled {
-                    ColorPicker("Key colour", selection: $layer.keyColor)
-                    adjSlider("Similarity", $layer.keySimilarity, 0.02...0.5)
-                    adjSlider("Smoothness", $layer.keySmoothness, 0.005...0.3)
-                    Text("Tip: set the source full-size (Size ≈ 100) to place keyed talent over the whole program.")
-                        .font(.system(size: 9)).foregroundColor(.secondary)
-                }
-            case .definition:
-                TextField("Word", text: $layer.text1)
-                Text("Definition").font(.system(size: 10)).foregroundColor(.secondary)
-                TextField("Definition", text: $layer.text2, axis: .vertical).lineLimit(2...6)
-                adjSlider("Panel height", $layer.number1, 4...12)
-                ColorPicker("Word colour", selection: $layer.accent)
-                ColorPicker("Panel colour", selection: $layer.bgColor)
-                adjSlider("Panel opacity", $layer.bgOpacity, 0.3...1)
-                Text("Tip: use the Dictionary search at the top of this tab to fill this automatically.")
-                    .font(.system(size: 9)).foregroundColor(.secondary)
             }
+            CPPickerRow(label: "Position", selection: $layer.position) { Text("Top left").tag(0); Text("Top right").tag(1); Text("Bottom left").tag(2); Text("Bottom right").tag(3) }
+            adjSlider("Scale", $layer.number1, 4...50)
+        case .qrcode:
+            CPTextRow(label: "URL", text: $layer.text1, prompt: "https://")
+            adjSlider("Size", $layer.number1, 80...360)
+        case .pip:
+            CPPickerRow(label: "Source", selection: Binding(get: { layer.sourceRef ?? pipNoneTag }, set: { layer.sourceRef = ($0 == pipNoneTag ? nil : $0) })) {
+                Text("— none —").tag(pipNoneTag)
+                ForEach(engine.sources.filter { !$0.isPlaceholder }) { s in Text(s.name).tag(s.id) }
+            }
+            CPPickerRow(label: "Corner", selection: $layer.position) { Text("Top left").tag(0); Text("Top right").tag(1); Text("Bottom left").tag(2); Text("Bottom right").tag(3) }
+            adjSlider("Size", $layer.number1, 8...100)
+            CPColorRow(label: "Border", color: $layer.accent)
+            SectionLabel("Chroma key")
+            CPToggleRow(label: "Enable chroma key", isOn: $layer.keyEnabled)
+            if layer.keyEnabled {
+                CPColorRow(label: "Key colour", color: $layer.keyColor)
+                adjSlider("Similarity", $layer.keySimilarity, 0.02...0.5)
+                adjSlider("Smoothness", $layer.keySmoothness, 0.005...0.3)
+                CPNote("Tip: set Size ≈ 100 to place keyed talent over the whole Program.")
+            }
+        case .definition:
+            CPTextRow(label: "Word", text: $layer.text1)
+            TextField("Definition", text: $layer.text2, axis: .vertical).lineLimit(2...6)
+                .textFieldStyle(.plain).font(.system(size: 11.5)).foregroundColor(CP.text)
+                .padding(6).background(RoundedRectangle(cornerRadius: 6).fill(CP.field))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(CP.border, lineWidth: 1))
+                .padding(.vertical, 4)
+            adjSlider("Panel height", $layer.number1, 4...12)
+            CPColorRow(label: "Word colour", color: $layer.accent)
+            CPColorRow(label: "Panel colour", color: $layer.bgColor)
+            adjSlider("Panel opacity", $layer.bgOpacity, 0.3...1)
+            CPNote("Tip: the Dictionary tab fills this automatically.")
         }
-        .textFieldStyle(.roundedBorder).padding(12)
     }
 }
 
@@ -1674,50 +1934,46 @@ struct VariantsView: View {
     @ObservedObject var layer: Layer
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                SectionLabel("VARIANTS")
+            HStack(spacing: 6) {
+                CPButton(icon: "plus", title: "Save current") { layer.captureVariant() }
                 Spacer()
-                Button { layer.captureVariant() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).help("Save current as variant")
-                Button { layer.cycleVariant(-1) } label: { Image(systemName: "chevron.left") }.buttonStyle(.borderless)
-                Button { layer.cycleVariant(1) } label: { Image(systemName: "chevron.right") }.buttonStyle(.borderless)
+                CPButton(icon: "chevron.left", title: "") { layer.cycleVariant(-1) }
+                CPButton(icon: "chevron.right", title: "") { layer.cycleVariant(1) }
             }
             if layer.variants.isEmpty {
-                Text("Save reusable states (e.g. each speaker) and switch live.").font(.system(size: 9)).foregroundColor(.secondary)
+                CPNote("Save reusable states (e.g. each speaker's name) and switch between them live.")
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(Array(layer.variants.enumerated()), id: \.element.id) { idx, v in
                             Button { layer.applyVariant(idx) } label: {
-                                Text(v.text1.isEmpty ? v.name : v.text1).font(.system(size: 10)).lineLimit(1)
-                                    .padding(.horizontal, 8).padding(.vertical, 5)
-                                    .background(layer.activeVariant == idx ? cPreview.opacity(0.3) : Color(white: 0.14))
-                                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(layer.activeVariant == idx ? cPreview : Color(white: 0.25), lineWidth: 1))
-                                    .cornerRadius(5)
+                                Text(v.text1.isEmpty ? v.name : v.text1).font(.system(size: 10.5)).lineLimit(1)
+                                    .foregroundColor(CP.text)
+                                    .padding(.horizontal, 8).frame(height: 24)
+                                    .background(RoundedRectangle(cornerRadius: 6).fill(layer.activeVariant == idx ? CP.blueSoft : CP.field))
+                                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(layer.activeVariant == idx ? CP.blue : CP.border, lineWidth: 1))
                             }.buttonStyle(.plain)
-                            .contextMenu { Button("Delete", role: .destructive) { if layer.variants.indices.contains(idx) { layer.variants.remove(at: idx) } } }
+                            .contextMenu {
+                                Button("Apply") { layer.applyVariant(idx) }
+                                Button("Delete", role: .destructive) { if layer.variants.indices.contains(idx) { layer.variants.remove(at: idx) } }
+                            }
                         }
                     }
                 }
             }
         }
+        .padding(.vertical, 6)
     }
 }
 
 struct LayerTransformView: View {
     @ObservedObject var layer: Layer
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                SectionLabel("TRANSFORM")
-                Spacer()
-                Button("Reset") { layer.resetTransform() }.font(.system(size: 10))
-            }
-            adjSlider("Opacity", $layer.opacity, 0...1)
-            adjSlider("Pos X", $layer.offsetX, -0.5...0.5)
-            adjSlider("Pos Y", $layer.offsetY, -0.5...0.5)
-            adjSlider("Scale", $layer.scaleAdj, 0.2...3)
-            adjSlider("Rotate", $layer.rotationAdj, -180...180)
-        }
+        adjSlider("Opacity", $layer.opacity, 0...1, 1)
+        adjSlider("Position X", $layer.offsetX, -0.5...0.5)
+        adjSlider("Position Y", $layer.offsetY, -0.5...0.5)
+        adjSlider("Scale", $layer.scaleAdj, 0.2...3, 1)
+        adjSlider("Rotate", $layer.rotationAdj, -180...180)
     }
 }
 
@@ -1737,64 +1993,65 @@ struct StreamSettingsView: View {
         return "Audio: the Program mix from the Audio Mixer — video/audio files and microphones with their faders, ON/AFV, mute, pan, effects and the Master fader (stereo)."
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("STREAM DESTINATIONS").font(.system(size: 13, weight: .heavy)).kerning(1)
-                Spacer()
-                Button("Add Destination") { engine.addStreamDestination() }
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
-            if engine.streamDestinations.isEmpty {
-                Text("No destinations yet. Add one and choose a platform (YouTube, Facebook Live, Twitch) or a custom RTMP/RTMPS/SRT server.")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
-            }
-            ScrollView {
-                VStack(spacing: 10) {
-                    ForEach($engine.streamDestinations) { $d in StreamRow(dest: $d) }
-                }
-            }
-            Divider()
-            HStack(spacing: 14) {
-                Toggle("Send program audio", isOn: $engine.streamAudio)
-                    .disabled(engine.isStreaming)
-                    .help("On: the mixed program audio goes to the stream. Off: a silent audio track (older behaviour).")
-                Picker("Video bitrate", selection: $engine.streamBitrateKbps) {
-                    ForEach(Engine.streamBitrates, id: \.self) { b in
-                        Text(String(format: "%.1f Mbps", Double(b) / 1000)).tag(b)
-                    }
-                }
-                .frame(width: 210)
-                .disabled(engine.isStreaming)
-            }
-            .font(.system(size: 11))
-            Text(streamAudioNote).font(.system(size: 10)).foregroundColor(.secondary)
+        VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: engine.ffmpegAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundColor(engine.ffmpegAvailable ? cProgram : .orange)
-                if engine.ffmpegAvailable {
-                    Text(liveSummary).font(.system(size: 11))
-                } else {
-                    Text("ffmpeg not found. Install it once (Terminal: brew install ffmpeg), then reopen.").font(.system(size: 11))
+                Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 14, weight: .semibold)).foregroundColor(DS.program)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Stream").font(.system(size: 13, weight: .semibold)).foregroundColor(CP.text)
+                    Text(engine.isStreaming ? "LIVE to \(engine.liveDestinations.count) destination(s)" : "Destinations and quality")
+                        .font(.system(size: 10)).foregroundColor(engine.isStreaming ? DS.program : CP.text2)
                 }
                 Spacer()
-                if engine.isStreaming {
-                    HStack(spacing: 4) {
-                        Circle().fill(Color.red).frame(width: 8, height: 8)
-                        Text("LIVE").font(.system(size: 10, weight: .heavy)).foregroundColor(.red)
-                    }
+                CPButton(icon: "plus", title: "Add destination") { engine.addStreamDestination() }
+                CPButton(title: "Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 12).frame(height: 48).background(CP.cardHeader)
+
+            CPInspector {
+                if engine.streamDestinations.isEmpty {
+                    CPNote("No destinations yet. Add one and choose YouTube, Facebook Live, Twitch or a custom RTMP/RTMPS/SRT server.")
                 }
-                Button(engine.isStreaming ? "Stop Streaming" : "Go Live") { engine.toggleStream(nil) }
-                    .disabled(!engine.ffmpegAvailable || (!engine.isStreaming && engine.liveDestinations.isEmpty))
-                    .foregroundColor(engine.isStreaming ? .red : cProgram)
+                ForEach($engine.streamDestinations) { $d in StreamRow(dest: $d) }
+                CPCard(title: "Quality & audio", icon: "slider.horizontal.3") {
+                    CPToggleRow(label: "Send program audio", isOn: $engine.streamAudio, showDivider: true)
+                        .disabled(engine.isStreaming)
+                    CPRow(label: "Video bitrate", showDivider: false) {
+                        Picker("", selection: $engine.streamBitrateKbps) {
+                            ForEach(Engine.streamBitrates, id: \.self) { b in Text(String(format: "%.1f Mbps", Double(b) / 1000)).tag(b) }
+                        }
+                        .cpPickerChrome().frame(maxWidth: 150).disabled(engine.isStreaming)
+                    }
+                    CPNote(streamAudioNote)
+                }
             }
-            if !engine.streamError.isEmpty {
-                Text(engine.streamError).font(.system(size: 10)).foregroundColor(.orange)
-                    .textSelection(.enabled).lineLimit(6)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: engine.ffmpegAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundColor(engine.ffmpegAvailable ? DS.ok : DS.amber)
+                    Text(engine.ffmpegAvailable ? liveSummary : "ffmpeg not found. Install it once (Terminal: brew install ffmpeg), then reopen.")
+                        .font(.system(size: 11)).foregroundColor(CP.text)
+                    Spacer()
+                    if engine.isStreaming {
+                        HStack(spacing: 4) {
+                            Circle().fill(DS.program).frame(width: 7, height: 7)
+                            Text("LIVE").font(.system(size: 10, weight: .heavy)).foregroundColor(DS.program)
+                        }
+                    }
+                    Button(engine.isStreaming ? "Stop streaming" : "Go live") { engine.toggleStream(nil) }
+                        .buttonStyle(.ds(.program, .regular, active: engine.isStreaming))
+                        .disabled(!engine.ffmpegAvailable || (!engine.isStreaming && engine.liveDestinations.isEmpty))
+                }
+                if !engine.streamError.isEmpty {
+                    Text(engine.streamError).font(.system(size: 10)).foregroundColor(DS.amber).textSelection(.enabled).lineLimit(6)
+                }
+                Text("Go live sends Program to every enabled destination at once. RTMP/RTMPS use FLV; SRT uses MPEG-TS. Resolution and frame rate are locked while live.")
+                    .font(.system(size: 9.5)).foregroundColor(CP.text2)
             }
-            Text("Go Live sends the Program to every enabled destination at once (simulcast). RTMP/RTMPS use FLV; SRT uses MPEG-TS automatically. Resolution and frame rate are locked while live.")
-                .font(.system(size: 10)).foregroundColor(.secondary)
+            .padding(12).background(CP.card)
         }
-        .padding(16).frame(width: 560, height: 600)
+        .frame(width: 560, height: 620)
+        .background(CP.bg)
         .preferredColorScheme(.dark)
     }
 }
@@ -1803,32 +2060,43 @@ struct StreamRow: View {
     @EnvironmentObject var engine: Engine
     @Binding var dest: StreamDestination
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Toggle("", isOn: $dest.enabled).labelsHidden()
-                TextField("Name", text: $dest.name)
-                Button { engine.removeStreamDestination(dest.id) } label: { Image(systemName: "trash") }
-                    .buttonStyle(.borderless).foregroundColor(.red)
-            }
-            HStack {
-                Picker("Platform", selection: $dest.platform) {
+        CPCard(title: dest.name.isEmpty ? "Destination" : dest.name, subtitle: dest.enabled ? "\(dest.platform) · enabled" : "\(dest.platform) · off",
+               icon: "antenna.radiowaves.left.and.right", iconColor: dest.enabled ? DS.program : CP.text2) {
+            CPToggleRow(label: "Enabled", isOn: $dest.enabled, showDivider: true)
+            CPTextRow(label: "Name", text: $dest.name, showDivider: true)
+            CPRow(label: "Platform") {
+                Picker("", selection: $dest.platform) {
                     ForEach(StreamDestination.platforms, id: \.self) { Text($0).tag($0) }
                 }
+                .cpPickerChrome().frame(maxWidth: 170)
                 .onChange(of: dest.platform) { newValue in
                     let p = StreamDestination.preset(for: newValue)
                     dest.proto = p.proto
                     if !p.url.isEmpty { dest.url = p.url }
                 }
-                Picker("Protocol", selection: $dest.proto) {
+            }
+            CPRow(label: "Protocol") {
+                Picker("", selection: $dest.proto) {
                     ForEach(StreamDestination.protocols, id: \.self) { Text($0).tag($0) }
                 }
+                .cpPickerChrome().frame(maxWidth: 170)
             }
-            TextField("Server URL", text: $dest.url)
-            SecureField("Stream key", text: $dest.key)
-            Text(dest.composedURL).font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary).lineLimit(1)
+            CPTextRow(label: "Server URL", text: $dest.url, prompt: "rtmp://…", showDivider: true)
+            CPTextRow(label: "Stream key", text: $dest.key, secure: true)
+            HStack {
+                Text(dest.composedURL).font(.system(size: 9, design: .monospaced)).foregroundColor(CP.text2).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Button { engine.removeStreamDestination(dest.id) } label: { Label("Remove", systemImage: "trash") }
+                    .buttonStyle(.ds(.danger, .small))
+            }
+            .padding(.vertical, 6)
         }
-        .textFieldStyle(.roundedBorder)
-        .padding(10).background(DS.bg2).cornerRadius(6)
+        .contextMenu {
+            Button(dest.enabled ? "Disable" : "Enable") { dest.enabled.toggle() }
+            Button("Go live to this destination only") { engine.toggleStream(dest) }.disabled(engine.isStreaming)
+            Divider()
+            Button("Remove", role: .destructive) { engine.removeStreamDestination(dest.id) }
+        }
     }
 }
 
@@ -1852,8 +2120,11 @@ struct AddStreamView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.system(size: 13, weight: .heavy)).kerning(1)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: mode == 4 ? "globe" : "antenna.radiowaves.left.and.right").font(.system(size: 14, weight: .semibold)).foregroundColor(CP.icon)
+                Text(title.capitalized).font(.system(size: 13, weight: .semibold)).foregroundColor(CP.text)
+            }
 
             if mode == 4 {
                 Text("Displays any website as an input — great for online lyrics, Bible sites, countdowns, dashboards or web-based graphics. It renders at 1280×720 and refreshes continuously.")
@@ -1910,7 +2181,11 @@ struct AddStreamView: View {
                           || (mode == 3 && (!engine.ffmpegAvailable || !engine.ytdlpAvailable)))
             }
         }
-        .padding(16).frame(width: 560, height: mode == 3 ? 340 : 300).preferredColorScheme(.dark)
+        .padding(16).frame(width: 560, height: mode == 3 ? 340 : 300)
+        .background(CP.bg)
+        .textFieldStyle(.roundedBorder)
+        .controlSize(.small)
+        .preferredColorScheme(.dark)
         .onAppear { urlString = engine.editStreamURL }
     }
 }
@@ -1931,17 +2206,33 @@ struct OutputsPanel: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
-                CPCard(title: "Program Out", subtitle: "Full screen, no title bar", icon: "rectangle.inset.filled") {
-                    CPRow(icon: "display", label: "Full-screen Program") {
+                CPCard(title: "Program Out", subtitle: engine.programWindowActive ? (engine.programOutFullscreen ? "Full screen" : "In a window") : "Off",
+                       icon: "rectangle.inset.filled", iconColor: engine.programWindowActive ? DS.program : CP.icon) {
+                    CPRow(icon: "power", label: "Program Out") {
                         Toggle("", isOn: Binding(get: { engine.programWindowActive }, set: { _ in engine.openOutputWindow() }))
                             .toggleStyle(.switch).tint(CP.blue).labelsHidden()
+                    }
+                    CPRow(icon: "macwindow", label: "Mode") {
+                        DSSegmented(selection: Binding(get: { engine.programOutFullscreen }, set: { engine.showProgramOut(fullscreen: $0) }),
+                                    options: [(false, "Window"), (true, "Full screen")])
+                            .frame(width: 170)
+                    }
+                    if screens.count > 1 {
+                        CPRow(icon: "display.2", label: "Full screen on") {
+                            Menu(engine.programOutFullscreen ? "Choose display" : "Choose display") {
+                                ForEach(screens, id: \.index) { sc in
+                                    Button(sc.name + (sc.index == 0 ? " (main)" : "")) { engine.showProgramOut(fullscreen: true, screenIndex: sc.index) }
+                                }
+                            }
+                            .menuStyle(.borderlessButton).fixedSize()
+                        }
                     }
                     CPRow(icon: "square.grid.3x3", label: "Multiview window", showDivider: false) {
                         CPButton(title: "Open") { engine.openMultiviewWindow() }
                     }
-                    Text("Program Out uses the second display when one is connected. Press Esc or double-click it to close.")
-                        .font(.system(size: 10.5)).foregroundColor(CP.text2).frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 8)
+                    CPNote(screens.count > 1
+                           ? "With a second display Program Out opens full screen there. Esc or double-click returns to a window; F or ⌘⇧F switches."
+                           : "Only one display: Program Out opens in a window so your controls stay visible. F, double-click or ⌘⇧F switches to full screen; Esc comes back.")
                 }
 
                 CPCard(title: "External Displays", subtitle: "Projectors, monitors and LED walls", icon: "display.2") {

@@ -270,7 +270,7 @@ struct AutomationDeck: View {
                 }
             }
             .frame(minWidth: 300, idealWidth: 360, maxWidth: 460, maxHeight: .infinity)
-            .background(DS.bg1)
+            .background(CP.bg)
         }
     }
 
@@ -307,9 +307,9 @@ struct AutomationEditor: View {
     @Binding var rule: AutomationRule
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                PanelHeader(title: "Cue", icon: "timer")
+        CPInspector {
+            CPCard(title: rule.name.isEmpty ? "Cue" : rule.name, subtitle: rule.enabled ? "Enabled" : "Disabled", icon: "timer") {
+            VStack(alignment: .leading, spacing: 4) {
                 Group {
                     FieldRow(label: "Name") { TextField("Name", text: $rule.name).dsField() }
 
@@ -359,10 +359,10 @@ struct AutomationEditor: View {
                             }.labelsHidden()
                         }
                         numberRow("Delay", $rule.delay, suffix: "s", range: 0...3600)
-                        Toggle("Undo when the input leaves Program", isOn: $rule.revertWhenEnds).font(DS.small)
+                        CPToggleRow(label: "Undo when the input leaves Program", isOn: $rule.revertWhenEnds)
                     case .onRecording, .onStreaming:
                         numberRow("Delay", $rule.delay, suffix: "s", range: 0...3600)
-                        Toggle("Undo when it stops", isOn: $rule.revertWhenEnds).font(DS.small)
+                        CPToggleRow(label: "Undo when it stops", isOn: $rule.revertWhenEnds)
                     case .manual:
                         Text("This cue only fires when you press Run.").font(DS.small).foregroundColor(DS.text2)
                     }
@@ -379,9 +379,10 @@ struct AutomationEditor: View {
                     Button("Delete") { auto.delete(rule) }.buttonStyle(.ds(.danger, .small))
                 }
                 Text("Tip: add lower thirds in Overlays (control panel). Keyed inputs are shown over Program like the KEY button.")
-                    .font(.system(size: 9.5)).foregroundColor(DS.text3).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 9.5)).foregroundColor(CP.text2).fixedSize(horizontal: false, vertical: true)
             }
-            .padding(10)
+            .padding(.vertical, 6)
+            }
         }
     }
 

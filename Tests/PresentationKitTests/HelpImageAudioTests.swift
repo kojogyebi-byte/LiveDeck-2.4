@@ -92,3 +92,12 @@ final class HelpV44Tests: XCTestCase {
         XCTAssertEqual(HelpIndex.search("feedback").first?.id, "monitor")
     }
 }
+
+final class HelpV45Tests: XCTestCase {
+    func testV45Topics() {
+        XCTAssertEqual(HelpIndex.search("preview key").first?.id, "keys")
+        XCTAssertEqual(HelpIndex.search("context menu").first?.id, "right-click")
+        XCTAssertEqual(HelpIndex.search("projector").first?.id, "program-out")
+        XCTAssertTrue(HelpIndex.search("meter").contains { $0.id == "program-meter" })
+    }
+}

@@ -969,7 +969,10 @@ struct PresentOperatorBar: View {
             Spacer(minLength: 6)
             Button("Preview") { present.sendToPreview() }.buttonStyle(.ds(.preview, .small, active: target.map { engine.previewID == $0.id } ?? false))
             Button("Program") { present.cutToProgram() }.buttonStyle(.ds(.program, .small, active: onAir))
-            Button("Key over Program") { present.toggleKey() }.buttonStyle(.ds(.amber, .small, active: keyed))
+            Button("Key PVW") { if let t = present.ensureTarget() { engine.toggleKeyPreview(t.id) } }
+                .buttonStyle(.ds(.amber, .small, active: target.map { engine.isPreviewKeyed($0.id) } ?? false))
+                .help("Check the words over the Preview picture first — they go on air with the next CUT/AUTO")
+            Button("Key PGM") { present.toggleKey() }.buttonStyle(.ds(.amber, .small, active: keyed))
                 .help("Show the slides on top of whatever is on Program (use a transparent background)")
         }
         .padding(.horizontal, 8).frame(height: 38).background(DS.bg2)
@@ -1066,11 +1069,38 @@ struct SlideGrid: View {
                         SlideCard(index: idx + 1, content: c, source: source, width: max(100, w),
                                   live: present.liveKey == "\(prefix)#\(idx)")
                             .onTapGesture { present.goLive(slides, index: idx, prefix: prefix) }
+                            .contextMenu { SlideMenu(slides: slides, index: idx, prefix: prefix, source: source) }
                     }
                 }
                 .padding(8)
             }
         }
+    }
+}
+
+struct SlideMenu: View {
+    @EnvironmentObject var present: PresentModel
+    @EnvironmentObject var engine: Engine
+    let slides: [SlideContent]
+    let index: Int
+    let prefix: String
+    let source: SlideSource
+    var body: some View {
+        Button("Show this slide") { present.goLive(slides, index: index, prefix: prefix) }
+        Button("Show and put on Preview") { present.goLive(slides, index: index, prefix: prefix); present.sendToPreview() }
+        Button("Show and cut to Program") { present.goLive(slides, index: index, prefix: prefix); present.cutToProgram() }
+        Divider()
+        Button(engine.isPreviewKeyed(source.id) ? "Remove key from Preview" : "Show and key on Preview") {
+            present.goLive(slides, index: index, prefix: prefix); engine.toggleKeyPreview(source.id)
+        }
+        Button(engine.isKeyed(source.id) ? "Remove key from Program" : "Show and key on Program") {
+            if engine.isKeyed(source.id) { engine.toggleKey(source.id) }
+            else { present.goLive(slides, index: index, prefix: prefix); engine.toggleKey(source.id) }
+        }
+        Divider()
+        Button("Clear text") { present.clearText() }
+        Button(source.backgroundCleared ? "Show background" : "Hide background") { present.toggleBackground() }
+        Button("Format this input…") { present.targetID = source.id }
     }
 }
 
@@ -1252,7 +1282,7 @@ struct LookColumn: View {
                 .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(DS.bg1)
+        .background(CP.bg)
     }
 }
 
@@ -1264,33 +1294,43 @@ struct LookEditor: View {
     @State private var saveName = ""
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                presetRow
-                backgroundSection
-                SectionLabel("Layout")
-                layoutSection
-                SectionLabel("Main text")
-                TextStyleEditor(style: $source.look.body, families: families)
-                if source is DictionarySource || source.look.showTitle {
-                    SectionLabel(source is DictionarySource ? "Headword" : "Title")
-                    TextStyleEditor(style: $source.look.title, families: families)
-                }
-                SectionLabel(source is DictionarySource ? "Source line" : "Reference / credits")
-                FieldRow(label: "Position") {
-                    Picker("", selection: $source.look.footerPosition) {
-                        ForEach(FooterPosition.allCases) { p in Text(p.rawValue).tag(p) }
-                    }.labelsHidden()
-                }
-                if source.look.footerPosition != .hidden {
-                    TextStyleEditor(style: $source.look.footer, families: families)
-                }
-                SectionLabel("Text box")
-                boxSection
-                SectionLabel("Content")
-                contentSection
+        CPInspector {
+            CPCard(title: "Looks", subtitle: source.look.name, icon: "square.stack.3d.up") {
+                presetRow.padding(.vertical, 6)
             }
-            .padding(10)
+            CPCard(title: "Background", subtitle: backgroundSubtitle, icon: "photo.on.rectangle") {
+                backgroundSection.padding(.vertical, 4)
+            }
+            CPCard(title: "Layout", subtitle: source.look.region.rawValue, icon: "rectangle.dashed") {
+                layoutSection.padding(.vertical, 4)
+            }
+            CPCard(title: "Main text", subtitle: "\(source.look.body.fontName) · \(Int(source.look.body.size)) pt", icon: "textformat") {
+                TextStyleEditor(style: $source.look.body, families: families).padding(.vertical, 4)
+            }
+            if source is DictionarySource || source.look.showTitle {
+                CPCard(title: source is DictionarySource ? "Headword" : "Title", icon: "textformat.size.larger") {
+                    TextStyleEditor(style: $source.look.title, families: families).padding(.vertical, 4)
+                }
+            }
+            CPCard(title: source is DictionarySource ? "Source line" : "Reference / credits", subtitle: source.look.footerPosition.rawValue, icon: "text.append") {
+                VStack(alignment: .leading, spacing: 4) {
+                    FieldRow(label: "Position") {
+                        Picker("", selection: $source.look.footerPosition) {
+                            ForEach(FooterPosition.allCases) { p in Text(p.rawValue).tag(p) }
+                        }.labelsHidden()
+                    }
+                    if source.look.footerPosition != .hidden {
+                        TextStyleEditor(style: $source.look.footer, families: families)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            CPCard(title: "Text box", icon: "rectangle.fill.on.rectangle.fill") {
+                boxSection.padding(.vertical, 4)
+            }
+            CPCard(title: "Content", icon: "list.bullet.rectangle") {
+                VStack(alignment: .leading, spacing: 4) { contentSection }.padding(.vertical, 4)
+            }
         }
         .onAppear { if families.isEmpty { families = NSFontManager.shared.availableFontFamilies.sorted() } }
     }
@@ -1326,9 +1366,18 @@ struct LookEditor: View {
         }
     }
 
+    private var backgroundSubtitle: String {
+        switch source.look.background.kind {
+        case .transparent, .none: return "Transparent"
+        case .color: return "Solid colour"
+        case .gradient: return "Gradient"
+        case .image: return "Image · \(source.look.mediaBlend.rawValue)"
+        case .video: return "Video · \(source.look.mediaBlend.rawValue)"
+        }
+    }
+
     private var backgroundSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Background")
+        VStack(alignment: .leading, spacing: 4) {
             FieldRow(label: "Type") {
                 Picker("", selection: $source.look.background.kind) {
                     Text("Transparent (for key)").tag(BackgroundKind.transparent)
@@ -1385,7 +1434,7 @@ struct LookEditor: View {
     }
 
     private var layoutSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             FieldRow(label: "Area") {
                 Picker("", selection: $source.look.region) {
                     ForEach(LookRegion.allCases) { r in Text(r.rawValue).tag(r) }
@@ -1402,16 +1451,16 @@ struct LookEditor: View {
             }
             ParamSlider(label: "Side margin", value: $source.look.marginX, range: 0...0.3, defaultValue: 0.06, format: "%.2f")
             ParamSlider(label: "Top/bottom margin", value: $source.look.marginY, range: 0...0.3, defaultValue: 0.08, format: "%.2f")
-            Toggle("Shrink text to fit", isOn: $source.look.shrinkToFit).font(DS.small)
+            CPToggleRow(label: "Shrink text to fit", isOn: $source.look.shrinkToFit)
             ParamSlider(label: "Fade between slides", value: $source.look.fadeDuration, range: 0...1.5, defaultValue: 0.35, format: "%.2fs")
         }
     }
 
     private var boxSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            DSColorWell(label: "Box colour (set opacity for none)", color: colorBinding($source.look.boxColor))
+        VStack(alignment: .leading, spacing: 4) {
+            DSColorWell(label: "Box colour (opacity 0 = none)", color: colorBinding($source.look.boxColor))
             if source.look.boxColor.a > 0.001 {
-                Toggle("Full-width band", isOn: $source.look.boxFullWidth).font(DS.small)
+                CPToggleRow(label: "Full-width band", isOn: $source.look.boxFullWidth)
                 ParamSlider(label: "Padding", value: $source.look.boxPadding, range: 0...120, defaultValue: 28, format: "%.0f")
                 ParamSlider(label: "Corner radius", value: $source.look.boxRadius, range: 0...80, defaultValue: 10, format: "%.0f")
             }
@@ -1421,18 +1470,18 @@ struct LookEditor: View {
     @ViewBuilder private var contentSection: some View {
         if source is DictionarySource {
             ParamSlider(label: "Definitions shown", value: intBinding($source.look.maxSenses), range: 1...8, defaultValue: 3, format: "%.0f")
-            Toggle("Show examples", isOn: $source.look.showExamples).font(DS.small)
-            Toggle("Show headword", isOn: $source.look.showTitle).font(DS.small)
+            CPToggleRow(label: "Show examples", isOn: $source.look.showExamples)
+            CPToggleRow(label: "Show headword", isOn: $source.look.showTitle)
         } else {
-            Toggle("Verse numbers", isOn: $source.look.showVerseNumbers).font(DS.small)
+            CPToggleRow(label: "Verse numbers", isOn: $source.look.showVerseNumbers)
             FieldRow(label: "Versions") {
                 DSSegmented(selection: $source.look.parallelLayout, options: [(ParallelLayout.sideBySide, "Side by side"), (ParallelLayout.stacked, "Stacked")])
             }
-            Toggle("Show version names", isOn: $source.look.showVersionLabels).font(DS.small)
+            CPToggleRow(label: "Show version names", isOn: $source.look.showVersionLabels)
             ParamSlider(label: "Gap between versions", value: $source.look.columnGap, range: 0...160, defaultValue: 48, format: "%.0f")
             ParamSlider(label: "Scripture: max characters per slide", value: intBinding($source.look.maxCharsPerSlide), range: 60...700, defaultValue: 280, format: "%.0f")
             ParamSlider(label: "Songs: lines per slide (0 = as written)", value: intBinding($source.look.linesPerSlide), range: 0...8, defaultValue: 0, format: "%.0f")
-            Toggle("Show song title", isOn: $source.look.showTitle).font(DS.small)
+            CPToggleRow(label: "Show song title", isOn: $source.look.showTitle)
         }
     }
 
@@ -1452,7 +1501,7 @@ struct TextStyleEditor: View {
     @Binding var style: TextStyle
     let families: [String]
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             FieldRow(label: "Font") {
                 Picker("", selection: $style.fontName) {
                     if !families.contains(style.fontName) { Text(style.fontName).tag(style.fontName) }
@@ -1464,8 +1513,11 @@ struct TextStyleEditor: View {
                 Toggle(isOn: $style.italic) { Image(systemName: "italic") }.toggleStyle(.button)
                 Toggle(isOn: $style.underline) { Image(systemName: "underline") }.toggleStyle(.button)
                 Spacer()
+                Text("Colour").font(.system(size: 11.5)).foregroundColor(CP.text)
                 ColorPicker("", selection: colorBinding($style.color), supportsOpacity: true).labelsHidden()
             }
+            .controlSize(.small)
+            .frame(minHeight: 26)
             DSSegmented(selection: $style.align, options: [(TextAlign.left, "Left"), (TextAlign.center, "Centre"), (TextAlign.right, "Right"), (TextAlign.justified, "Justify")])
             ParamSlider(label: "Size", value: $style.size, range: 12...240, defaultValue: 80, format: "%.0f pt")
             ParamSlider(label: "Line spacing", value: $style.lineSpacing, range: 0.7...2.2, defaultValue: 1.05, format: "%.2f×")
@@ -1476,16 +1528,11 @@ struct TextStyleEditor: View {
                     Text("lowercase").tag(TextCase.lower); Text("Title Case").tag(TextCase.title)
                 }.labelsHidden()
             }
-            HStack {
-                Text("Outline").font(DS.small).foregroundColor(DS.text2)
-                Spacer()
-                ColorPicker("", selection: colorBinding($style.outlineColor), supportsOpacity: true).labelsHidden()
-            }
+            CPColorRow(label: "Outline", color: colorBinding($style.outlineColor))
             ParamSlider(label: "Outline width", value: $style.outlineWidth, range: 0...12, defaultValue: 0, format: "%.1f")
-            HStack {
-                Toggle("Shadow", isOn: $style.shadow).font(DS.small)
-                Spacer()
-                if style.shadow { ColorPicker("", selection: colorBinding($style.shadowColor), supportsOpacity: true).labelsHidden() }
+            HStack(spacing: 8) {
+                CPToggleRow(label: "Shadow", isOn: $style.shadow)
+                if style.shadow { ColorPicker("", selection: colorBinding($style.shadowColor), supportsOpacity: true).labelsHidden().controlSize(.small) }
             }
             if style.shadow {
                 ParamSlider(label: "Shadow softness", value: $style.shadowBlur, range: 0...40, defaultValue: 8, format: "%.0f")
@@ -1594,7 +1641,9 @@ struct DictionaryPreviewColumn: View {
                 Button("Load into input") { dict.loadIntoInput() }.buttonStyle(.ds(.normal, .small)).disabled(dict.selected == nil)
                 Button("Preview") { dict.preview() }.buttonStyle(.ds(.preview, .small)).disabled(dict.selected == nil)
                 Button("Program") { dict.program() }.buttonStyle(.ds(.program, .small, active: onAir)).disabled(dict.selected == nil)
-                Button("Key over Program") { dict.key() }.buttonStyle(.ds(.amber, .small, active: keyed)).disabled(dict.selected == nil && !keyed)
+                Button("Key PVW") { dict.loadIntoInput(); if let t = dict.currentTarget() { engine.toggleKeyPreview(t.id) } }
+                    .buttonStyle(.ds(.amber, .small, active: target.map { engine.isPreviewKeyed($0.id) } ?? false)).disabled(dict.selected == nil && target == nil)
+                Button("Key PGM") { dict.key() }.buttonStyle(.ds(.amber, .small, active: keyed)).disabled(dict.selected == nil && !keyed)
                 Button("As overlay layer") { dict.overlayLayer() }.buttonStyle(.ds(.normal, .small)).disabled(dict.selected == nil)
                 Button("Clear") { dict.clear() }.buttonStyle(.ds(.ghost, .small))
             }
@@ -1606,6 +1655,17 @@ struct DictionaryPreviewColumn: View {
                 VStack(spacing: 8) {
                     if let t = target, let e = dict.selected {
                         DictionaryCandidate(source: t, entry: e, width: max(120, w))
+                            .contextMenu {
+                                Button("Load into input") { dict.loadIntoInput() }
+                                Button("Put on Preview") { dict.preview() }
+                                Button("Cut to Program") { dict.program() }
+                                Divider()
+                                Button("Key on Preview") { dict.loadIntoInput(); engine.toggleKeyPreview(t.id) }
+                                Button(engine.isKeyed(t.id) ? "Remove key from Program" : "Key on Program") { dict.key() }
+                                Divider()
+                                Button("Add as overlay layer") { dict.overlayLayer() }
+                                Button("Clear") { dict.clear() }
+                            }
                         Text("Preview of the search result — not on air until you load it or press Preview / Program / Key.")
                             .font(.system(size: 10)).foregroundColor(DS.text3)
                     } else if target == nil {

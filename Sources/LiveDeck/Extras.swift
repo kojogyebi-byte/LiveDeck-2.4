@@ -500,7 +500,7 @@ struct ImageDetailPanel: View {
                 Spacer()
             }
         }
-        .background(DS.bg1)
+        .background(CP.bg)
     }
 }
 
@@ -909,7 +909,16 @@ struct PresetsPanel: View {
                                     Spacer()
                                 }
                             }
-                            .padding(.vertical, 10)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button("Recall") { if p.includes.inputs { confirmRecall = p } else { presets.recall(p, into: engine) } }
+                                Button("Update with current setup") { presets.update(p, from: engine) }
+                                Button("Rename…") { renameText = p.name; renaming = p.id }
+                                Button("Export…") { presets.export(p) }
+                                Divider()
+                                Button("Delete", role: .destructive) { presets.delete(p) }
+                            }
                         }
                     }
                 }

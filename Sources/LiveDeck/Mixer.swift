@@ -520,6 +520,7 @@ struct MixerChannelStrip: View {
             .help("Solo (headphones)")
         }
         .frame(width: MX.stripWidth)
+        .contextMenu { ChannelMenu(source: source, openFX: { tab in fxTab = tab; showFX = true }) }
     }
 
     private func modeButton(_ t: String, active: Bool, _ action: @escaping () -> Void) -> some View {
@@ -616,6 +617,51 @@ struct MixerMasterStrip: View {
             Color.clear.frame(height: MX.solo)
         }
         .frame(width: MX.stripWidth)
+        .contextMenu {
+            Button(engine.masterBus.muted ? "Unmute master" : "Mute master") { engine.masterBus.muted.toggle() }
+            Button("Master fader to 0 dB") { engine.masterBus.gain = 1 }
+            Button("Clear all solos") { engine.sources.forEach { $0.solo = false } }
+            Divider()
+            Button("Equalizer…") { fxTab = 0; showFX = true }
+            Button("Dynamics…") { fxTab = 1; showFX = true }
+            Button(engine.masterBus.fxEnabled ? "Turn master effects off" : "Turn master effects on") { engine.masterBus.fxEnabled.toggle() }
+            Divider()
+            Button(engine.hearLiveInputs ? "Keep mics out of the speakers" : "Hear mics in the speakers") { engine.hearLiveInputs.toggle() }
+            Button("Monitor level to 0 dB") { engine.monitorLevelDB = 0 }
+        }
+    }
+}
+
+/// Right-click menu for a mixer channel.
+struct ChannelMenu: View {
+    @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
+    @ObservedObject var source: Source
+    var openFX: ((Int) -> Void)? = nil
+    var body: some View {
+        Button(source.muted ? "Unmute" : "Mute") { source.muted.toggle() }
+        Button(source.solo ? "Unsolo" : "Solo (headphones)") { source.solo.toggle() }
+        Button(source.sendToMain && !source.audioFollowsVideo ? "Turn channel off" : "Always on (ON)") {
+            if source.sendToMain && !source.audioFollowsVideo { source.sendToMain = false }
+            else { source.sendToMain = true; source.audioFollowsVideo = false; source.muted = false }
+        }
+        Button(source.audioFollowsVideo ? "Audio follows video: off" : "Audio follows video (AFV)") {
+            source.audioFollowsVideo.toggle(); if source.audioFollowsVideo { source.sendToMain = true; source.muted = false }
+        }
+        Divider()
+        if let openFX {
+            Button("Equalizer…") { openFX(0) }
+            Button("Dynamics…") { openFX(1) }
+        }
+        Button(source.fxEnabled ? "Turn effects off" : "Turn effects on") { source.fxEnabled.toggle() }
+        Menu("Effect preset") { ForEach(FXPreset.all) { p in Button(p.name) { source.applyFXPreset(p); source.fxEnabled = true } } }
+        Divider()
+        Button("Fader to 0 dB") { source.gain = 1 }
+        Button("Reset trim, fader and pan") { source.gain = 1; source.trimDB = 0; source.pan = 0 }
+        Divider()
+        Button("Put on Preview") { engine.setPreview(source.id) }
+        Button("Cut to Program") { engine.setPreview(source.id); engine.cut() }
+        Button("Adjust in Input panel") { engine.selectedSourceID = source.id; engine.rightTab = 1 }
     }
 }
 
@@ -1036,6 +1082,7 @@ struct CompactChannelConsole: View {
                 .buttonStyle(.plain).help("Solo to the Mac's speakers/headphones")
             }
         }
+        .contextMenu { ChannelMenu(source: source) }
     }
 
     private func pill(_ t: String, active: Bool, _ action: @escaping () -> Void) -> some View {

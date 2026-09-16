@@ -386,7 +386,7 @@ struct BackgroundsView: View {
                 }
             }
             .frame(minWidth: 280, idealWidth: 340, maxWidth: 440, maxHeight: .infinity)
-            .background(DS.bg1)
+            .background(CP.bg)
         }
     }
 

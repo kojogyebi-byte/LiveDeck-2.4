@@ -37,6 +37,15 @@ struct LiveDeckApp: App {
         }
         .windowStyle(.titleBar)
         .commands {
+            CommandMenu("Output") {
+                Button("Program Out") { engine.openOutputWindow() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                Button("Switch Program Out: Window ↔ Full Screen") { engine.toggleProgramOutFullscreen() }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                Button("Close Program Out") { engine.closeOutputWindow() }
+                Divider()
+                Button("Multiview") { engine.openMultiviewWindow() }
+            }
             CommandGroup(replacing: .help) {
                 Button("LiveDeck Help") { engine.helpQuery = ""; engine.showHelp = true }
                     .keyboardShortcut("?", modifiers: .command)

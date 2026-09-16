@@ -461,7 +461,7 @@ struct GeneratorView: View {
                     Button("Key over Program") { gen.addAsInput(.key) }.buttonStyle(.ds(.amber))
                         .help("Best for effects (snow, confetti, sparkles, light leaks, vignette)")
                     Spacer()
-                    Toggle("Live-update input", isOn: $gen.liveUpdate).font(DS.small).disabled(gen.target == nil)
+                    CPToggleRow(label: "Live-update input", isOn: $gen.liveUpdate).disabled(gen.target == nil)
                         .help("Changes you make here update the generator input you added last")
                 }
                 HStack(spacing: 6) {
@@ -476,51 +476,48 @@ struct GeneratorView: View {
             .padding(10)
             .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    PanelHeader(title: "Generator", icon: "sparkles")
-                    Group {
-                        SectionLabel("Presets")
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
-                            ForEach(Array(GeneratorSettings.presets.enumerated()), id: \.offset) { _, p in
-                                Button(p.name) { gen.apply(preset: p.settings) }
-                                    .buttonStyle(.ds(.normal, .small, active: gen.settings.style == p.settings.style, fullWidth: true))
-                            }
-                        }
-                        SectionLabel("Style")
-                        FieldRow(label: "Style") {
-                            Picker("", selection: $gen.settings.style) {
-                                Section("Backgrounds") { ForEach(GeneratorStyle.allCases.filter { !$0.isEffect }) { s in Text(s.rawValue).tag(s) } }
-                                Section("Effects (transparent)") { ForEach(GeneratorStyle.allCases.filter { $0.isEffect }) { s in Text(s.rawValue).tag(s) } }
-                            }.labelsHidden()
-                        }
-                        DSColorWell(label: "Colour 1", color: colorBinding(colorAt(0)))
-                        DSColorWell(label: "Colour 2", color: colorBinding(colorAt(1)))
-                        DSColorWell(label: "Colour 3", color: colorBinding(colorAt(2)))
-                        if !gen.settings.style.isEffect {
-                            DSColorWell(label: "Background", color: colorBinding($gen.settings.background))
+            CPInspector {
+                CPCard(title: "Presets", subtitle: "\(GeneratorSettings.presets.count) ready-made looks", icon: "sparkles") {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 5), GridItem(.flexible(), spacing: 5)], spacing: 5) {
+                        ForEach(Array(GeneratorSettings.presets.enumerated()), id: \.offset) { _, p in
+                            Button(p.name) { gen.apply(preset: p.settings) }
+                                .buttonStyle(.ds(.normal, .small, active: gen.settings.style == p.settings.style, fullWidth: true))
+                                .contextMenu {
+                                    Button("Use preset") { gen.apply(preset: p.settings) }
+                                    Button("Use and add as input") { gen.apply(preset: p.settings); gen.addAsInput(.input) }
+                                    Button("Use and key over Program") { gen.apply(preset: p.settings); gen.addAsInput(.key) }
+                                }
                         }
                     }
-                    Group {
-                        SectionLabel("Motion")
-                        ParamSlider(label: "Speed", value: $gen.settings.speed, range: 0.1...3, defaultValue: 1, format: "%.2f×")
-                        ParamSlider(label: "Amount", value: $gen.settings.density, range: 0...1, defaultValue: 0.5, format: "%.2f")
-                        ParamSlider(label: "Size", value: $gen.settings.size, range: 0.2...3, defaultValue: 1, format: "%.2f×")
-                        ParamSlider(label: "Softness", value: $gen.settings.softness, range: 0...1, defaultValue: 0.6, format: "%.2f")
-                        ParamSlider(label: "Loop length", value: $gen.settings.loopSeconds, range: 6...60, defaultValue: 20, format: "%.0f s")
-                        HStack {
-                            Text("Variation #\(gen.settings.seed)").font(DS.small).foregroundColor(DS.text2)
-                            Spacer()
-                            Button { gen.shuffle() } label: { Label("Shuffle", systemImage: "dice") }.buttonStyle(.ds(.normal, .small))
-                        }
-                        Text("Motion repeats exactly every loop, so exported videos loop without a jump.")
-                            .font(.system(size: 9.5)).foregroundColor(DS.text3)
+                    .padding(.vertical, 6)
+                }
+                CPCard(title: "Style & colours", subtitle: gen.settings.style.rawValue + (gen.settings.style.isEffect ? " · transparent" : ""), icon: "paintpalette") {
+                    FieldRow(label: "Style") {
+                        Picker("", selection: $gen.settings.style) {
+                            Section("Backgrounds") { ForEach(GeneratorStyle.allCases.filter { !$0.isEffect }) { s in Text(s.rawValue).tag(s) } }
+                            Section("Effects (transparent)") { ForEach(GeneratorStyle.allCases.filter { $0.isEffect }) { s in Text(s.rawValue).tag(s) } }
+                        }.labelsHidden()
+                    }
+                    DSColorWell(label: "Colour 1", color: colorBinding(colorAt(0)))
+                    DSColorWell(label: "Colour 2", color: colorBinding(colorAt(1)))
+                    DSColorWell(label: "Colour 3", color: colorBinding(colorAt(2)))
+                    if !gen.settings.style.isEffect {
+                        DSColorWell(label: "Background", color: colorBinding($gen.settings.background))
                     }
                 }
-                .padding(10)
+                CPCard(title: "Motion", subtitle: "Variation #\(gen.settings.seed)", icon: "wind") {
+                    ParamSlider(label: "Speed", value: $gen.settings.speed, range: 0.1...3, defaultValue: 1, format: "%.2f×")
+                    ParamSlider(label: "Amount", value: $gen.settings.density, range: 0...1, defaultValue: 0.5, format: "%.2f")
+                    ParamSlider(label: "Size", value: $gen.settings.size, range: 0.2...3, defaultValue: 1, format: "%.2f×")
+                    ParamSlider(label: "Softness", value: $gen.settings.softness, range: 0...1, defaultValue: 0.6, format: "%.2f")
+                    ParamSlider(label: "Loop length", value: $gen.settings.loopSeconds, range: 6...60, defaultValue: 20, format: "%.0f s")
+                    HStack {
+                        CPNote("Motion repeats exactly every loop, so exported videos loop without a jump.")
+                        CPButton(icon: "dice", title: "Shuffle") { gen.shuffle() }
+                    }
+                }
             }
             .frame(minWidth: 260, idealWidth: 300, maxWidth: 380)
-            .background(DS.bg1)
         }
     }
 

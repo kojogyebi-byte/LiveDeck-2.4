@@ -188,6 +188,10 @@ final class Engine: ObservableObject {
     static let streamBitrates = [2500, 3500, 4500, 6000, 8000, 12000]
     @Published var fileOutputActive = false
     @Published var programWindowActive = false
+    /// Program Out is currently full screen (false = in a normal window).
+    @Published var programOutFullscreen = false
+    /// Inputs keyed over the PREVIEW monitor (they join Program keys on the next CUT/AUTO).
+    @Published var previewKeys: Set<UUID> = []
     @Published var rightTab = 0   // 0 Audio · 1 Input · 2 Overlays · 3 Scenes · 4 Outputs
     /// Slide / dictionary inputs keyed (transparent overlay) over Program, independent of the switcher.
     @Published var keyedSources: Set<UUID> = []
@@ -254,7 +258,8 @@ final class Engine: ObservableObject {
     private var previewConsumers = NSHashTable<FrameNSView>.weakObjects()
     private var multiviewConsumer: FrameNSView?
     private var multiviewWindow: NSWindow?
-    private var screenWindows: [Int: NSWindow] = [:]
+    private var screenWindows: [Int: OutputWindow] = [:]
+    @Published var screenFullscreen: [Int: Bool] = [:]
     @Published var activeScreens: Set<Int> = []
     @Published var screenSource: [Int: UUID] = [:]
     private var screenViews: [Int: FrameNSView] = [:]
@@ -265,7 +270,7 @@ final class Engine: ObservableObject {
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var recordTimer: Timer?
     private var meterTimer: Timer?
-    private var outputWindow: NSWindow?
+    private var outputWindow: OutputWindow?
 
     // MARK: lifecycle
 
@@ -479,7 +484,7 @@ final class Engine: ObservableObject {
     /// Replaces every input at once (preset recall). Old inputs are stopped; Program/Preview are cleared.
     func replaceAllSources(_ new: [Source]) {
         for s in sources { s.stop() }
-        keyedSources.removeAll(); keyAlpha.removeAll()
+        keyedSources.removeAll(); keyAlpha.removeAll(); previewKeys.removeAll()
         transitioning = false; manualActive = false; transFrom = nil; tbar = 0
         programID = nil; previewID = nil; selectedSourceID = nil
         layoutSlots = Array(repeating: nil, count: 10)
@@ -504,7 +509,18 @@ final class Engine: ObservableObject {
         return true
     }
     func toggleKey(_ id: UUID) {
-        if keyedSources.contains(id) { keyedSources.remove(id) } else { keyedSources.insert(id) }
+        if keyedSources.contains(id) { keyedSources.remove(id) } else { keyedSources.insert(id); previewKeys.remove(id) }
+    }
+    func toggleKeyPreview(_ id: UUID) {
+        if previewKeys.contains(id) { previewKeys.remove(id) } else { previewKeys.insert(id) }
+    }
+    func isPreviewKeyed(_ id: UUID) -> Bool { previewKeys.contains(id) }
+    func clearProgramKeys() { keyedSources.removeAll() }
+    /// CUT/AUTO take whatever is keyed on Preview to Program too.
+    private func takePreviewKeys() {
+        guard !previewKeys.isEmpty else { return }
+        keyedSources.formUnion(previewKeys)
+        previewKeys.removeAll()
     }
 
     func setAudioDevice(_ id: String?) { selectedAudioDeviceID = id }
@@ -649,7 +665,7 @@ final class Engine: ObservableObject {
     }
 
     func removeSource(_ id: UUID) {
-        keyedSources.remove(id); keyAlpha[id] = nil
+        keyedSources.remove(id); keyAlpha[id] = nil; previewKeys.remove(id)
         if let s = sources.first(where: { $0.id == id }) { s.stop() }
         sources.removeAll { $0.id == id }
         if programID == id { programID = nil }
@@ -665,6 +681,7 @@ final class Engine: ObservableObject {
         guard let p = previewID else { return }
         let old = programID; programID = p; previewID = old
         transitioning = false; manualActive = false; transT = 1; transFrom = nil
+        takePreviewKeys()
     }
 
     // MARK: scene layouts
@@ -745,6 +762,7 @@ final class Engine: ObservableObject {
         previewID = transFrom
         programID = incoming
         transFrom = nil; transitioning = false; manualActive = false; transT = 1
+        takePreviewKeys()
     }
 
     // MARK: layers
@@ -878,12 +896,20 @@ final class Engine: ObservableObject {
         if streamer.isStreaming { streamer.writeFrame(pb) }
 
         // ---- PREVIEW MONITOR ----
-        if !previewConsumers.allObjects.isEmpty, let pv = previewID, let s = sources.first(where: { $0.id == pv }) {
+        if !previewConsumers.allObjects.isEmpty && (previewID != nil || !previewKeys.isEmpty) {
             if let ctx2 = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                     space: CGColorSpaceCreateDeviceRGB(),
                                     bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) {
                 ctx2.setFillColor(NSColor.black.cgColor); ctx2.fill(full)
-                s.draw(in: ctx2, rect: full)
+                if let pv = previewID, let s = sources.first(where: { $0.id == pv }) { s.draw(in: ctx2, rect: full) }
+                // what Program will look like after the take: Program keys stay, Preview keys join them
+                for k in sources where k.id != previewID && (keyedSources.contains(k.id) || previewKeys.contains(k.id)) {
+                    ctx2.saveGState()
+                    ctx2.beginTransparencyLayer(auxiliaryInfo: nil)
+                    k.draw(in: ctx2, rect: full)
+                    ctx2.endTransparencyLayer()
+                    ctx2.restoreGState()
+                }
                 if let img = ctx2.makeImage() { for v in previewConsumers.allObjects { v.show(img) } }
             }
         }
@@ -1042,32 +1068,110 @@ final class Engine: ObservableObject {
 
     // MARK: windows
 
-    /// Full-screen Program Out: a borderless window with no title bar, on an external display when one
-    /// is connected (otherwise the main display, where it also hides the menu bar and Dock).
-    /// Press Esc or double-click to close. Calling again toggles it off.
+    /// The display the LiveDeck controls are on.
+    private var controlsScreen: NSScreen? { NSApp.mainWindow?.screen ?? NSScreen.main }
+    var hasExternalDisplay: Bool { NSScreen.screens.count > 1 }
+
+    /// PROGRAM OUT button: opens full screen on an external display when one is connected, otherwise in a
+    /// normal window (so the controls never disappear). Pressing it again closes Program Out.
     func openOutputWindow() {
-        if let w = outputWindow { w.close(); return }
+        if outputWindow != nil { closeOutputWindow(); return }
+        showProgramOut(fullscreen: hasExternalDisplay)
+    }
+
+    func toggleProgramOutFullscreen() {
+        showProgramOut(fullscreen: outputWindow == nil ? true : !programOutFullscreen)
+    }
+
+    func closeOutputWindow() {
+        guard let w = outputWindow else { return }
+        w.close()
+    }
+
+    /// Opens (or switches) Program Out. `screenIndex` picks the display for full screen.
+    func showProgramOut(fullscreen: Bool, screenIndex: Int? = nil) {
+        if let old = outputWindow {
+            old.onClose = nil
+            old.close()
+            outputWindow = nil
+            NSApp.presentationOptions = []
+        }
         let screens = NSScreen.screens
-        let mainWindowScreen = NSApp.mainWindow?.screen ?? NSScreen.main
-        let target = screens.first(where: { $0 != mainWindowScreen }) ?? mainWindowScreen ?? screens.first
-        guard let screen = target else { return }
-        let view = FrameNSView(frame: NSRect(origin: .zero, size: screen.frame.size)); addConsumer(view)
-        let win = FullscreenOutputWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
-        win.contentView = view
-        win.backgroundColor = .black
-        win.isReleasedWhenClosed = false
-        win.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
-        let sameScreenAsControls = screen == mainWindowScreen
-        win.level = sameScreenAsControls ? NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 1) : .normal
-        win.setFrame(screen.frame, display: true)
-        if sameScreenAsControls { NSApp.presentationOptions = [.hideDock, .hideMenuBar] }
+        let controls = controlsScreen
+        var screen: NSScreen? = nil
+        if let i = screenIndex, screens.indices.contains(i) { screen = screens[i] }
+        if screen == nil { screen = fullscreen ? (screens.first(where: { $0 != controls }) ?? controls) : controls }
+        guard let target = screen ?? screens.first else { return }
+        let win = makeOutputWindow(fullscreen: fullscreen, screen: target, title: "LiveDeck — Program Out") { [weak self] v in
+            self?.addConsumer(v)
+        }
+        win.onEscape = { [weak self] in
+            guard let self else { return }
+            if self.programOutFullscreen { self.showProgramOut(fullscreen: false) } else { self.closeOutputWindow() }
+        }
+        win.onToggleFullscreen = { [weak self] in self?.toggleProgramOutFullscreen() }
         win.onClose = { [weak self] in
-            if sameScreenAsControls { NSApp.presentationOptions = [] }
+            NSApp.presentationOptions = []
             self?.outputWindow = nil
             self?.programWindowActive = false
+            self?.programOutFullscreen = false
         }
+        outputWindow = win
+        programWindowActive = true
+        programOutFullscreen = fullscreen
         win.makeKeyAndOrderFront(nil)
-        outputWindow = win; programWindowActive = true
+    }
+
+    /// Builds an output window — borderless full screen, or a normal resizable 16:9 window.
+    private func makeOutputWindow(fullscreen: Bool, screen: NSScreen, title: String, attach: (FrameNSView) -> Void) -> OutputWindow {
+        let sameAsControls = screen == controlsScreen
+        let win: OutputWindow
+        let view: FrameNSView
+        if fullscreen {
+            view = FrameNSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+            win = OutputWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
+            win.level = sameAsControls ? NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 1) : .normal
+            win.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
+            win.setFrame(screen.frame, display: true)
+            if sameAsControls { NSApp.presentationOptions = [.hideDock, .hideMenuBar] }
+        } else {
+            let vf = screen.visibleFrame
+            let w = min(960, vf.width * 0.6), h = w * 9 / 16
+            let rect = NSRect(x: vf.maxX - w - 24, y: vf.minY + 24, width: w, height: h)
+            view = FrameNSView(frame: NSRect(origin: .zero, size: rect.size))
+            win = OutputWindow(contentRect: rect, styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false, screen: screen)
+            win.title = title
+            win.contentAspectRatio = NSSize(width: 16, height: 9)
+            win.minSize = NSSize(width: 320, height: 200)
+            win.level = .floating
+            win.collectionBehavior = [.fullScreenAuxiliary]
+        }
+        attach(view)
+        let container = NSView(frame: view.frame)
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
+        if fullscreen && sameAsControls {
+            let hint = NSTextField(labelWithString: "Full screen  ·  Esc or double-click: back to a window  ·  F: switch")
+            hint.font = .systemFont(ofSize: 13, weight: .medium)
+            hint.textColor = .white
+            hint.alignment = .center
+            hint.wantsLayer = true
+            hint.drawsBackground = true
+            hint.backgroundColor = NSColor.black.withAlphaComponent(0.65)
+            hint.sizeToFit()
+            hint.frame = NSRect(x: (container.bounds.width - hint.frame.width - 28) / 2, y: 40, width: hint.frame.width + 28, height: 30)
+            hint.autoresizingMask = [.minXMargin, .maxXMargin]
+            hint.layer?.cornerRadius = 8
+            container.addSubview(hint)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                NSAnimationContext.runAnimationGroup({ ctx in ctx.duration = 0.6; hint.animator().alphaValue = 0 },
+                                                     completionHandler: { hint.removeFromSuperview() })
+            }
+        }
+        win.contentView = container
+        win.backgroundColor = .black
+        win.isReleasedWhenClosed = false
+        return win
     }
 
     func openMultiviewWindow() {
@@ -1101,41 +1205,60 @@ final class Engine: ObservableObject {
     }
 
     func toggleScreenOutput(_ index: Int) {
-        if let w = screenWindows[index] {
-            w.close(); screenWindows[index] = nil; screenViews[index] = nil
-            screenSource.removeValue(forKey: index); activeScreens.remove(index); return
-        }
+        if let w = screenWindows[index] { w.close(); return }
+        openScreenOutput(index, fullscreen: !(NSScreen.screens.count == 1 || NSScreen.screens.indices.contains(index) && NSScreen.screens[index] == controlsScreen))
+    }
+
+    /// Display outputs on the controls' own screen open in a window; F / double-click switches to full screen,
+    /// Esc returns to the window (or closes it).
+    func openScreenOutput(_ index: Int, fullscreen: Bool) {
         let screens = NSScreen.screens
         guard screens.indices.contains(index) else { return }
-        let screen = screens[index]
-        let view = FrameNSView(frame: screen.frame)
-        addConsumer(view)
-        screenViews[index] = view
-        let win = NSWindow(contentRect: screen.frame, styleMask: [.borderless],
-                           backing: .buffered, defer: false, screen: screen)
-        win.contentView = view
-        win.level = .normal
-        win.isReleasedWhenClosed = false
-        win.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
-        win.setFrame(screen.frame, display: true)
+        if let old = screenWindows[index] { old.onClose = nil; old.close(); NSApp.presentationOptions = [] }
+        var viewRef: FrameNSView?
+        let win = makeOutputWindow(fullscreen: fullscreen, screen: screens[index], title: "LiveDeck — \(screens[index].localizedName)") { [weak self] v in
+            self?.addConsumer(v); viewRef = v
+        }
+        screenViews[index] = viewRef
+        screenFullscreen[index] = fullscreen
+        win.onToggleFullscreen = { [weak self] in
+            guard let self else { return }
+            self.openScreenOutput(index, fullscreen: !(self.screenFullscreen[index] ?? false))
+        }
+        win.onEscape = { [weak self] in
+            guard let self else { return }
+            if self.screenFullscreen[index] == true { self.openScreenOutput(index, fullscreen: false) } else { self.screenWindows[index]?.close() }
+        }
+        win.onClose = { [weak self] in
+            NSApp.presentationOptions = []
+            self?.screenWindows[index] = nil; self?.screenViews[index] = nil; self?.screenFullscreen[index] = nil
+            self?.screenSource.removeValue(forKey: index); self?.activeScreens.remove(index)
+        }
         win.makeKeyAndOrderFront(nil)
         screenWindows[index] = win
         activeScreens.insert(index)
     }
 }
 
-// MARK: - Full-screen output window (no title bar)
+// MARK: - Output window (full screen or windowed)
 
-final class FullscreenOutputWindow: NSWindow {
+final class OutputWindow: NSWindow {
     var onClose: (() -> Void)?
+    var onEscape: (() -> Void)?
+    var onToggleFullscreen: (() -> Void)?
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-    override func cancelOperation(_ sender: Any?) { close() }
+    override func cancelOperation(_ sender: Any?) { onEscape?() }
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { close() } else { super.keyDown(with: event) }   // Esc
+        let ch = (event.charactersIgnoringModifiers ?? "").lowercased()
+        if event.keyCode == 53 { onEscape?(); return }                                    // Esc
+        if ch == "f" && event.modifierFlags.intersection([.command, .control, .option]).isEmpty { onToggleFullscreen?(); return }
+        if event.modifierFlags.contains(.command) && ch == "f" { onToggleFullscreen?(); return }
+        if event.modifierFlags.contains(.command) && ch == "w" { close(); return }
+        super.keyDown(with: event)
     }
     override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 { close() } else { super.mouseDown(with: event) }
+        if event.clickCount == 2 { onToggleFullscreen?() } else { super.mouseDown(with: event) }
     }
     override func close() {
         let cb = onClose

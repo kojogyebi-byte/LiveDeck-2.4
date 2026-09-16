@@ -1,4 +1,15 @@
-# LiveDeck Studio (macOS) — v4.4.1
+# LiveDeck Studio (macOS) — v4.5.0
+
+**New in 4.5:**
+- **Right-click menus everywhere:** Preview and Program monitors (CUT/AUTO, transition, choose inputs, keys, overlays, scenes, meter, guides, Program Out, record), input tiles (keys, mute/solo, audio), slides and dictionary cards (show, Preview, Program, key on Preview/Program, clear, hide background), mixer channels and Master (mute, solo, ON/AFV, effects, presets, reset), top-bar PROGRAM OUT / STREAM / REC, transition column, overlay buttons 1–4, Snapshot/Outputs, overlay layers (including "Automate this overlay"), scenes, layouts, presets, stream destinations, generator presets.
+- **KEY on Preview and on Program for every input:** K·P keys an input over the Preview monitor only (it joins Program on the next CUT/AUTO); K·L keys it over Program live. Preview shows the result after the take (Program keys + Preview keys). Songs & Bible and Dictionary gain Key PVW / Key PGM. Monitor headers show a KEY count.
+- **Program Out no longer traps a single screen:** with one display it opens in a normal 16:9 window; with a second display it opens full screen there. F, double-click or ⌘⇧F (new Output menu) switches window ↔ full screen; Esc in full screen returns to the window, Esc in a window closes it; right-click PROGRAM OUT to pick a display. Display outputs on your own screen also open in a window first.
+- **Audio meter on the Program monitor** (left/right, dB scale) — drawn by the interface only, never on Program Out, recording or stream; toggle from the monitor header or its right-click menu.
+- **Compact console-style control panels:** shared controls redesigned (one-line sliders with value box and reset, small switches, compact pickers and colour rows, card headers with summaries). Songs & Bible / Dictionary Format is now collapsible cards (Looks, Background, Layout, Main text, Title, Reference, Text box, Content); Overlays + layer inspector, Scenes, Program Out, Stream settings, Generator and Automation editor use the same cards.
+
+---
+
+# Previous — v4.4.1
 
 **4.4.1 (build fix):** matches the macOS 14.5 SDK (Xcode 15.4) — `MTAudioProcessingTapCreate` takes an `Unmanaged<MTAudioProcessingTap>` out-pointer, and the `AVAudioSourceNode` render block has four parameters. Also silences the unused-result warnings.
 
