@@ -956,7 +956,7 @@ final class StreamOutput {
 
     static func muxer(for url: String) -> String { url.lowercased().hasPrefix("srt://") ? "mpegts" : "flv" }
 
-    func start(urls: [String], width: Int, height: Int, fps: Double, rate: String, interlaced: Bool, bitrateKbps: Int, audio: Bool) -> Bool {
+    func start(urls: [String], width: Int, height: Int, fps: Double, rate: String, interlaced: Bool, bitrateKbps: Int, audioBitrateKbps: Int = 160, audio: Bool) -> Bool {
         let targets = urls.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard !isStreaming else { return false }
         guard let ff = StreamOutput.ffmpegPath() else { lastError = "ffmpeg not found."; return false }
@@ -985,7 +985,7 @@ final class StreamOutput {
             "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p",
             "-b:v", "\(bitrateKbps)k", "-maxrate", "\(bitrateKbps)k", "-bufsize", "\(bitrateKbps * 2)k",
             "-g", "\(max(2, Int((fps * 2).rounded())))", "-keyint_min", "\(max(2, Int((fps * 2).rounded())))", "-sc_threshold", "0",
-            "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"
+            "-c:a", "aac", "-b:a", "\(max(128, audioBitrateKbps))k", "-ar", "48000", "-ac", "2"
         ]
         if interlaced {
             // woven fields, top field first

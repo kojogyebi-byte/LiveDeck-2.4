@@ -1,4 +1,7 @@
-# LiveDeck Studio (macOS) — v4.9.6
+# LiveDeck Studio (macOS) — v4.9.7
+
+**4.9.7 — Stream bitrate split into video and audio.** Stream settings → Quality & audio: video bitrate from **128 kb/s** up to 51 Mb/s (24 steps or any typed value), AAC stereo audio bitrate **128 / 160 / 192 / 256 / 320 kb/s**, the usual range for the current format, advice when too low/high, total per destination and the upload speed needed (all destinations + 50% headroom). Stream details show video and audio targets separately. **90 automated tests.**
+
 
 **4.9.6:**
 - **Frame rates:** progressive 23.976, 24, 25, 29.97, 30, 50, 59.94, 60p and **interlaced 50i, 59.94i, 60i** (top field first). Exact NTSC fractions (30000/1001…). Interlaced formats render every field (smooth on displays) and weave two fields into each recorded/streamed frame with field metadata (use ProRes MOV for flagged interlaced files). Streams go out progressive by default; optional true interlaced H.264 (`+ildct+ilme`, tff). Top bar shows e.g. 1080i59.94.

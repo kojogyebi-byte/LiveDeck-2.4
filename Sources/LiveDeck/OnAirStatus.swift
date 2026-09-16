@@ -265,12 +265,14 @@ struct StreamDetailPopover: View {
             if engine.isStreaming {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
                     row("Live for", StatusFormat.duration(tele.streamSeconds))
-                    row("Bitrate", "\(StatusFormat.bitrate(p.bitrateKbps)) (target \(StatusFormat.bitrate(Double(engine.streamBitrateKbps))))")
+                    row("Sending", "\(StatusFormat.bitrate(p.bitrateKbps)) total")
+                    row("Video target", StreamBitrates.label(engine.streamBitrateKbps))
+                    row("Audio target", engine.streamAudio ? StreamBitrates.label(engine.streamAudioBitrateKbps) + " AAC" : "silent")
                     row("Speed", String(format: "%.2fx real time", p.speed))
                     row("Encoder fps", String(format: "%.1f", p.fps))
                     row("Dropped frames", "\(p.dropFrames)")
                     row("Sent", StatusFormat.bytes(p.totalBytes))
-                    row("Audio", engine.streamAudio ? "Program mix (stereo AAC)" : "silent track")
+                    row("Audio", engine.streamAudio ? "Program mix (stereo)" : "silent track")
                 }
             }
             Divider()
@@ -302,6 +304,77 @@ struct StreamDetailPopover: View {
         GridRow {
             Text(k).font(.system(size: 11)).foregroundColor(CP.text2)
             Text(v).font(.system(size: 11, design: .monospaced)).foregroundColor(CP.text)
+        }
+    }
+}
+
+
+/// Stream settings: video and audio bitrate chosen separately (from 128 kb/s), with total and advice.
+struct StreamBitrateCard: View {
+    @EnvironmentObject var engine: Engine
+    let streamAudioNote: String
+    @State private var customVideo = ""
+
+    var body: some View {
+        let total = engine.streamBitrateKbps + (engine.streamAudio ? engine.streamAudioBitrateKbps : 0)
+        let dests = max(1, engine.liveDestinations.count)
+        let upload = StreamBitrates.uploadNeeded(videoKbps: engine.streamBitrateKbps, audioKbps: engine.streamAudioBitrateKbps,
+                                                 audioOn: engine.streamAudio, destinations: dests)
+        let rec = StreamBitrates.recommendedVideo(height: engine.height, fps: engine.frameFormat.framesPerSecond)
+        CPCard(title: "Quality & audio", subtitle: "Video \(StreamBitrates.label(engine.streamBitrateKbps)) + audio \(engine.streamAudio ? StreamBitrates.label(engine.streamAudioBitrateKbps) : "off")", icon: "slider.horizontal.3") {
+            SectionLabel("Video")
+            CPRow(label: "Video bitrate") {
+                HStack(spacing: 6) {
+                    Picker("", selection: $engine.streamBitrateKbps) {
+                        if !StreamBitrates.video.contains(engine.streamBitrateKbps) {
+                            Text(StreamBitrates.label(engine.streamBitrateKbps) + " (custom)").tag(engine.streamBitrateKbps)
+                        }
+                        ForEach(StreamBitrates.video, id: \.self) { b in Text(StreamBitrates.label(b)).tag(b) }
+                    }
+                    .cpPickerChrome().frame(maxWidth: 140)
+                    TextField("kb/s", text: $customVideo)
+                        .dsField().frame(width: 62)
+                        .onSubmit {
+                            if let v = Int(customVideo.filter { $0.isNumber }) {
+                                engine.streamBitrateKbps = min(max(v, StreamBitrates.videoRange.lowerBound), StreamBitrates.videoRange.upperBound)
+                            }
+                            customVideo = ""
+                        }
+                        .help("Type any video bitrate from 128 to 51000 kb/s and press Return")
+                }
+                .disabled(engine.isStreaming)
+            }
+            CPNote("Usual for \(engine.frameFormat.name(height: engine.height)): \(StreamBitrates.label(rec.lowerBound))–\(StreamBitrates.label(rec.upperBound)).")
+            if let advice = StreamBitrates.advice(videoKbps: engine.streamBitrateKbps, height: engine.height, fps: engine.frameFormat.framesPerSecond) {
+                Text(advice).font(.system(size: 10.5)).foregroundColor(DS.amber).fixedSize(horizontal: false, vertical: true).padding(.bottom, 4)
+            }
+
+            SectionLabel("Audio")
+            CPToggleRow(label: "Send program audio", isOn: $engine.streamAudio, showDivider: true)
+                .disabled(engine.isStreaming)
+            CPRow(label: "Audio bitrate (AAC stereo)") {
+                Picker("", selection: $engine.streamAudioBitrateKbps) {
+                    ForEach(StreamBitrates.audio, id: \.self) { b in Text(StreamBitrates.label(b)).tag(b) }
+                }
+                .cpPickerChrome().frame(maxWidth: 140)
+                .disabled(engine.isStreaming || !engine.streamAudio)
+            }
+            CPNote(engine.streamAudioBitrateKbps >= 256 ? "256–320 kb/s suits music-heavy services." : "128–160 kb/s is clear for speech; choose 192 kb/s or more for worship music.")
+
+            SectionLabel("Total")
+            HStack(alignment: .firstTextBaseline) {
+                Text(StreamBitrates.label(total)).font(.system(size: 18, weight: .bold, design: .monospaced)).foregroundColor(CP.text)
+                Text("per destination").font(.system(size: 10)).foregroundColor(CP.text2)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text("Upload needed").font(.system(size: 9, weight: .bold)).foregroundColor(CP.text2)
+                    Text("≈ \(StreamBitrates.label(upload))").font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundColor(CP.text)
+                }
+            }
+            .padding(.vertical, 4)
+            CPNote("Upload needed = total × \(dests) destination\(dests == 1 ? "" : "s") + 50% headroom. Test your internet upload speed before the service.")
+            CPNote(streamAudioNote)
+            if engine.isStreaming { CPNote("Stop streaming to change bitrates.") }
         }
     }
 }

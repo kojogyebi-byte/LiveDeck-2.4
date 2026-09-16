@@ -157,3 +157,7 @@ final class HelpV496Tests: XCTestCase {
         XCTAssertEqual(HelpIndex.search("1080i").first?.id, "interlaced")
     }
 }
+
+final class HelpV497Tests: XCTestCase {
+    func testBitrateTopic() { XCTAssertEqual(HelpIndex.search("audio bitrate").first?.id, "stream") }
+}

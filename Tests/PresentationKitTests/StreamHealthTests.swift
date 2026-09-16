@@ -33,3 +33,22 @@ final class StreamHealthTests: XCTestCase {
         XCTAssertEqual(StatusFormat.hoursLeft(freeBytes: 45_000_000_000, mbps: 10), 10, accuracy: 0.01)
     }
 }
+
+final class StreamBitrateTests: XCTestCase {
+    func testChoicesAndAdvice() {
+        XCTAssertEqual(StreamBitrates.video.first, 128)
+        XCTAssertEqual(StreamBitrates.audio.first, 128)
+        XCTAssertEqual(StreamBitrates.video, StreamBitrates.video.sorted())
+        XCTAssertTrue(StreamBitrates.video.contains(StreamBitrates.defaultVideo))
+        XCTAssertTrue(StreamBitrates.audio.contains(StreamBitrates.defaultAudio))
+        XCTAssertEqual(StreamBitrates.label(128), "128 kb/s")
+        XCTAssertEqual(StreamBitrates.label(4500), "4.5 Mb/s")
+        XCTAssertEqual(StreamBitrates.label(6000), "6 Mb/s")
+        XCTAssertEqual(StreamBitrates.recommendedVideo(height: 1080, fps: 30), 3000...6000)
+        XCTAssertEqual(StreamBitrates.recommendedVideo(height: 1080, fps: 59.94), 4500...9000)
+        XCTAssertNil(StreamBitrates.advice(videoKbps: 4500, height: 1080, fps: 30))
+        XCTAssertTrue(StreamBitrates.advice(videoKbps: 256, height: 1080, fps: 30)?.hasPrefix("Very low") == true)
+        XCTAssertTrue(StreamBitrates.advice(videoKbps: 2000, height: 1080, fps: 30)?.hasPrefix("Below") == true)
+        XCTAssertEqual(StreamBitrates.uploadNeeded(videoKbps: 4500, audioKbps: 160, audioOn: true, destinations: 2), 13980)
+    }
+}

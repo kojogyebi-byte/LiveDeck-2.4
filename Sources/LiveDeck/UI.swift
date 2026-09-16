@@ -2253,17 +2253,7 @@ struct StreamSettingsView: View {
                     CPNote("No destinations yet. Add one and choose YouTube, Facebook Live, Twitch or a custom RTMP/RTMPS/SRT server.")
                 }
                 ForEach($engine.streamDestinations) { $d in StreamRow(dest: $d) }
-                CPCard(title: "Quality & audio", icon: "slider.horizontal.3") {
-                    CPToggleRow(label: "Send program audio", isOn: $engine.streamAudio, showDivider: true)
-                        .disabled(engine.isStreaming)
-                    CPRow(label: "Video bitrate", showDivider: false) {
-                        Picker("", selection: $engine.streamBitrateKbps) {
-                            ForEach(Engine.streamBitrates, id: \.self) { b in Text(String(format: "%.1f Mbps", Double(b) / 1000)).tag(b) }
-                        }
-                        .cpPickerChrome().frame(maxWidth: 150).disabled(engine.isStreaming)
-                    }
-                    CPNote(streamAudioNote)
-                }
+                StreamBitrateCard(streamAudioNote: streamAudioNote)
             }
 
             VStack(alignment: .leading, spacing: 6) {

@@ -319,8 +319,11 @@ final class Engine: ObservableObject {
     @Published var streamError = ""
     /// 3.17: send the mixed program audio to the stream (off = silent track, the 3.12–3.16 behaviour).
     @Published var streamAudio = true { didSet { persistSettings() } }
-    @Published var streamBitrateKbps = 4500 { didSet { persistSettings() } }
-    static let streamBitrates = [2500, 3500, 4500, 6000, 8000, 12000]
+    /// Stream video bitrate (kb/s).
+    @Published var streamBitrateKbps = StreamBitrates.defaultVideo { didSet { persistSettings() } }
+    /// Stream audio bitrate (kb/s, AAC stereo).
+    @Published var streamAudioBitrateKbps = StreamBitrates.defaultAudio { didSet { persistSettings() } }
+    static let streamBitrates = StreamBitrates.video
     @Published var fileOutputActive = false
     @Published var programWindowActive = false
     /// Program Out is currently full screen (false = in a normal window).
@@ -392,7 +395,7 @@ final class Engine: ObservableObject {
         let interlacedStream = ff.interlaced && !streamInterlacedAsProgressive
         let ok = streamer.start(urls: targets.map { $0.composedURL }, width: width, height: height,
                                 fps: ff.framesPerSecond, rate: ff.ffmpegRate, interlaced: interlacedStream,
-                                bitrateKbps: streamBitrateKbps, audio: streamAudio)
+                                bitrateKbps: streamBitrateKbps, audioBitrateKbps: streamAudioBitrateKbps, audio: streamAudio)
         isStreaming = streamer.isStreaming
         if ok {
             streamError = ""
@@ -736,6 +739,7 @@ final class Engine: ObservableObject {
         d.set(mixInputsIntoRecording, forKey: "mixInputs")
         d.set(streamAudio, forKey: "streamAudio")
         d.set(streamBitrateKbps, forKey: "streamBitrate")
+        d.set(streamAudioBitrateKbps, forKey: "streamAudioBitrate")
     }
     private func loadSettings() {
         loadingSettings = true
@@ -751,7 +755,8 @@ final class Engine: ObservableObject {
         let ts = d.double(forKey: "tileScale"); if ts > 0 { inputTileScale = ts }
         mixInputsIntoRecording = d.bool(forKey: "mixInputs")
         if d.object(forKey: "streamAudio") != nil { streamAudio = d.bool(forKey: "streamAudio") }
-        let sbr = d.integer(forKey: "streamBitrate"); if sbr > 0 { streamBitrateKbps = sbr }
+        let sbr = d.integer(forKey: "streamBitrate"); if sbr > 0 { streamBitrateKbps = min(max(sbr, StreamBitrates.videoRange.lowerBound), StreamBitrates.videoRange.upperBound) }
+        let sab = d.integer(forKey: "streamAudioBitrate"); if sab > 0 { streamAudioBitrateKbps = max(sab, 128) }
         outputFolderPath = d.string(forKey: "outputFolder")
     }
 

@@ -104,3 +104,56 @@ public enum StatusFormat {
         return Double(freeBytes) * 8 / (mbps * 1_000_000) / 3600
     }
 }
+
+// MARK: - Stream bitrate choices (video and audio separately)
+
+public enum StreamBitrates {
+    /// Video bitrate choices in kb/s, starting at 128 kb/s.
+    public static let video: [Int] = [128, 192, 256, 384, 512, 768, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500,
+                                      5000, 6000, 8000, 10000, 12000, 15000, 20000, 25000, 35000, 51000]
+    /// AAC audio bitrate choices in kb/s, starting at 128 kb/s.
+    public static let audio: [Int] = [128, 160, 192, 256, 320]
+    public static let videoRange = 128...51000
+    public static let defaultVideo = 4500
+    public static let defaultAudio = 160
+
+    /// "128 kb/s", "4.5 Mb/s"
+    public static func label(_ kbps: Int) -> String {
+        if kbps < 1000 { return "\(kbps) kb/s" }
+        let m = Double(kbps) / 1000
+        return m.rounded() == m ? String(format: "%.0f Mb/s", m) : String(format: "%.1f Mb/s", m)
+    }
+
+    /// Typical video bitrate range for a resolution and frame rate (close to YouTube's live guidance).
+    public static func recommendedVideo(height: Int, fps: Double) -> ClosedRange<Int> {
+        let high = fps > 35
+        switch height {
+        case ..<500: return high ? 1000...2500 : 500...2000
+        case ..<800: return high ? 2250...6000 : 1500...4000
+        case ..<1200: return high ? 4500...9000 : 3000...6000
+        case ..<1800: return high ? 9000...18000 : 6000...13000
+        default: return high ? 20000...51000 : 13000...34000
+        }
+    }
+
+    /// Advice about the chosen bitrate, or nil when it is in the usual range.
+    public static func advice(videoKbps: Int, height: Int, fps: Double) -> String? {
+        let r = recommendedVideo(height: height, fps: fps)
+        if videoKbps < r.lowerBound / 2 {
+            return "Very low for \(height)p — expect blocky video. Lower the resolution (e.g. 480p/720p) or raise the video bitrate towards \(label(r.lowerBound))."
+        }
+        if videoKbps < r.lowerBound {
+            return "Below the usual \(label(r.lowerBound))–\(label(r.upperBound)) for \(height)p; fine for slides and still shots, softer on movement."
+        }
+        if videoKbps > r.upperBound * 3 / 2 {
+            return "Higher than most platforms accept for \(height)p (usually up to \(label(r.upperBound)))."
+        }
+        return nil
+    }
+
+    /// Upload speed to have available: total stream bitrate plus 50% headroom, in kb/s.
+    public static func uploadNeeded(videoKbps: Int, audioKbps: Int, audioOn: Bool, destinations: Int) -> Int {
+        let total = videoKbps + (audioOn ? audioKbps : 0)
+        return total * max(1, destinations) * 3 / 2
+    }
+}
