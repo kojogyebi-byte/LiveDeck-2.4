@@ -15,12 +15,16 @@ private let pipNoneTag = UUID()
 
 struct MainView: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
     @State private var showStream = false
     @State private var showOutputs = false
     @State private var dropTargeted = false
     var body: some View {
         VStack(spacing: 0) {
             TopBar(showStream: $showStream)
+            if present.workspace == .present {
+                PresentWorkspace()
+            } else {
             HSplitView {
                 GeometryReader { geo in
                     // Monitors sized to a natural 16:9 fit (capped); the input region fills the rest.
@@ -38,10 +42,14 @@ struct MainView: View {
                 RightPanel().frame(minWidth: 240, idealWidth: 300, maxWidth: 480)
             }
             StatusBar(showOutputs: $showOutputs)
+            }
         }
         .background(cBG).preferredColorScheme(.dark)
         .overlay { if dropTargeted { Rectangle().stroke(cProgram, lineWidth: 3).allowsHitTesting(false) } }
-        .overlay(alignment: .topLeading) { HotKeys().frame(width: 0, height: 0) }
+        .overlay(alignment: .topLeading) {
+            // Production hotkeys are single keys; they must not fire while typing lyrics in PRESENT.
+            if present.workspace == .production { HotKeys().frame(width: 0, height: 0) }
+        }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
         .sheet(isPresented: $showStream) { StreamSettingsView() }
         .sheet(isPresented: $showOutputs) { OutputsView() }
@@ -50,6 +58,7 @@ struct MainView: View {
     var programName: String { engine.sources.first { $0.id == engine.programID }?.name ?? "Program" }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard present.workspace == .production else { return false }   // PRESENT uses Import… buttons
         var accepted = false
         for p in providers where p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             accepted = true
@@ -162,10 +171,16 @@ struct SystemStatsView: View {
 
 struct TopBar: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var present: PresentModel
     @Binding var showStream: Bool
     var body: some View {
         HStack(spacing: 8) {
             Text("LIVE").font(.system(size: 16, weight: .heavy)) + Text("DECK").font(.system(size: 16, weight: .heavy)).foregroundColor(cPreview)
+            Picker("", selection: $present.workspace) {
+                ForEach(Workspace.allCases) { w in Text(w.rawValue).tag(w) }
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 210)
+            .help("PRODUCTION = switcher, audio, outputs · PRESENT = songs, Bibles, slides")
             Divider().frame(height: 18)
             TBtn("Open") { engine.loadShow() }
             TBtn("Save") { engine.saveShow() }
@@ -314,8 +329,8 @@ struct TransitionColumn: View {
 let inputTileChrome: CGFloat = 70   // header 20 + meter 10 + footer 40
 
 // Choose column count + tile width so the input tiles fill the region and reflow on resize.
-// 3.18: when everything fits, the tile "screens" also stretch vertically so the whole
-// input region is filled (like a wall of TVs); if it has to scroll, screens stay 16:9.
+// Tile screens are ALWAYS 16:9 (4.0-a); the grid picks the column count that makes them
+// as large as possible for the current window size.
 func bestInputGrid(count: Int, area: CGSize, sizeMul: CGFloat) -> (cols: Int, tileW: CGFloat, screenH: CGFloat) {
     guard count > 0, area.width > 60, area.height > 60 else { return (1, 176, 99) }
     let gap: CGFloat = 8
@@ -334,10 +349,7 @@ func bestInputGrid(count: Int, area: CGSize, sizeMul: CGFloat) -> (cols: Int, ti
         if score > best.score { best = (cols, tileW, score) }
     }
     let tileW = max(120, best.tileW)
-    let rows = CGFloat(Int(ceil(Double(count) / Double(best.cols))))
-    let natural = tileW * 9.0 / 16.0
-    let stretched = floor((area.height - gap * (rows + 1)) / rows - headerH) - 1
-    return (best.cols, tileW, max(natural, stretched))
+    return (best.cols, tileW, tileW * 9.0 / 16.0)
 }
 
 struct InputBus: View {
@@ -430,7 +442,7 @@ struct InputTile: View {
     var isProgram: Bool { engine.programID == source.id }
     var isPreview: Bool { engine.previewID == source.id }
     var border: Color { source.isPlaceholder ? Color(white: 0.14) : (isProgram ? .red : isPreview ? cProgram : Color(white: 0.25)) }
-    var th: CGFloat { screenH ?? tileW * 9.0 / 16.0 }
+    var th: CGFloat { tileW * 9.0 / 16.0 }   // always 16:9, whatever the window size
 
     var body: some View {
         VStack(spacing: 0) {
@@ -450,8 +462,8 @@ struct InputTile: View {
             .frame(width: tileW).padding(.horizontal, 5).frame(height: 20).background(cBar)
 
             if source.isPlaceholder {
-                // Blank holder = a switched-off TV: solid black over the full tile height
-                // (same size as a live tile), with a discreet assign button in the middle.
+                // Blank holder = a switched-off TV: a black 16:9 screen, with a discreet assign
+                // button in the middle; the strip below matches a live tile's control bar.
                 ZStack {
                     Color.black
                     InputAssignMenu(slotID: source.id) {
@@ -461,7 +473,8 @@ struct InputTile: View {
                     .opacity(0.35)
                     .help("Assign an input to this slot (or drop a file on the window)")
                 }
-                .frame(width: tileW, height: th + (inputTileChrome - 20))
+                .frame(width: tileW, height: th)
+                cBar.frame(width: tileW, height: inputTileChrome - 20)
             } else {
                 SourceThumb(source: source)
                     .frame(width: tileW, height: th).background(Color.black)

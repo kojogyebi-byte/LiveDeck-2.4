@@ -1,6 +1,6 @@
 # LiveDeck Present — Phase 1 Architecture
 
-**Status:** PROPOSAL — awaiting approval. No presentation code has been written yet.
+**Status:** APPROVED (decisions in §17). Build 4.0-a (foundation, songs, Bibles) delivered.
 **Applies to:** LiveDeck Studio v3.18 codebase (Swift 5.10 / SwiftUI / AVFoundation, SPM, GitHub Actions `macos-14`).
 **Working name:** *LiveDeck Present* — the presentation engine inside LiveDeck. Original naming and UI; no third-party product names, assets or layouts are used in the app.
 
@@ -590,30 +590,24 @@ Conflict note: PRODUCTION already uses Return (Take) and 1–9 (stage input). Ho
 
 ---
 
-## 12. Development roadmap
+## 12. Development roadmap (approved order)
 
-Each step is one GitHub build + a test session before the next. Versions are indicative.
+Songs and scripture data were moved ahead of the slide editor: a church service needs lyrics and Bible verses long before free-form slide design, and both are fully testable before any rendering exists.
 
-| Build | Phase | Delivers | Test gate before next build |
-|---|---|---|---|
-| **3.18** | — | No autoplay on add, TV-black blank holders filling the input area (**done**) | Visual check |
-| **Phase 1** | 1 | This document | **Approval** |
-| 4.0-a | 2 | Package split (`PresentationKit` + tests in CI), data model, LibraryStore (create/rename/duplicate/delete/folders/tags/favorites/recents/search), autosave + versions | `swift test` green; library survives relaunch |
-| 4.0-b | 2+3 | SlideRasterizer (text/image/shape/background), PRESENT workspace (library, slide grid, preview/live, go live/next/prev/clear, keyboard), **PresentationSource in the input bus**, fullscreen presentation output | Present a text/image slideshow on a display and as an input |
-| 4.0-c | 2 | Slide editor: canvas, text inspector, drag/resize/rotate, snapping, grid, rulers, safe areas, lock/hide/group/duplicate, undo/redo | Build a 10-slide announcement deck by hand |
-| 4.1 | 2 | Service playlist (items, reorder, duplicate, rename, collapse, search, headers), LiveState autosave + crash recovery prompt | Kill the app mid-service → relaunch restores live cue |
-| 4.2 | 3 | Render thread move (R2), presentation KEY surface + DSK, key/fill across two outputs, video elements & video backgrounds (loop/autoplay/seek/volume/fade), **media audio into mixer (MTAudioProcessingTap)**, missing-media detection | Transparent lyrics over live camera on stream; clip audio on recording |
-| 4.3 | 4 | Songs (editor, parser, arrangements, auto slides, import text/OpenLyrics/SongSelect), Scripture (import, picker, ranges, auto slides), Themes & templates | Build a full service from songs + scripture in < 10 min |
-| 4.4 | 4 | OutputManager (display-UUID outputs, per-output target), stage display layouts + editor, timers & stage messages | LED + confidence + stream running different content |
-| 4.5 | 5 | Broadcast graphics: migrate lower thirds/overlays to themeable graphics presentations, animated build-in/out, logos/props layer, social/scripture/speaker templates | Lower third + lyrics + logo simultaneously |
-| 4.6 | 6 | RemoteServer (WebSocket + HTTP triggers), mobile web remote, network stage display page | Phone controls slides/switcher/stream on LAN |
-| 4.7 | 7 | Metal compositor (R3), performance HUD (frame time, dropped frames per output), soak-test mode | 1080p60 + 3 outputs for 4 h without drops |
-| 4.8 | 6 | NDI in/out with alpha — **only once the NDI SDK headers are supplied** | NDI Studio Monitor receives presentation key |
-| 4.9 | 7 | Hardening: memory audit, log rotation, GPU fallback, 8-hour soak | Signed-off production checklist |
-
-Estimated **12–15 build/test cycles** to reach 4.9. Because nothing can be compiled or run in the assistant sandbox, running `swift build` on the local Mac before pushing is strongly recommended for these larger builds.
-
----
+| Build | Delivers | Test gate before next build |
+|---|---|---|
+| 3.18 | No autoplay on add; TV-black blank holders | Visual check (done) |
+| **4.0-a** (app version 4.0.0) | `PresentationKit` library target + unit tests in CI; data model; document library (autosave, versions, trash, folders, tags, favourites, recents, search); **songs** (type/paste, import plain text · SongSelect .txt/.usr · ChordPro · OpenLyrics · OpenSong, arrangements, slide generation); **Bibles** (unlimited versions, 1000+ free translations downloadable in-app, import Zefania · OSIS · USFM · CSV/TSV · Free Use JSON, reference parser, passage lookup, word search, slide splitting); PRESENT workspace; input tiles always 16:9 | Add/import songs; install 2+ Bibles; look up passages; relaunch keeps everything |
+| 4.0-b | Slide renderer (Core Text), themes (Standard / Lower third key), **live control** (preview, go live, next/prev, clear layers, keyboard), **Presentation as an input** + fullscreen presentation output; send songs and scripture live | Lyrics and scripture on Program and on a display |
+| 4.1 | Service plans (running order, reorder/duplicate/rename/collapse/search, auto-advance) + LiveState crash recovery | Kill the app mid-service → relaunch restores live cue |
+| 4.2 | Render thread move (R2); key/DSK alpha; key/fill on two outputs; video & image backgrounds; media audio into the mixer | Transparent lyrics over camera on the stream; clip audio recorded |
+| 4.3 | Theme editor + slide editor (text/images/shapes, snapping, grid, safe areas, undo) for announcements & general presentations | Build an announcement loop by hand |
+| 4.4 | OutputManager (display-UUID outputs) + stage display layouts, timers, stage messages | LED + confidence + stream with different content |
+| 4.5 | Broadcast graphics (lower thirds, logos, social, speaker) as themeable presentations with build-in/out | Lower third + lyrics + logo together |
+| 4.6 | Remote control (WebSocket + HTTP triggers), phone web remote, network stage page | Phone drives slides and switcher |
+| 4.7 | Metal compositor (R3), performance HUD, soak-test mode | 1080p30 service config for 4 h without drops on the reference Mac |
+| 4.8 | NDI in/out with alpha — once the NDI SDK headers are supplied | NDI monitor receives presentation key |
+| 4.9 | Hardening: 8-hour soak, memory audit, GPU fallback | Production checklist signed off |
 
 ## 13. Risk assessment
 
@@ -701,10 +695,17 @@ Based only on publicly observable behaviour common to professional presentation 
 
 ---
 
-## 17. Decisions needed from you before 4.0-a
+## 17. Decisions (answered)
 
-1. **Approve the phased roadmap** (or reorder — e.g. songs/scripture before the slide editor if services are needed sooner).
-2. **Workspace model:** separate PRESENT workspace + Present tab in PRODUCTION (proposed), or everything on one screen.
-3. **Bible texts:** which translations you hold licences/files for, and in what format.
-4. **Song sources:** plain text, SongSelect exports, or OpenLyrics files.
-5. **Minimum machine** for 60 fps targets (Apple Silicon model), so performance budgets are set against real hardware.
+1. **Roadmap** — assistant's choice: the order in §12 (songs & scripture data first, then live control).
+2. **Workspace** — a separate **PRESENT** workspace, switched from the top bar (PRODUCTION · PRESENT). Production hotkeys are disabled while in PRESENT so typing lyrics can never trigger a cut.
+3. **Bibles** — unlimited versions, future additions at any time. Chosen storage format: **one SQLite file per version (`*.ldbible`)** in `Library/Bibles/` — compact, opens instantly, only the verses on screen are loaded, full-text search via FTS5 (LIKE fallback). Sources:
+   - **In-app download** of 1000+ translations from the **Free Use Bible API** (bible.helloao.org — no key, no usage restrictions; downloaded once, used offline).
+   - **Import** of Zefania XML, OSIS XML, USFM (book files), CSV/TSV and Free Use Bible JSON — for any translation the church is licensed to use (e.g. commercial translations that are not freely distributable).
+4. **Songs** — typed/pasted lyrics plus import of every open or exportable format: plain text, CCLI SongSelect exports (.txt and .usr), ChordPro, OpenLyrics XML and OpenSong. (SongSelect has no public API; its exports are the licensed route. Other presentation products' proprietary library files are not imported.)
+5. **Minimum resources** — set by the assistant:
+   - **macOS 13 Ventura or later**, universal binary. **Reference machine: any Apple Silicon Mac (M1, 8 GB)**. Intel Macs supported at reduced targets (1080p30, fewer outputs).
+   - Default production format **1080p30**; 60 fps is opt-in.
+   - Presentation output renders **only when something changes** (idle slides cost ~0% CPU/GPU); slides cached as images.
+   - Bibles stay on disk; at most 4 versions open at once. Song library in memory (~15 MB per 5,000 songs).
+   - Imports/downloads run in the background at utility priority; no polling timers in PRESENT.

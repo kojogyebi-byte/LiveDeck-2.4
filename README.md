@@ -1,3 +1,17 @@
+# LiveDeck Studio (macOS) — v4.0.0 (build 4.0-a)
+
+**New in 4.0 — PRESENT workspace, part 1 (songs & Bibles):**
+- **Workspace switch** in the top bar: **PRODUCTION** (switcher, audio, outputs) and **PRESENT** (presentation library). Production keyboard shortcuts pause while in PRESENT, so typing lyrics can't trigger a cut.
+- **Song library.** Create songs by typing or pasting lyrics (put *Verse 1*, *Chorus*, *Bridge*… on their own lines; a blank line starts a new slide). Title, author, copyright, CCLI #, folder, tags, favourites, recent, search across titles/authors/lyrics. Song order (e.g. `V1 C V2 C B C`) and lines-per-slide, with a live slide preview. Autosaves as you type; **version history** (clock icon) and a **Trash** you can restore from.
+- **Import songs** from plain text, **CCLI SongSelect** exports (.txt and .usr), **ChordPro**, **OpenLyrics** and **OpenSong** — many files at once. Choruses typed out twice are merged into the song order automatically.
+- **Unlimited Bible versions.** **Get Bibles…** lists 1000+ free translations in many languages (Free Use Bible API — no account, no usage restrictions); search by name or language and install with one click. Each Bible is stored on this Mac and works offline. **Import file…** adds any translation you are licensed to use from Zefania XML, OSIS XML, USFM, CSV/TSV or Free Use Bible JSON.
+- **Scripture lookup.** Type references naturally — *John 3:16-18*, *1 Cor 13*, *Ps 23*, *Gen 1:1–2:3* — or search words; passages are split into readable slides automatically (adjustable length).
+- **Input tiles are always 16:9**, including blank holders, at every window size.
+- Under the hood: new `PresentationKit` module with 24 automated tests that run on every GitHub build (`swift test`).
+- **Not yet:** sending songs/scripture live (next build, 4.0-b), themes, slide editor, service plans.
+
+---
+
 # LiveDeck Studio (macOS) — v3.18
 
 **Changes in 3.18:**
