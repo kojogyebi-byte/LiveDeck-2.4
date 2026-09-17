@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleLocalizations</key>
+    <array><string>en</string><string>fr</string><string>es</string><string>pt</string><string>de</string><string>sw</string><string>ru</string><string>uk</string><string>pl</string><string>ro</string><string>zh-Hans</string><string>zh-Hant</string><string>ko</string><string>hi</string><string>bn</string><string>ta</string><string>id</string></array>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleName</key>
@@ -13,7 +17,7 @@
     <key>CFBundleIdentifier</key>
     <string>org.livedeck.studio</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.12.0</string>
+    <string>4.17.1</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundlePackageType</key>
@@ -34,10 +38,11 @@
     <key>NSCameraUsageDescription</key>
     <string>LiveDeck needs camera access to use cameras as live video sources.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>LiveDeck finds other LiveDeck computers on your network to share media, songs and messages.</string>
+    <string>LiveDeck finds other LiveDeck computers, NDI sources and Blackmagic ATEM switchers on your network.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_livedeck._tcp</string>
+        <string>_blackmagic._tcp</string>
     </array>
     <key>NSMicrophoneUsageDescription</key>
     <string>LiveDeck needs microphone access to record audio with your program output.</string>

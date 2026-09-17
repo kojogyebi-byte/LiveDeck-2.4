@@ -1,4 +1,46 @@
-# LiveDeck Studio (macOS) — v4.12.0
+# LiveDeck Studio (macOS) — v4.17.1
+
+**4.17.1 — 17 languages.** Added Русский, Українська, Polski, Română, 简体中文, 繁體中文, 한국어, हिन्दी, বাংলা (Bangladesh & India), தமிழ் and Bahasa Indonesia to English, Français, Español, Português, Deutsch and Kiswahili. The setup assistant shows all of them (native names); Traditional Chinese uses Taiwan wording. 170 interface strings per language.
+
+
+**4.17.0 — Auto Mix, podcasting, languages, safe quit.**
+- **Auto Mix** (Automation → Auto Mix): choose inputs for a rotation. *Timed* — each input has its own seconds (or the same for all), in order or shuffled, optional natural variation. *Follow the voice* — cuts to whoever is speaking using each camera's chosen microphone, with sensitivity, lead time, shortest shot and a wide shot for cross-talk or silence. CUT or AUTO transition. **Override:** switching by hand pauses, resumes after N seconds, or carries on from your shot. Pause/Resume, Next, status-bar chip, shortcuts.
+- **Podcasting:** Sound Pads input (8 pads — jingles, intros, stingers — into the mix, loop/volume/colour, shortcuts); loudness strip in the Audio tab (momentary / short-term / integrated LUFS, targets Podcast −16, streaming −14, EBU R128 −23); one-click Podcast voice preset; **record each input to its own WAV track**; export recordings as podcast audio (.m4a).
+- **Languages:** English, Français, Español, Português, Deutsch, Kiswahili. Setup assistant on first launch (language + use case: podcast, church, live events, teaching) — also in the gear menu; restarts in the chosen language.
+- **Quit safely:** LiveDeck asks to Save / Save and Quit, Cancel or Quit Without Saving; stops a stream and finalises a recording before closing.
+- **116 automated tests** (Auto Mix timing, overrides, shuffle, voice following; EBU loudness reference).
+
+
+**4.16.0 — Layout, Apple fonts, offline dictionary.**
+- **Format moves to the control panel:** new **Format** tab. Opening Songs & Bible, Dictionary or AI Search switches the control panel to its Format automatically (and back to your previous tab when you leave); a switch at the top picks which deck's format to edit. The lower decks gain the space.
+- **Closable tabs:** hover a control-panel tab → × (or right-click → Hide). Hidden tabs show as + chips to bring back; the grid menu lists all tabs, **Show all tabs** and **Icons only**. Saved between launches.
+- **Network moved into Input:** sharing, stations, messages and transfers are at the bottom of the Input tab; everything that opened Network scrolls there.
+- **Apple system font everywhere:** SF Pro for all interface text, fixed-width digits for numbers (no more monospaced/condensed/rounded faces); new slides default to SF Pro. Top-bar CPU/RAM/GPU labels no longer wrap.
+- **Offline English dictionary (default):** 147,478 words and phrases from WordNet 3.1 with meanings, examples, synonyms, antonyms and CMU pronunciations (IPA), irregular and inflected forms (went → go, churches → church), suggestions while typing. Included with the app (`Resources/Dictionary/english-wordnet.lddict.gz`, 10 MB → 33 MB unpacked once); builds without it can download and build it on the Mac.
+- **108 automated tests.**
+
+
+**4.15.0 — Blackmagic.** Guide: **`BLACKMAGIC_GUIDE.md`**.
+- **DeckLink / UltraStudio input:** Add Input → Blackmagic DeckLink / UltraStudio. Automatic format detection (YUV or RGB), embedded audio to the mixer, “No input signal” status. Saved in presets.
+- **DeckLink output:** Outputs → Blackmagic DeckLink → Send Program to DeckLink at the switcher resolution and exact frame rate (progressive or interlaced, woven fields), embedded 48 kHz Program audio, BGRA or YUV depending on the card; supported formats listed if the switcher format isn't available. Restarts automatically when the format changes; in the status-bar Outputs panel; keeps the Mac awake.
+- **ATEM control (ATEM tab):** Bonjour discovery or IP address, auto-connect; Program/Preview buses with names from the switcher, CUT / AUTO / FTB, transition styles, T-bar, downstream keys (on air / auto), upstream keys, macros, aux routing, multiple M/Es, live tally. **Link:** map LiveDeck inputs to ATEM sources — LiveDeck switches the ATEM and/or follows it.
+- Built on `Sources/CDeckLink` (C++ bridge on the DeckLink SDK 12 headers; driver loaded at run time) and a native Swift implementation of the ATEM UDP protocol (`PresentationKit/ATEMProtocol.swift`). **105 automated tests.**
+
+
+**4.14.0 — Zoom both ways.** Setup: **`AppStore/ZOOM_AND_CAMERA_GUIDE.md`**.
+- **LiveDeck Camera** (virtual webcam): a CoreMediaIO Camera Extension (`AppStore/CameraExtension`) embedded in the Xcode builds. Outputs → LiveDeck Camera → Install / approve → *Send Program to LiveDeck Camera*; Zoom, Teams, Google Meet, FaceTime and OBS can choose "LiveDeck Camera" (1080p30, letterboxed, placeholder when LiveDeck is not sending). Also in the status-bar Outputs panel.
+- **Zoom inside LiveDeck** (Zoom Meeting SDK): Add Input → *Zoom Meeting — built in*: SDK Key/Secret (Keychain) or token server, join by link/ID (optional ZAK / On-Behalf token for other accounts), host-granted raw data access, each participant as an input with their own voice (I420 → vImage, audio resampled to 48 kHz), whole-meeting audio input. Objective-C bridge `Sources/ZoomBridge` compiles to a stub without the SDK.
+- **Two Xcode editions** from one project: `LiveDeckStudio` (Mac App Store: sandbox, trial/purchase, LiveDeck Camera) and `LiveDeckStudioDirect` (Developer ID, notarised: LiveDeck Camera + built-in Zoom — Zoom's macOS SDK cannot run sandboxed). The Zoom SDK is added only when `AppStore/Vendor/ZoomSDK` exists.
+- PresentationKit: `HMACSHA256`, `ZoomSDKToken` (Meeting SDK JWT). **101 automated tests.**
+
+
+**4.13.0 — Mac App Store edition.** Everything needed to publish on the Mac App Store is in `AppStore/` — start with **`AppStore/APP_STORE_GUIDE.md`**.
+- **14-day free trial + one-time purchase** (StoreKit 2, two non-consumable in-app purchases: `<bundle id>.trial14` free, `<bundle id>.full` paid). Purchase screen on first launch and after the trial, trial badge in the top bar, Buy / Restore Purchases in the app menu. Trial date comes from Apple (survives reinstalls).
+- **App Sandbox** with camera, microphone, network client/server, user-selected files, Downloads, Movies, Pictures, Music; security-scoped bookmarks so opened files keep working after restart.
+- **Bundled LGPL ffmpeg** (`Contents/Helpers/ffmpeg`, built by `AppStore/scripts/build-ffmpeg-lgpl.sh`, sandbox-inherit signed); streams use VideoToolbox H.264 when x264 is not available. YouTube-link input hidden in the App Store build.
+- XcodeGen project (`AppStore/project.yml`) with Config.xcconfig (Team ID, bundle ID, privacy URL, version/build), App Store Info.plist, entitlements, privacy manifest, StoreKit test file, icon catalog, third-party notices (Help → Third-Party Notices), App Store texts, review notes, privacy and support web pages.
+- GitHub/direct builds are unchanged and fully unlocked.
+
 
 **4.12.0 — Overlay inputs & countdown formatting.**
 - **Overlays as inputs:** right-click an overlay → *Use as an input* (transparent for keying, black, or image background), or Add Input → *Overlay as an input* / *New countdown input*. Input panel: choose the overlay, background (Transparent / Colour / Image) and whether it follows the overlay's on-air switch. Saved in presets.
